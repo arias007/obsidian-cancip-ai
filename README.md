@@ -65,10 +65,15 @@ Do not commit or share `.cancip/config.json` if it contains an API key.
 - Absorb Codex's frontend interaction model: command bar, access-mode selector, project/session list, plan mode, and action transparency.
 - Build the backend toward a local-first agent runtime inspired by Codex, Claude Code-style code actions, OpenClaw-style tool routing, and Hermes-style memory/workflow patterns.
 - Support GitHub management from mobile: status, issues, branches, commits,
-  pushes, PRs, releases, and workflow results with credential redaction.
+  pushes, PRs, releases, workflow results, and a safe API acceleration layer
+  with credential redaction.
+- Support lightweight local versioning: manual commits and daily auto commits
+  under `.cancip/versions/`, instead of recording every edit.
 - Support Obsidian plugin building/adaptation: source-first TypeScript/CSS
   changes, build/package/install loops, and built-JS patching only as a
   fallback.
 
 See [docs/VISION.md](docs/VISION.md) for the detailed product boundary and
 architecture direction.
+See [docs/GITHUB_AND_VERSIONING.md](docs/GITHUB_AND_VERSIONING.md) for the
+mobile GitHub and local versioning design.

@@ -101,3 +101,15 @@ This is not a fork. The shape follows Smart Composer's proven pattern:
 - Keep edit actions reviewable instead of silently rewriting notes.
 
 Smart Composer source: https://github.com/glowingjade/obsidian-smart-composer
+
+## GitHub and Versioning Direction
+
+Cancip should manage GitHub from mobile through GitHub REST/GraphQL APIs rather
+than native `git` or `gh` binaries. The GitHub CLI is treated as a feature map:
+repo, issue, PR, release, workflow, and raw `gh api`-style operations should be
+implemented as API-backed Cancip actions.
+
+Local versioning should be lightweight: manual commits and daily auto commits
+under `.cancip/versions/`, not per-edit history recording. GitHub acceleration
+should default to official endpoints and only use a user-controlled relay for
+authenticated requests.
