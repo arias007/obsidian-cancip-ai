@@ -137,8 +137,26 @@
 }
 
 .obcc-content {
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.obcc-content > :first-child {
+  margin-top: 0;
+}
+
+.obcc-content > :last-child {
+  margin-bottom: 0;
+}
+
+.obcc-content pre {
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
+.obcc-content table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
 }
 
 .obcc-sources {

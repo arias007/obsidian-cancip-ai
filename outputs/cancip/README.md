@@ -8,6 +8,7 @@ Smart Composer-style right sidebar AI chat for Obsidian, reshaped toward a Codex
 - API connection by URL/key/model with automatic support for OpenAI Responses and OpenAI-compatible Chat Completions.
 - Robust text extraction for string, array, and object-shaped model responses.
 - Auto mode treats empty Responses output as a failed attempt and falls back to OpenAI-compatible Chat Completions.
+- Assistant and user messages render through Obsidian MarkdownRenderer, including Obsidian-supported HTML.
 - UI language setting: Auto, Chinese, English.
 - Codex-style access mode: Ask for approval or Full access.
 - Vault-level `.cancip/config.json` as the primary configuration file.

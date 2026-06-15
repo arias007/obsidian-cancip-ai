@@ -3,6 +3,7 @@ import {
   type DataAdapter,
   Editor,
   ItemView,
+  MarkdownRenderer,
   MarkdownView,
   Notice,
   normalizePath,
@@ -1035,9 +1036,14 @@ class CancipView extends ItemView {
     for (const message of this.messages) {
       const item = this.messagesEl.createDiv({ cls: `obcc-message obcc-${message.role}` });
       item.createDiv({ cls: "obcc-role", text: message.role });
-      item.createDiv({ cls: "obcc-content", text: message.content });
+      const contentEl = item.createDiv({ cls: "obcc-content markdown-rendered" });
+      void MarkdownRenderer.render(this.app, message.content, contentEl, this.markdownSourcePath(), this);
     }
     this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
+  }
+
+  private markdownSourcePath(): string {
+    return this.app.workspace.getActiveFile()?.path ?? "";
   }
 
   private renderSources(hits: SearchHit[]): void {

@@ -10,6 +10,7 @@ Cancip is a lightweight prototype for managing an Obsidian vault from a mobile-f
 - `ask-for-approval` and `full-access` modes.
 - Current note, selection, `@file` mentions, core memory folder, and lightweight Vault Search context.
 - `cancip-action` JSON tool blocks for validated vault-relative actions.
+- Obsidian-native Markdown rendering for chat messages, including Obsidian-supported HTML.
 
 ## Build
 
@@ -53,7 +54,6 @@ Do not commit or share `.cancip/config.json` if it contains an API key.
 
 ## Roadmap
 
-- Render assistant replies as Obsidian Markdown, including Obsidian-supported HTML.
 - Absorb Smart Composer's Obsidian-native chat UX: file chips, current-file context, vault chat, tool visibility, and compact mobile controls.
 - Absorb Codex's frontend interaction model: command bar, access-mode selector, project/session list, plan mode, and action transparency.
 - Build the backend toward a local-first agent runtime inspired by Codex, Claude Code-style code actions, OpenClaw-style tool routing, and Hermes-style memory/workflow patterns.
