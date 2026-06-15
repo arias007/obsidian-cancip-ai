@@ -54,6 +54,19 @@ Do not commit or share `.cancip/config.json` if it contains an API key.
 
 ## Roadmap
 
+- Product target: mobile-first Codex for an Obsidian vault, not a whole-device
+  remote-control assistant.
+- Keep the core boundary vault-scoped: Cancip can control vault files, `.cancip`
+  config, configured project workspaces, GitHub, and plugin build/install
+  workflows, but should not control the entire device.
 - Absorb Smart Composer's Obsidian-native chat UX: file chips, current-file context, vault chat, tool visibility, and compact mobile controls.
 - Absorb Codex's frontend interaction model: command bar, access-mode selector, project/session list, plan mode, and action transparency.
 - Build the backend toward a local-first agent runtime inspired by Codex, Claude Code-style code actions, OpenClaw-style tool routing, and Hermes-style memory/workflow patterns.
+- Support GitHub management from mobile: status, issues, branches, commits,
+  pushes, PRs, releases, and workflow results with credential redaction.
+- Support Obsidian plugin building/adaptation: source-first TypeScript/CSS
+  changes, build/package/install loops, and built-JS patching only as a
+  fallback.
+
+See [docs/VISION.md](docs/VISION.md) for the detailed product boundary and
+architecture direction.
