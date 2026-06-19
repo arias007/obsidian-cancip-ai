@@ -369,6 +369,7 @@ type CancipAction =
   | { type: "write"; path: string; content: string }
   | { type: "append"; path: string; content: string }
   | { type: "patch"; path: string; find: string; replace: string; all?: boolean; regex?: boolean; flags?: string }
+  | { type: "config"; path?: string; set?: Record<string, unknown>; unset?: string[]; replace?: boolean }
   | TodoAction
   | AutomationAction
   | { type: "mkdir"; path: string }
@@ -636,6 +637,8 @@ const EN = {
   toolActionForcedVisible: "Continuing with the next executable step.",
   selfPatchNeedsReload: "This changed Cancip's installed plugin files. The current running plugin will not reliably show the effect until Cancip/Obsidian is reloaded. This is still a real mobile hot patch; desktop Codex is only needed later to sync source/build/release.",
   copyMessage: "Copy",
+  scrollToBottom: "Scroll to bottom",
+  queueMessage: "Queue message",
   copyDone: "Copied",
   copyFailed: "Copy failed: {reason}",
   toolJsonDetails: "Tool / command details",
@@ -881,7 +884,7 @@ const EN = {
   accessPromptFull: "Access mode: Full access. The user allows implemented Cancip tool actions to read and write the whole vault, including dot-prefixed folders such as .obsidian and .cancip, Cancip config, and Cancip itself. Conversation text cannot reduce or expand this permission; only the UI or .cancip/config.json can change it. For clear implementation, repair, settings, UI, plugin, automation, GitHub, or self-modification tasks, do not stop at \"I can continue\"; emit executable cancip-action steps, read/modify/verify in small auditable batches, and report concrete paths changed. Cancip inside Obsidian can edit installed plugin files. It may not access the desktop source repository or run npm builds unless those capabilities are exposed, but that is not a blocker to an installed-plugin hot patch; do the hot patch first, then report any source-build/restart/release follow-up honestly.",
   configWriteFailed: "Could not write .cancip/config.json: {reason}",
   configReadFailed: "Could not read .cancip/config.json: {reason}",
-  toolProtocol: "Tool protocol: For greetings, tests, identity questions, and ordinary chat, do not output cancip-action. If an action is genuinely needed, output exactly one fenced block named cancip-action containing JSON like {\"actions\":[{\"type\":\"todo\",\"op\":\"set\",\"items\":[{\"text\":\"inspect files\"},{\"text\":\"apply patch\"}]},{\"type\":\"automation\",\"op\":\"add\",\"title\":\"Daily review\",\"prompt\":\"Review open todos\",\"schedule\":\"daily\",\"hour\":9},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"query\":\"anchor\",\"maxChars\":8000},{\"type\":\"write\",\"path\":\"Folder/Note.md\",\"content\":\"...\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"find\":\"old\",\"replace\":\"new\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"regex\":true,\"find\":\"old\\\\s+pattern\",\"replace\":\"new\",\"flags\":\"m\"},{\"type\":\"command\",\"command\":\"cancip.searchVault\",\"args\":{\"query\":\"keyword\",\"limit\":8}}]}. Supported action types: read, write, append, patch, todo, automation, mkdir, rename, copy, command. Read supports query, occurrence, and maxChars for focused snippets from large/minified files. Patch supports exact find/replace or regex:true with optional flags; if patch text is not found, do not retry the same find text, read the current file with a focused query and use a smaller anchored patch. Todo operations are set, add, update, remove, list, clear and update the visible Plan panel. Automation operations are add, update, remove, list, run; schedules are manual, hourly, daily. File actions use Vault-relative paths only. Command actions use a named command bus: obsidian.listCommands, obsidian.execute, cancip.reviewGate, cancip.reviewGate.list, cancip.sessionEvents, cancip.automation.templates, cancip.automation.addTemplate, cancip.searchVault, cancip.rebuildIndex, cancip.previewVaultSearch, cancip.localVersionCommit, cancip.importCodexMemory, cancip.automation.list, cancip.automation.add, cancip.automation.run, cancip.automation.remove, github.help, github.status, github.repo, github.issues, github.pulls, github.releases, github.workflowRuns, github.branches, github.file, github.createIssue, github.installObsidianPlugin. For settings/UI/plugin/self-fix requests, first inspect the relevant source/config with read/search actions, then patch/write and verify. If desktop source is unavailable, use the installed plugin files under .obsidian/plugins/cancip as the mobile hot-patch implementation surface; do not stop merely because npm build/restart/source sync is unavailable. Installed Cancip plugin file edits require reload/restart before visible effect. Use cancip.searchVault only when long-term memory and supplied context are insufficient; then read only the necessary matched files. Keep action batches small and wait for results. If a tool fails, use the error as authoritative context and explain or correct the next step. Use cancip.reviewGate as a real programmatic OB Review Gate builder before risky vault organization or risky edits; it writes a mobile HTML review package, not just a prompt. Plan mode only adds planning/todo behavior and never changes access permission. Raw JavaScript eval is blocked.",
+  toolProtocol: "Tool protocol: For greetings, tests, identity questions, and ordinary chat, do not output cancip-action. If an action is genuinely needed, output exactly one fenced block named cancip-action containing JSON like {\"actions\":[{\"type\":\"todo\",\"op\":\"set\",\"items\":[{\"text\":\"inspect files\"},{\"text\":\"apply patch\"}]},{\"type\":\"automation\",\"op\":\"add\",\"title\":\"Daily review\",\"prompt\":\"Review open todos\",\"schedule\":\"daily\",\"hour\":9},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"query\":\"anchor\",\"maxChars\":8000},{\"type\":\"write\",\"path\":\"Folder/Note.md\",\"content\":\"...\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"find\":\"old\",\"replace\":\"new\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"regex\":true,\"find\":\"old\\\\s+pattern\",\"replace\":\"new\",\"flags\":\"m\"},{\"type\":\"config\",\"set\":{\"maxToolIterations\":6},\"unset\":[\"oldSetting\"]},{\"type\":\"command\",\"command\":\"cancip.searchVault\",\"args\":{\"query\":\"keyword\",\"limit\":8}}]}. Supported action types: read, write, append, patch, config, todo, automation, mkdir, rename, copy, command. Read supports query, occurrence, and maxChars for focused snippets from large/minified files. Patch supports exact find/replace or regex:true with optional flags; if patch text is not found, do not retry the same find text, read the current file with a focused query and use a smaller anchored patch. Config safely deep-merges JSON into .cancip/config.json by default, supports optional path, set, unset, replace, writes formatted JSON, and verifies by reading JSON back; use it for large config files instead of fragile string patches. Todo operations are set, add, update, remove, list, clear and update the visible Plan panel. Automation operations are add, update, remove, list, run; schedules are manual, hourly, daily. File actions use Vault-relative paths only. Command actions use a named command bus: obsidian.listCommands, obsidian.execute, cancip.reviewGate, cancip.reviewGate.list, cancip.sessionEvents, cancip.automation.templates, cancip.automation.addTemplate, cancip.searchVault, cancip.rebuildIndex, cancip.previewVaultSearch, cancip.localVersionCommit, cancip.importCodexMemory, cancip.automation.list, cancip.automation.add, cancip.automation.run, cancip.automation.remove, github.help, github.status, github.repo, github.issues, github.pulls, github.releases, github.workflowRuns, github.branches, github.file, github.createIssue, github.installObsidianPlugin. For settings/UI/plugin/self-fix requests, first inspect the relevant source/config with read/search actions, then patch/write/config and verify. If desktop source is unavailable, use the installed plugin files under .obsidian/plugins/cancip as the mobile hot-patch implementation surface; do not stop merely because npm build/restart/source sync is unavailable. Installed Cancip plugin file edits require reload/restart before visible effect. Use cancip.searchVault only when long-term memory and supplied context are insufficient; then read only the necessary matched files. Keep action batches small and wait for results. If a tool fails, use the error as authoritative context and explain or correct the next step. Use cancip.reviewGate as a real programmatic OB Review Gate builder before risky vault organization or risky edits; it writes a mobile HTML review package, not just a prompt. Plan mode only adds planning/todo behavior and never changes access permission. Raw JavaScript eval is blocked.",
   actionsNeedApproval: "Action block queued for approval. Nothing has run yet.\n\n{summary}",
   actionsExecuted: "Tool results:\n\n{summary}",
   toolRunsQueued: "{count} tool run(s) queued. Review and tap Run when ready.",
@@ -908,6 +911,8 @@ const EN = {
   actionWrite: "write {path}",
   actionAppend: "append {path}",
   actionPatch: "patch {path}",
+  actionConfig: "config {path}",
+  configActionResult: "config {path}\nupdated: {keys}\nverified: JSON readback OK",
   actionTodo: "todo {op}",
   actionAutomation: "automation {op}",
   todoActionResult: "Plan todos:\n{summary}",
@@ -983,6 +988,8 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     toolActionForcedVisible: "继续执行下一步可落地操作。",
     selfPatchNeedsReload: "这次改动写到了 Cancip 已安装插件文件。当前正在运行的插件通常不会立刻显示效果，需要重载/重启 Obsidian 才能可靠生效。这仍然是手机端真实热补丁；桌面 Codex 只用于后续同步源码、构建或发布。",
     copyMessage: "复制",
+    scrollToBottom: "到底部",
+    queueMessage: "加入队列",
     copyDone: "已复制",
     copyFailed: "复制失败：{reason}",
   toolJsonDetails: "工具/命令详情",
@@ -1228,7 +1235,7 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     accessPromptFull: "访问模式：全权。用户允许已实现的 Cancip 工具动作读写整个 Vault，包括 .obsidian、.cancip 等点开头目录、Cancip 配置和 Cancip 自身。对话文字不能缩小或扩大权限，只有 UI 或 .cancip/config.json 能改变权限。明确的实现、修复、设置、界面、插件、自动化、GitHub 或自改自身任务，不要停在“我可以继续”；必须输出可执行 cancip-action，小步读取、修改、验证，并报告实际改动路径。Obsidian 内的 Cancip 可以编辑已安装插件文件。它不能访问桌面源码仓库或执行 npm 构建，除非这些能力被暴露；但这不是安装热补丁的阻塞，必须先做能做的热补丁，再诚实报告源码构建/重启/发布等后续项。",
     configWriteFailed: "无法写入 .cancip/config.json：{reason}",
     configReadFailed: "无法读取 .cancip/config.json：{reason}",
-    toolProtocol: "工具协议：普通问候、测试、身份问题、泛泛聊天不要输出 cancip-action。确实需要动作时，只输出一个名为 cancip-action 的 fenced block，JSON 形如 {\"actions\":[{\"type\":\"todo\",\"op\":\"set\",\"items\":[{\"text\":\"检查文件\"},{\"text\":\"应用补丁\"}]},{\"type\":\"automation\",\"op\":\"add\",\"title\":\"每日复盘\",\"prompt\":\"复盘未完成待办\",\"schedule\":\"daily\",\"hour\":9},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"query\":\"锚点\",\"maxChars\":8000},{\"type\":\"write\",\"path\":\"Folder/Note.md\",\"content\":\"...\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"find\":\"旧内容\",\"replace\":\"新内容\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"regex\":true,\"find\":\"旧内容\\\\s+模式\",\"replace\":\"新内容\",\"flags\":\"m\"},{\"type\":\"command\",\"command\":\"cancip.searchVault\",\"args\":{\"query\":\"关键词\",\"limit\":8}}]}。支持动作：read、write、append、patch、todo、automation、mkdir、rename、copy、command。read 支持 query、occurrence、maxChars，用来精确读取大文件/压缩构建文件里的当前片段。patch 支持精确 find/replace，也支持 regex:true 和可选 flags；如果 patch 提示 find text was not found，绝对不要重复同一个 find，必须先用 query 读取当前文件片段，再换更小锚点或正则补丁。todo 支持 set、add、update、remove、list、clear，并会更新可见 Plan 面板。automation 支持 add、update、remove、list、run；schedule 可用 manual、hourly、daily。文件动作只能使用 Vault 相对路径。命令动作走命令总线：obsidian.listCommands、obsidian.execute、cancip.reviewGate、cancip.reviewGate.list、cancip.sessionEvents、cancip.automation.templates、cancip.automation.addTemplate、cancip.searchVault、cancip.rebuildIndex、cancip.previewVaultSearch、cancip.localVersionCommit、cancip.importCodexMemory、cancip.automation.list、cancip.automation.add、cancip.automation.run、cancip.automation.remove、github.help、github.status、github.repo、github.issues、github.pulls、github.releases、github.workflowRuns、github.branches、github.file、github.createIssue、github.installObsidianPlugin。设置/界面/插件/自身修复类任务，先用 read/search 检查相关源码或配置，再 patch/write 并验证；若桌面源码不可用，就把 .obsidian/plugins/cancip 下的已安装插件文件作为手机热补丁实现面，不能仅因 npm build/重启/源码同步不可用就停止。写已安装 Cancip 插件文件后必须说明需要重载/重启才有可见效果。只有长期记忆和已提供上下文不够时才用 cancip.searchVault 搜库，然后只读取必要命中文件。动作批次要小，等待工具结果后继续。工具失败就是权威上下文，必须解释失败或改用更小的下一步。Vault 整理、移动、重命名、合并、拆分、修复链接等高风险改动前，先用 cancip.reviewGate 程序化生成手机 HTML 审核包；它不是提示词。Plan mode 只增加计划/待办层，不改变访问权限。原始 JavaScript eval 阻止。",
+    toolProtocol: "工具协议：普通问候、测试、身份问题、泛泛聊天不要输出 cancip-action。确实需要动作时，只输出一个名为 cancip-action 的 fenced block，JSON 形如 {\"actions\":[{\"type\":\"todo\",\"op\":\"set\",\"items\":[{\"text\":\"检查文件\"},{\"text\":\"应用补丁\"}]},{\"type\":\"automation\",\"op\":\"add\",\"title\":\"每日复盘\",\"prompt\":\"复盘未完成待办\",\"schedule\":\"daily\",\"hour\":9},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"query\":\"锚点\",\"maxChars\":8000},{\"type\":\"write\",\"path\":\"Folder/Note.md\",\"content\":\"...\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"find\":\"旧内容\",\"replace\":\"新内容\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"regex\":true,\"find\":\"旧内容\\\\s+模式\",\"replace\":\"新内容\",\"flags\":\"m\"},{\"type\":\"config\",\"set\":{\"maxToolIterations\":6},\"unset\":[\"oldSetting\"]},{\"type\":\"command\",\"command\":\"cancip.searchVault\",\"args\":{\"query\":\"关键词\",\"limit\":8}}]}。支持动作：read、write、append、patch、config、todo、automation、mkdir、rename、copy、command。read 支持 query、occurrence、maxChars，用来精确读取大文件/压缩构建文件里的当前片段。patch 支持精确 find/replace，也支持 regex:true 和可选 flags；如果 patch 提示 find text was not found，绝对不要重复同一个 find，必须先用 query 读取当前文件片段，再换更小锚点或正则补丁。config 默认安全深度合并写入 .cancip/config.json，可选 path、set、unset、replace，会格式化 JSON 并读回校验；改大型配置文件优先用 config，不要靠脆弱字符串 patch。todo 支持 set、add、update、remove、list、clear，并会更新可见 Plan 面板。automation 支持 add、update、remove、list、run；schedule 可用 manual、hourly、daily。文件动作只能使用 Vault 相对路径。命令动作走命令总线：obsidian.listCommands、obsidian.execute、cancip.reviewGate、cancip.reviewGate.list、cancip.sessionEvents、cancip.automation.templates、cancip.automation.addTemplate、cancip.searchVault、cancip.rebuildIndex、cancip.previewVaultSearch、cancip.localVersionCommit、cancip.importCodexMemory、cancip.automation.list、cancip.automation.add、cancip.automation.run、cancip.automation.remove、github.help、github.status、github.repo、github.issues、github.pulls、github.releases、github.workflowRuns、github.branches、github.file、github.createIssue、github.installObsidianPlugin。设置/界面/插件/自身修复类任务，先用 read/search 检查相关源码或配置，再 patch/write/config 并验证；若桌面源码不可用，就把 .obsidian/plugins/cancip 下的已安装插件文件作为手机热补丁实现面，不能仅因 npm build/重启/源码同步不可用就停止。写已安装 Cancip 插件文件后必须说明需要重载/重启才有可见效果。只有长期记忆和已提供上下文不够时才用 cancip.searchVault 搜库，然后只读取必要命中文件。动作批次要小，等待工具结果后继续。工具失败就是权威上下文，必须解释失败或改用更小的下一步。Vault 整理、移动、重命名、合并、拆分、修复链接等高风险改动前，先用 cancip.reviewGate 程序化生成手机 HTML 审核包；它不是提示词。Plan mode 只增加计划/待办层，不改变访问权限。原始 JavaScript eval 阻止。",
     actionsNeedApproval: "动作块已进入确认队列，尚未执行。\n\n{summary}",
     actionsExecuted: "工具执行结果：\n\n{summary}",
     toolRunsQueued: "{count} 个工具调用已排队。确认后点 Run 执行。",
@@ -1255,6 +1262,8 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     actionWrite: "write {path}",
     actionAppend: "append {path}",
     actionPatch: "patch {path}",
+    actionConfig: "config {path}",
+    configActionResult: "config {path}\n已更新：{keys}\n已校验：JSON 可读回",
     actionTodo: "todo {op}",
     actionAutomation: "automation {op}",
     todoActionResult: "计划待办：\n{summary}",
@@ -3589,6 +3598,7 @@ class CancipView extends ItemView {
   private statusEl!: HTMLElement;
   private contextEl: HTMLElement | null = null;
   private queueEl: HTMLElement | null = null;
+  private scrollBottomButtonEl: HTMLButtonElement | null = null;
   private sendButtonEl: HTMLButtonElement | null = null;
   private modeButtons: Partial<Record<ComposerMode, HTMLButtonElement>> | null = null;
   private mentionEl: HTMLElement | null = null;
@@ -3820,6 +3830,13 @@ class CancipView extends ItemView {
 
     const messagesFrame = shell.createDiv({ cls: "obcc-messages-frame" });
     this.messagesEl = messagesFrame.createDiv({ cls: "obcc-messages" });
+    this.messagesEl.addEventListener("scroll", () => this.syncScrollBottomButton());
+    this.scrollBottomButtonEl = messagesFrame.createEl("button", {
+      cls: "obcc-scroll-bottom is-hidden",
+      attr: { type: "button", title: this.t("scrollToBottom"), "aria-label": this.t("scrollToBottom") }
+    });
+    setIcon(this.scrollBottomButtonEl, "arrow-down");
+    this.scrollBottomButtonEl.addEventListener("click", () => this.scrollMessagesToBottom(true));
 
     const footer = shell.createDiv({ cls: "obcc-footer" });
     this.mentionEl = footer.createDiv({ cls: "obcc-mention-popover is-hidden" });
@@ -3889,6 +3906,7 @@ class CancipView extends ItemView {
 
     this.inputEl.addEventListener("input", () => {
       this.resizeInput();
+      this.syncRequestControls();
       void this.updateMentionPopup();
     });
     this.inputEl.addEventListener("keydown", (event) => {
@@ -3988,11 +4006,14 @@ class CancipView extends ItemView {
   private syncRequestControls(): void {
     const running = Boolean(this.activeRequest);
     if (!this.sendButtonEl) return;
-    this.sendButtonEl.toggleClass("is-stopping", running);
-    this.sendButtonEl.setAttr("title", running ? this.t("stop") : this.t("send"));
-    this.sendButtonEl.setAttr("aria-label", running ? this.t("stop") : this.t("send"));
+    const queueing = running && Boolean(this.inputEl?.value.trim());
+    const label = running ? (queueing ? this.t("queueMessage") : this.t("stop")) : this.t("send");
+    this.sendButtonEl.toggleClass("is-stopping", running && !queueing);
+    this.sendButtonEl.toggleClass("is-queueing", queueing);
+    this.sendButtonEl.setAttr("title", label);
+    this.sendButtonEl.setAttr("aria-label", label);
     this.sendButtonEl.empty();
-    setIcon(this.sendButtonEl, running ? "square" : "arrow-up");
+    setIcon(this.sendButtonEl, running && !queueing ? "square" : "arrow-up");
   }
 
   private renderQueueStatus(): void {
@@ -4799,12 +4820,11 @@ class CancipView extends ItemView {
   }
 
   private async submit(mode: ComposerSubmitMode = "queue"): Promise<void> {
-    if (this.activeRequest && mode === "queue") {
+    const rawPrompt = this.inputEl.value.trim();
+    if (this.activeRequest && mode === "queue" && !rawPrompt) {
       this.stopRequest({ drainQueue: false });
       return;
     }
-
-    const rawPrompt = this.inputEl.value.trim();
     if (!rawPrompt) return;
     this.inputEl.value = "";
     this.resizeInput();
@@ -4815,6 +4835,7 @@ class CancipView extends ItemView {
         this.stopRequest({ drainQueue: true, notice: false });
         this.setStatus(this.t("directSendQueued"));
       }
+      this.syncRequestControls();
       return;
     }
 
@@ -4920,7 +4941,7 @@ class CancipView extends ItemView {
         const finalReport = await this.continueAfterToolRuns(context, actionReport, request, rawPrompt);
         const finalActionReport = finalReport ?? actionReport;
         const needsMoreAction = shouldExpectToolActionForPrompt(rawPrompt) && shouldNeedMoreActionForPrompt(rawPrompt, finalActionReport.runs);
-        this.ensureFinalConclusion(finalActionReport, startedAt, needsMoreAction);
+        this.ensureFinalConclusion(finalActionReport, startedAt, needsMoreAction, rawPrompt);
         if (needsMoreAction) {
           this.setStatus(this.t("callFailed"));
           await this.finishCurrentSessionStatus("failed", true, request);
@@ -5179,7 +5200,7 @@ class CancipView extends ItemView {
         this.addMessage("assistant", actionReport.report);
         result = `${result}\n\n${actionReport.report}`;
         const finalReport = await this.continueAfterToolRuns(context, actionReport, request, task.prompt);
-        this.ensureFinalConclusion(finalReport ?? actionReport, startedAt);
+        this.ensureFinalConclusion(finalReport ?? actionReport, startedAt, false, task.prompt);
       } else {
         this.ensurePlainFinalConclusion(startedAt);
       }
@@ -6869,18 +6890,18 @@ class CancipView extends ItemView {
     this.renderMessages();
   }
 
-  private ensureFinalConclusion(result: ActionHandlingResult, startedAt?: number, needsMoreAction = false): void {
+  private ensureFinalConclusion(result: ActionHandlingResult, startedAt?: number, needsMoreAction = false, originalPrompt = ""): void {
     if (!result.runs.length) return;
     const lastAssistant = [...this.messages].reverse().find((message) => message.role === "assistant");
     if (lastAssistant && !prepareMessageDisplay(redactSensitiveText(lastAssistant.content)).processOnly && !isWeakFinalConclusion(lastAssistant.content)) return;
     const summary = [
-      this.humanFinalConclusion(result.runs, needsMoreAction),
+      this.humanFinalConclusion(result.runs, needsMoreAction, originalPrompt),
       typeof startedAt === "number" ? this.t("totalElapsed", { elapsed: formatElapsed(Date.now() - startedAt) }) : ""
     ].filter(Boolean).join("\n\n");
     this.addMessage("assistant", this.t("finalConclusionFallback", { summary }));
   }
 
-  private humanFinalConclusion(runs: ToolRun[], needsMoreAction = false): string {
+  private humanFinalConclusion(runs: ToolRun[], needsMoreAction = false, originalPrompt = ""): string {
     const failed = runs.filter((run) => run.status === "failed");
     const rejected = runs.filter((run) => run.status === "rejected");
     const pending = runs.filter((run) => run.status === "pending" || run.status === "blocked");
@@ -6888,58 +6909,64 @@ class CancipView extends ItemView {
     const writes = executed.filter((run) => this.isWriteLikeAction(run.action));
     const reads = executed.filter((run) => !this.isWriteLikeAction(run.action));
     const paths = uniqueStrings(writes.map((run) => this.actionPrimaryPath(run.action)).filter(Boolean)).slice(0, 5);
+    const goal = originalPrompt.trim() ? `针对“${trimContext(originalPrompt.replace(/\s+/g, " "), 80)}”：` : "";
 
     if (pending.length) {
+      const firstPending = pending[0];
       return [
-        "还没完成，正在等你确认。",
-        `Cancip 已准备好 ${pending.length} 个需要权限的操作。你确认后才会继续执行。`,
-        "上方“过程记录”里可以查看具体要做什么。"
+        `${goal}还没完成，正在等你确认。`,
+        `待确认：${pending.length} 个操作，当前第一个是 ${firstPending.summary}。`,
+        "确认后会继续执行；拒绝则会按失败/阻塞反馈。"
       ].join("\n\n");
     }
 
     if (failed.length || rejected.length) {
-      const firstIssue = failed[0]?.error || rejected[0]?.error || this.t("toolRunFailed");
+      const firstRun = failed[0] ?? rejected[0];
+      const firstIssue = firstRun?.error || this.t("toolRunFailed");
+      const target = firstRun ? this.actionPrimaryPath(firstRun.action) : "";
       const patchFindFailed = failed.some((run) => run.action.type === "patch" && /was not found|find text/i.test(run.error ?? ""));
       return [
-        writes.length ? "部分完成，但还有步骤失败。" : "未完成，工具步骤没有全部成功。",
-        writes.length && paths.length ? `已完成的改动：${paths.join("、")}` : reads.length ? "已完成读取/检索，但还没有形成可用结论或改动。" : "",
+        writes.length ? `${goal}部分完成，但还有步骤失败。` : `${goal}没完成。`,
+        firstRun ? `失败步骤：${firstRun.summary}${target ? `（${target}）` : ""}` : "",
+        writes.length && paths.length ? `已完成改动：${paths.join("、")}` : reads.length ? "这轮主要完成了读取/检索，还没有完成目标改动。" : "",
         `失败原因：${trimContext(redactSensitiveText(firstIssue), 220)}`,
         patchFindFailed
           ? "下一步：必须读取目标文件的当前片段，换更小锚点或 regex patch；不能重复同一个失败补丁。"
-          : "下一步：根据上方过程记录里的失败项，改用更小且可验证的动作继续；如果确实受限，应明确具体阻塞。"
+          : "下一步：基于这个失败结果改用更小、可验证的动作继续；如果确实受限，就明确具体缺少什么能力。"
       ].filter(Boolean).join("\n\n");
     }
 
     if (needsMoreAction) {
       return [
-        writes.length ? "部分完成，但还没达到用户目标。" : "未完成。",
-        paths.length ? `已完成的改动：${paths.join("、")}` : reads.length ? "已完成读取/检索，但还没有形成目标要求的改动。" : "",
-        "原因：当前动作不足以证明任务完成，尤其是设置页、UI、插件自身或管理功能类任务，不能只改配置或只读文件就算完成。",
-        "下一步：必须基于最近工具结果继续做实际 patch/write/验证；如果确实受限，要明确具体缺少什么能力。"
+        writes.length ? `${goal}部分完成，但还没达到目标。` : `${goal}没完成。`,
+        paths.length ? `已完成改动：${paths.join("、")}` : reads.length ? "这轮只完成读取/检索，还没有形成目标要求的改动。" : "",
+        "原因：当前动作不足以证明任务完成。设置页、UI、插件自身或管理功能类任务，不能只读文件或只改配置就算完成。",
+        "下一步：继续做实际 patch/write/验证；如果受限，必须说清楚缺少的能力。"
       ].filter(Boolean).join("\n\n");
     }
 
     if (writes.length) {
       return [
-        "已完成。",
-        paths.length ? `已改动：${paths.join("、")}` : "相关写入/修改动作已执行。",
-        "上方过程记录只用于追溯具体工具步骤。"
+        `${goal}已完成。`,
+        paths.length ? `已改动：${paths.join("、")}` : "相关写入/修改动作已执行并返回成功。",
+        "过程细节已折叠保留，方便回查。"
       ].join("\n\n");
     }
 
     if (reads.length) {
       return [
-        "未完成。",
+        `${goal}没完成。`,
         "这轮只完成了读取/检索，没有产生实际改动或可验证结果。",
-        "原因：模型没有按实现任务继续输出 patch/write/有效命令；Cancip 已记录为执行链问题，应继续从最后一次工具结果直接修正，而不是重新泛搜。"
+        "下一步应从最后一次工具结果继续，而不是重新泛搜或套话总结。"
       ].join("\n\n");
     }
 
-    return "未完成。Cancip 没有生成可直接使用的结果；应给出明确阻塞原因，或继续执行具体工具动作。";
+    return `${goal}没完成。Cancip 没有生成可直接使用的结果；应给出明确阻塞原因，或继续执行具体工具动作。`;
   }
 
   private isWriteLikeAction(action: CancipAction): boolean {
     if (action.type === "write" || action.type === "append" || action.type === "patch" || action.type === "mkdir" || action.type === "rename" || action.type === "copy") return true;
+    if (action.type === "config") return true;
     if (action.type === "todo") return action.op !== "list";
     if (action.type === "automation") return action.op !== "list";
     if (action.type !== "command") return false;
@@ -6957,6 +6984,7 @@ class CancipView extends ItemView {
   }
 
   private actionPrimaryPath(action: CancipAction): string {
+    if (action.type === "config") return action.path?.trim() || CANCIP_CONFIG_PATH;
     if ("path" in action && typeof action.path === "string") return action.path;
     if (action.type === "automation" && action.id) return action.id;
     if (action.type === "command") return action.command;
@@ -7069,6 +7097,10 @@ class CancipView extends ItemView {
       return await this.executeAutomationAction(action);
     }
 
+    if (action.type === "config") {
+      return await this.executeConfigAction(action);
+    }
+
     const adapter = this.app.vault.adapter;
     const path = normalizeActionPath(action.path);
 
@@ -7115,6 +7147,40 @@ class CancipView extends ItemView {
     await ensureParentFolder(adapter, newPath);
     await adapter.copy(path, newPath);
     return this.withSelfPatchNotice(newPath, this.t("actionCopy", { path, newPath }));
+  }
+
+  private async executeConfigAction(action: Extract<CancipAction, { type: "config" }>): Promise<string> {
+    const adapter = this.app.vault.adapter;
+    const path = normalizeActionPath(action.path?.trim() || CANCIP_CONFIG_PATH);
+    if (!path.toLowerCase().endsWith(".json")) throw new Error(`config action only supports JSON files: ${path}`);
+    const raw = await adapter.exists(path) ? await adapter.read(path) : "{}";
+    let parsed: unknown;
+    try {
+      parsed = raw.trim() ? JSON.parse(raw) : {};
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new Error(`config JSON parse failed in ${path}: ${reason}`);
+    }
+    const next: Record<string, unknown> = action.replace ? {} : cloneJsonObject(parsed);
+    const changed = new Set<string>();
+    if (action.set) {
+      deepMergeJsonObject(next, action.set, changed);
+    }
+    for (const keyPath of action.unset ?? []) {
+      if (deleteJsonPath(next, keyPath)) changed.add(keyPath.trim());
+    }
+    if (!changed.size) throw new Error("config action requires set or unset changes");
+    await ensureParentFolder(adapter, path);
+    await adapter.write(path, `${JSON.stringify(next, null, 2)}\n`);
+    try {
+      const verified = JSON.parse(await adapter.read(path)) as unknown;
+      if (JSON.stringify(verified) !== JSON.stringify(next)) throw new Error("readback mismatch");
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new Error(`config write verification failed in ${path}: ${reason}`);
+    }
+    const keys = [...changed].filter(Boolean).slice(0, 20).join(", ");
+    return this.withSelfPatchNotice(path, this.t("configActionResult", { path, keys }));
   }
 
   private formatReadResult(path: string, content: string, action: Extract<CancipAction, { type: "read" }>): string {
@@ -7624,6 +7690,7 @@ class CancipView extends ItemView {
     if (action.type === "command") return this.t("actionCommand", { command: action.command, args: JSON.stringify(action.args ?? {}) });
     if (action.type === "todo") return this.t("actionTodo", { op: action.op });
     if (action.type === "automation") return this.t("actionAutomation", { op: action.op });
+    if (action.type === "config") return this.t("actionConfig", { path: action.path?.trim() || CANCIP_CONFIG_PATH });
     const path = action.path;
     if (action.type === "read") {
       const suffix = action.query?.trim() ? ` query "${trimContext(action.query.trim(), 60)}"` : "";
@@ -7731,17 +7798,31 @@ class CancipView extends ItemView {
   private afterMessagesRendered(stickToBottom: boolean): void {
     this.messagesEl.style.minHeight = "0";
     this.messagesEl.style.overflowY = "auto";
-    if (stickToBottom) {
-      window.requestAnimationFrame(() => {
-        this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
-      });
-    }
+    if (stickToBottom) this.scrollMessagesToBottom(false);
+    else this.syncScrollBottomButton();
   }
 
   private shouldStickToMessageBottom(): boolean {
     if (!this.messagesEl || this.messagesEl.scrollHeight <= this.messagesEl.clientHeight + 1) return true;
     const distanceFromBottom = this.messagesEl.scrollHeight - this.messagesEl.scrollTop - this.messagesEl.clientHeight;
-    return distanceFromBottom < 80;
+    return distanceFromBottom < 96;
+  }
+
+  private scrollMessagesToBottom(smooth: boolean): void {
+    if (!this.messagesEl) return;
+    window.requestAnimationFrame(() => {
+      this.messagesEl.scrollTo({
+        top: this.messagesEl.scrollHeight,
+        behavior: smooth ? "smooth" : "auto"
+      });
+      window.setTimeout(() => this.syncScrollBottomButton(), smooth ? 220 : 0);
+    });
+  }
+
+  private syncScrollBottomButton(): void {
+    if (!this.scrollBottomButtonEl || !this.messagesEl) return;
+    const show = !this.shouldStickToMessageBottom();
+    this.scrollBottomButtonEl.toggleClass("is-hidden", !show);
   }
 
   private renderSingleMessage(itemData: RenderedMessage, finalAssistantIndex: number): void {
@@ -9285,16 +9366,20 @@ function isWeakFinalConclusion(content: string): boolean {
     || normalized.includes("请继续让Cancip")
     || normalized.includes("重新发送更明确的问题")
     || normalized.includes("会话已加载")
-    || normalized.includes("仅表示载入记录");
+    || normalized.includes("仅表示载入记录")
+    || normalized.includes("刚才我做了这些")
+    || normalized.includes("工具执行结果")
+    || normalized.includes("patchfindtextwasnotfound")
+    || normalized.includes("动作失败");
 }
 
 function formatElapsed(ms: number): string {
   const safe = Math.max(0, Math.round(ms));
   if (safe < 1000) return `${safe}ms`;
-  const seconds = safe / 1000;
-  if (seconds < 60) return `${seconds.toFixed(seconds < 10 ? 1 : 0)}s`;
+  const seconds = Math.round(safe / 1000);
+  if (seconds < 60) return `${seconds}s`;
   const minutes = Math.floor(seconds / 60);
-  const rest = Math.round(seconds % 60);
+  const rest = seconds % 60;
   return `${minutes}m${String(rest).padStart(2, "0")}s`;
 }
 
@@ -9334,6 +9419,7 @@ function hasUnverifiedWriteAction(runs: ToolRun[]): boolean {
 
 function isWriteActionForContinuation(action: CancipAction): boolean {
   if (action.type === "write" || action.type === "append" || action.type === "patch" || action.type === "mkdir" || action.type === "rename" || action.type === "copy") return true;
+  if (action.type === "config") return true;
   if (action.type === "todo") return action.op !== "list";
   if (action.type === "automation") return action.op !== "list";
   if (action.type !== "command") return false;
@@ -9342,6 +9428,7 @@ function isWriteActionForContinuation(action: CancipAction): boolean {
 
 function actionVerificationPath(action: CancipAction): string {
   if (action.type === "rename" || action.type === "copy") return normalizePath(action.newPath);
+  if (action.type === "config") return normalizePath(action.path?.trim() || CANCIP_CONFIG_PATH);
   if ("path" in action && typeof action.path === "string") return normalizePath(action.path);
   if (action.type === "command") return action.command.trim();
   if (action.type === "automation") return action.id?.trim() || "automation";
@@ -9349,6 +9436,10 @@ function actionVerificationPath(action: CancipAction): string {
 }
 
 function isVerificationAction(action: CancipAction, writePaths: string[]): boolean {
+  if (action.type === "config") {
+    const path = normalizePath(action.path?.trim() || CANCIP_CONFIG_PATH);
+    return writePaths.some((target) => target === path);
+  }
   if (action.type === "read") {
     const path = normalizePath(action.path);
     return writePaths.some((target) => target === path || target.startsWith("command:"));
@@ -9628,7 +9719,7 @@ function migrateDefaultMemorySearchPolicy(settings: Settings): Settings {
 function isOutdatedSystemPrompt(prompt: string): boolean {
   const normalized = prompt.trim();
   if (!normalized) return true;
-  if (/Cancip Core Prompt v0\.1\.\d+/i.test(normalized) && !normalized.includes("Cancip Core Prompt v0.1.89")) return true;
+  if (/Cancip Core Prompt v0\.1\.\d+/i.test(normalized) && !normalized.includes("Cancip Core Prompt v0.1.91")) return true;
   return (
     normalized === LEGACY_SYSTEM_PROMPT ||
     normalized.includes("核心记忆和 Vault Search 上下文回答") ||
@@ -9872,6 +9963,44 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function cloneJsonObject(value: unknown): Record<string, unknown> {
+  if (!isRecord(value)) return {};
+  return JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+}
+
+function cloneJsonValue(value: unknown): unknown {
+  if (value === undefined) return null;
+  return JSON.parse(JSON.stringify(value));
+}
+
+function deepMergeJsonObject(target: Record<string, unknown>, patch: Record<string, unknown>, changed: Set<string>, prefix = ""): void {
+  for (const [key, value] of Object.entries(patch)) {
+    if (!key) continue;
+    const keyPath = prefix ? `${prefix}.${key}` : key;
+    if (isRecord(value) && isRecord(target[key])) {
+      deepMergeJsonObject(target[key] as Record<string, unknown>, value, changed, keyPath);
+      continue;
+    }
+    target[key] = cloneJsonValue(value);
+    changed.add(keyPath);
+  }
+}
+
+function deleteJsonPath(target: Record<string, unknown>, keyPath: string): boolean {
+  const parts = keyPath.split(".").map((part) => part.trim()).filter(Boolean);
+  if (!parts.length) return false;
+  let cursor: Record<string, unknown> = target;
+  for (const part of parts.slice(0, -1)) {
+    const next = cursor[part];
+    if (!isRecord(next)) return false;
+    cursor = next;
+  }
+  const last = parts[parts.length - 1];
+  if (!Object.prototype.hasOwnProperty.call(cursor, last)) return false;
+  delete cursor[last];
+  return true;
+}
+
 function isLanguage(value: unknown): value is Language {
   return typeof value === "string" && (LANGUAGE_VALUES as readonly string[]).includes(value);
 }
@@ -10078,17 +10207,37 @@ function shouldFoldCodeBlock(lang: string, body: string): boolean {
 
 function foldProcessAfterConclusion(content: string, hiddenToolBlocks: FoldedMessageBlock[]): string {
   const lines = content.split(/\r?\n/);
-  const cutIndex = lines.findIndex((line, index) => {
-    if (index < 2) return false;
-    const trimmed = line.trim();
-    return /^(?:#{1,6}\s*)?(?:过程|执行过程|操作过程|工具过程|命令过程|细节|详情|步骤|检查|验证|日志|process|details?|steps?|commands?|logs?)[:：]?\s*$/i.test(trimmed);
-  });
+  const cutIndex = findProcessTailCutIndex(lines);
   if (cutIndex < 0) return content;
   const visible = lines.slice(0, cutIndex).join("\n").trim();
   const hidden = lines.slice(cutIndex).join("\n").trim();
   if (!visible || !hidden) return content;
   hiddenToolBlocks.push({ title: "process", content: hidden });
   return visible;
+}
+
+function findProcessTailCutIndex(lines: string[]): number {
+  for (let index = 0; index < lines.length; index += 1) {
+    if (index < 2) continue;
+    const trimmed = lines[index].trim();
+    if (!trimmed) continue;
+    if (isProcessSectionLine(trimmed)) return index;
+    if (hasConclusionCueBefore(lines, index) && looksLikeVerboseProcessLine(trimmed)) return index;
+  }
+  return -1;
+}
+
+function hasConclusionCueBefore(lines: string[], index: number): boolean {
+  const before = lines.slice(0, index).join("\n").replace(/\s+/g, "");
+  return /(?:最终结论|Finalanswer|已完成|没完成|未完成|部分完成|失败|等待确认|下一步)/i.test(before);
+}
+
+function isProcessSectionLine(trimmed: string): boolean {
+  return /^(?:#{1,6}\s*)?(?:过程|执行过程|操作过程|工具过程|命令过程|过程记录|工具执行结果|执行详情|命令详情|细节|详情|步骤|检查|验证|日志|我做了这些|刚才我做了这些|本次执行|尝试过程|process|details?|steps?|commands?|logs?)[:：]?\s*$/i.test(trimmed);
+}
+
+function looksLikeVerboseProcessLine(trimmed: string): boolean {
+  return /^(?:刚才我(?:做了|执行了|尝试了)这些|我(?:刚才|已经)?(?:做了|执行了|尝试了)|本次(?:执行|操作|改动|尝试)|已(?:执行|尝试|读取|修改|写入|验证)|尝试(?:修改|读取|执行)|工具执行结果|动作失败|失败步骤|失败原因|patch find text was not found|patch 修改|read |write |patch |command )[:：\s]/i.test(trimmed);
 }
 
 function foldReasoningSections(content: string, hiddenToolBlocks: FoldedMessageBlock[]): string {
@@ -10286,6 +10435,21 @@ function parseCancipAction(input: unknown): CancipAction | null {
       enabled: typeof input.enabled === "boolean" ? input.enabled : undefined,
       intervalMinutes: typeof input.intervalMinutes === "number" ? input.intervalMinutes : Number.isFinite(Number.parseInt(String(input.intervalMinutes ?? ""), 10)) ? Number.parseInt(String(input.intervalMinutes), 10) : undefined,
       hour: typeof input.hour === "number" ? input.hour : Number.isFinite(Number.parseInt(String(input.hour ?? ""), 10)) ? Number.parseInt(String(input.hour), 10) : undefined
+    };
+  }
+
+  if (input.type === "config") {
+    const set = isRecord(input.set) ? input.set : undefined;
+    const unset = Array.isArray(input.unset)
+      ? input.unset.filter((item): item is string => typeof item === "string" && Boolean(item.trim()))
+      : undefined;
+    if (!set && !unset?.length) return null;
+    return {
+      type: "config",
+      path: typeof input.path === "string" ? input.path : undefined,
+      set,
+      unset,
+      replace: Boolean(input.replace)
     };
   }
 

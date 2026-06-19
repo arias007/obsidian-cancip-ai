@@ -283,6 +283,39 @@
   -webkit-overflow-scrolling: touch;
 }
 
+.obcc-scroll-bottom {
+  position: absolute;
+  right: 14px;
+  bottom: 12px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 50%;
+  background: var(--background-primary);
+  color: var(--text-muted);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+}
+
+.obcc-scroll-bottom.is-hidden {
+  display: none;
+}
+
+.obcc-scroll-bottom:hover,
+.obcc-scroll-bottom:focus-visible {
+  border-color: var(--interactive-accent);
+  color: var(--interactive-accent);
+}
+
+.obcc-scroll-bottom svg {
+  width: 18px;
+  height: 18px;
+}
+
 .obcc-context-strip {
   display: flex;
   flex: 0 0 auto;
@@ -722,6 +755,8 @@
   max-width: 100%;
   min-width: 0;
   min-height: 34px;
+  height: auto !important;
+  max-height: none !important;
   padding: 7px 8px;
   border: 1px solid var(--background-modifier-border);
   border-radius: 7px;
@@ -731,6 +766,7 @@
   white-space: normal;
   overflow: visible;
   box-sizing: border-box;
+  line-height: 1.35;
 }
 
 .obcc-choice-card:hover {
@@ -1363,6 +1399,7 @@
 .obcc-queue-status {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
   min-width: 0;
   margin: -1px 3px 0;
@@ -1381,7 +1418,9 @@
 }
 
 .obcc-queue-next {
+  flex: 1 1 120px;
   min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1544,6 +1583,11 @@
 
 .obcc-send.is-stopping {
   background: var(--background-modifier-error);
+  color: var(--text-on-accent);
+}
+
+.obcc-send.is-queueing {
+  background: var(--interactive-accent);
   color: var(--text-on-accent);
 }
 
@@ -1844,7 +1888,7 @@
   }
 
   .obcc-messages {
-    padding: 8px;
+    padding: 8px 8px 42px;
   }
 
   .obcc-user {
