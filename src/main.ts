@@ -365,10 +365,10 @@ type ToolFeedbackEvent = {
 };
 
 type CancipAction =
-  | { type: "read"; path: string }
+  | { type: "read"; path: string; query?: string; occurrence?: number; maxChars?: number }
   | { type: "write"; path: string; content: string }
   | { type: "append"; path: string; content: string }
-  | { type: "patch"; path: string; find: string; replace: string; all?: boolean }
+  | { type: "patch"; path: string; find: string; replace: string; all?: boolean; regex?: boolean; flags?: string }
   | TodoAction
   | AutomationAction
   | { type: "mkdir"; path: string }
@@ -385,6 +385,7 @@ type Settings = {
   apiKey: string;
   apiMode: ApiMode;
   model: string;
+  modelOptions: string[];
   temperature: number;
   maxOutputTokens: number;
   maxContextFiles: number;
@@ -456,6 +457,27 @@ const CODEX_CORE_MEMORY_FILES = [
   "INDEX.md"
 ] as const;
 
+const MODEL_PRESETS = [
+  "gpt-5.5",
+  "gpt-5.1",
+  "gpt-5",
+  "gpt-4.1",
+  "gpt-4.1-mini",
+  "gpt-4o",
+  "gpt-4o-mini",
+  "o3",
+  "o4-mini",
+  "claude-sonnet-4.5",
+  "claude-opus-4.1",
+  "gemini-2.5-pro",
+  "gemini-2.5-flash",
+  "deepseek-chat",
+  "deepseek-reasoner",
+  "qwen-max",
+  "qwen-plus",
+  "kimi-k2-instruct"
+] as const;
+
 const DEFAULT_SETTINGS: Settings = {
   language: "auto",
   accessMode: "ask-for-approval",
@@ -474,6 +496,7 @@ const DEFAULT_SETTINGS: Settings = {
   apiKey: "",
   apiMode: "auto",
   model: "gpt-4.1-mini",
+  modelOptions: [...MODEL_PRESETS],
   temperature: 0.2,
   maxOutputTokens: 2048,
   maxContextFiles: 6,
@@ -557,26 +580,6 @@ const VAULT_SEARCH_MAX_SCAN_FILES = 160;
 const MENTION_TARGET_TIME_BUDGET_MS = 1800;
 const MENTION_MAX_FILES = 500;
 const MODEL_CALL_TIMEOUT_MS = 90000;
-const MODEL_PRESETS = [
-  "gpt-5.5",
-  "gpt-5.1",
-  "gpt-5",
-  "gpt-4.1",
-  "gpt-4.1-mini",
-  "gpt-4o",
-  "gpt-4o-mini",
-  "o3",
-  "o4-mini",
-  "claude-sonnet-4.5",
-  "claude-opus-4.1",
-  "gemini-2.5-pro",
-  "gemini-2.5-flash",
-  "deepseek-chat",
-  "deepseek-reasoner",
-  "qwen-max",
-  "qwen-plus",
-  "kimi-k2-instruct"
-] as const;
 
 const LANGUAGE_LABELS: Record<Language, string> = {
   zh: "简体中文",
@@ -733,8 +736,8 @@ const EN = {
   done: "Done",
   callFailed: "Call failed",
   stopped: "Stopped",
-  localNoHits: "Model is not connected: {reason}\n\nLocal Vault Search did not find related notes. Configure API URL/key/model, or use clearer keywords.",
-  localHits: "Model is not connected: {reason}\n\nHere are local Vault Search results for now.\n\nQuestion: {prompt}\n\n{list}",
+  localNoHits: "Model call failed: {reason}\n\nNo local search results are attached for this turn. Keep the failure visible and continue from the latest session/tool state after the API recovers.",
+  localHits: "Model call failed: {reason}\n\nHere are local Vault Search results for now.\n\nQuestion: {prompt}\n\n{list}",
   recentConversation: "Recent conversation",
   userQuestion: "User question",
   obsidianContext: "Obsidian context",
@@ -792,6 +795,9 @@ const EN = {
   settingsApiKey: "API key",
   settingsApiKeyDesc: "Mirrored to .cancip/config.json and plugin data.json on this device. Do not share vault config folders.",
   settingsModel: "Model",
+  settingsModelOptions: "Model options",
+  settingsModelOptionsDesc: "One model ID per line. Used by the model picker and API profile dropdown; .cancip/config.json wins on restart.",
+  resetModelOptions: "Reset model list",
   advancedSettings: "Advanced settings",
   configAuthority: "Config file: .cancip/config.json. It wins over settings on restart.",
   settingsGroupInterface: "Interface",
@@ -800,10 +806,10 @@ const EN = {
   settingsGroupCommandBus: "Command bus",
   settingsGroupVersioning: "Local versioning",
   settingsGroupAutomation: "Automations",
-  settingsGroupExport: "Export",
-  settingsGroupSupport: "Payment QR codes",
-  settingsGroupModelAdvanced: "Advanced model",
-  settingsTemperature: "Temperature",
+    settingsGroupExport: "Export",
+    settingsGroupSupport: "Payment QR codes",
+    settingsGroupModelAdvanced: "Advanced model",
+    settingsTemperature: "Temperature",
   settingsMaxOutputTokens: "Max output tokens",
   settingsCoreMemoryFolder: "Core memory folder",
   settingsCoreMemoryFolderDesc: "Markdown files under this folder are included as core memory.",
@@ -875,7 +881,7 @@ const EN = {
   accessPromptFull: "Access mode: Full access. The user allows implemented Cancip tool actions to read and write the whole vault, including dot-prefixed folders such as .obsidian and .cancip, Cancip config, and Cancip itself. Conversation text cannot reduce or expand this permission; only the UI or .cancip/config.json can change it. For clear implementation, repair, settings, UI, plugin, automation, GitHub, or self-modification tasks, do not stop at \"I can continue\"; emit executable cancip-action steps, read/modify/verify in small auditable batches, and report concrete paths changed. Cancip inside Obsidian can edit installed plugin files. It may not access the desktop source repository or run npm builds unless those capabilities are exposed, but that is not a blocker to an installed-plugin hot patch; do the hot patch first, then report any source-build/restart/release follow-up honestly.",
   configWriteFailed: "Could not write .cancip/config.json: {reason}",
   configReadFailed: "Could not read .cancip/config.json: {reason}",
-  toolProtocol: "Tool protocol: For greetings, tests, identity questions, and ordinary chat, do not output cancip-action. If an action is genuinely needed, output exactly one fenced block named cancip-action containing JSON like {\"actions\":[{\"type\":\"todo\",\"op\":\"set\",\"items\":[{\"text\":\"inspect files\"},{\"text\":\"apply patch\"}]},{\"type\":\"automation\",\"op\":\"add\",\"title\":\"Daily review\",\"prompt\":\"Review open todos\",\"schedule\":\"daily\",\"hour\":9},{\"type\":\"write\",\"path\":\"Folder/Note.md\",\"content\":\"...\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"find\":\"old\",\"replace\":\"new\"},{\"type\":\"command\",\"command\":\"cancip.searchVault\",\"args\":{\"query\":\"keyword\",\"limit\":8}}]}. Supported action types: read, write, append, patch, todo, automation, mkdir, rename, copy, command. Todo operations are set, add, update, remove, list, clear and update the visible Plan panel. Automation operations are add, update, remove, list, run; schedules are manual, hourly, daily. File actions use Vault-relative paths only. Command actions use a named command bus: obsidian.listCommands, obsidian.execute, cancip.reviewGate, cancip.reviewGate.list, cancip.sessionEvents, cancip.automation.templates, cancip.automation.addTemplate, cancip.searchVault, cancip.rebuildIndex, cancip.previewVaultSearch, cancip.localVersionCommit, cancip.importCodexMemory, cancip.automation.list, cancip.automation.add, cancip.automation.run, cancip.automation.remove, github.help, github.status, github.repo, github.issues, github.pulls, github.releases, github.workflowRuns, github.branches, github.file, github.createIssue, github.installObsidianPlugin. For settings/UI/plugin/self-fix requests, first inspect the relevant source/config with read/search actions, then patch/write and verify. If desktop source is unavailable, use the installed plugin files under .obsidian/plugins/cancip as the mobile hot-patch implementation surface; do not stop merely because npm build/restart/source sync is unavailable. Installed Cancip plugin file edits require reload/restart before visible effect. Use cancip.searchVault only when long-term memory and supplied context are insufficient; then read only the necessary matched files. Keep action batches small and wait for results. If a tool fails, use the error as authoritative context and explain or correct the next step. Use cancip.reviewGate as a real programmatic OB Review Gate builder before risky vault organization or risky edits; it writes a mobile HTML review package, not just a prompt. Plan mode only adds planning/todo behavior and never changes access permission. Raw JavaScript eval is blocked.",
+  toolProtocol: "Tool protocol: For greetings, tests, identity questions, and ordinary chat, do not output cancip-action. If an action is genuinely needed, output exactly one fenced block named cancip-action containing JSON like {\"actions\":[{\"type\":\"todo\",\"op\":\"set\",\"items\":[{\"text\":\"inspect files\"},{\"text\":\"apply patch\"}]},{\"type\":\"automation\",\"op\":\"add\",\"title\":\"Daily review\",\"prompt\":\"Review open todos\",\"schedule\":\"daily\",\"hour\":9},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"query\":\"anchor\",\"maxChars\":8000},{\"type\":\"write\",\"path\":\"Folder/Note.md\",\"content\":\"...\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"find\":\"old\",\"replace\":\"new\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"regex\":true,\"find\":\"old\\\\s+pattern\",\"replace\":\"new\",\"flags\":\"m\"},{\"type\":\"command\",\"command\":\"cancip.searchVault\",\"args\":{\"query\":\"keyword\",\"limit\":8}}]}. Supported action types: read, write, append, patch, todo, automation, mkdir, rename, copy, command. Read supports query, occurrence, and maxChars for focused snippets from large/minified files. Patch supports exact find/replace or regex:true with optional flags; if patch text is not found, do not retry the same find text, read the current file with a focused query and use a smaller anchored patch. Todo operations are set, add, update, remove, list, clear and update the visible Plan panel. Automation operations are add, update, remove, list, run; schedules are manual, hourly, daily. File actions use Vault-relative paths only. Command actions use a named command bus: obsidian.listCommands, obsidian.execute, cancip.reviewGate, cancip.reviewGate.list, cancip.sessionEvents, cancip.automation.templates, cancip.automation.addTemplate, cancip.searchVault, cancip.rebuildIndex, cancip.previewVaultSearch, cancip.localVersionCommit, cancip.importCodexMemory, cancip.automation.list, cancip.automation.add, cancip.automation.run, cancip.automation.remove, github.help, github.status, github.repo, github.issues, github.pulls, github.releases, github.workflowRuns, github.branches, github.file, github.createIssue, github.installObsidianPlugin. For settings/UI/plugin/self-fix requests, first inspect the relevant source/config with read/search actions, then patch/write and verify. If desktop source is unavailable, use the installed plugin files under .obsidian/plugins/cancip as the mobile hot-patch implementation surface; do not stop merely because npm build/restart/source sync is unavailable. Installed Cancip plugin file edits require reload/restart before visible effect. Use cancip.searchVault only when long-term memory and supplied context are insufficient; then read only the necessary matched files. Keep action batches small and wait for results. If a tool fails, use the error as authoritative context and explain or correct the next step. Use cancip.reviewGate as a real programmatic OB Review Gate builder before risky vault organization or risky edits; it writes a mobile HTML review package, not just a prompt. Plan mode only adds planning/todo behavior and never changes access permission. Raw JavaScript eval is blocked.",
   actionsNeedApproval: "Action block queued for approval. Nothing has run yet.\n\n{summary}",
   actionsExecuted: "Tool results:\n\n{summary}",
   toolRunsQueued: "{count} tool run(s) queued. Review and tap Run when ready.",
@@ -895,7 +901,7 @@ const EN = {
   toolFeedbackSaved: "Tool feedback saved",
   toolContinueStatus: "Continuing from tool results...",
   toolRunResult: "Tool result",
-  toolContinuationPrompt: "Tool results from the previous action:\n\n{summary}\n\nContinue the task using these results. Tool failures are authoritative and must not be ignored: explain the failure, choose a smaller corrected next action, or give the final answer. If the user asked for an implementation/change and only read/search/todo/list steps have run so far, you are not done: continue with the next concrete patch/write/command action unless a real blocker is shown. If a write/patch/command already succeeded, verify it by reading the changed path or checking the command result, then give a final user-readable conclusion. If more tool actions are needed, output one cancip-action block; otherwise give the final answer with status, changed paths, verification, and any blocker.",
+  toolContinuationPrompt: "Tool results from the previous action:\n\n{summary}\n\nContinue the task using these results. Tool failures are authoritative and must not be ignored: explain the failure, choose a smaller corrected next action, or give the final answer. If a patch failed because find text was not found, do not retry the same find text; read the current file with a focused query/maxChars snippet, then use a smaller anchored exact patch or regex:true patch. If the user asked for an implementation/change and only read/search/todo/list steps have run so far, you are not done: continue with the next concrete patch/write/command action unless a real blocker is shown. If a write/patch/command already succeeded, verify it by reading the changed path or checking the command result, then give a final user-readable conclusion. If more tool actions are needed, output one cancip-action block; otherwise give the final answer with status, changed paths, verification, and any blocker.",
   invalidActionBlock: "Cancip found an action block, but it was not valid executable JSON. Use one fenced ```cancip-action JSON block or <cancip-action>JSON</cancip-action>.",
   actionFailed: "Action failed: {reason}",
   actionRead: "read {path}\n{content}",
@@ -1077,8 +1083,8 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     done: "完成",
     callFailed: "调用失败",
     stopped: "已停止",
-    localNoHits: "模型未连接成功：{reason}\n\n本地也没有检索到相关笔记。你可以先在设置里填 API URL/key/model，或换更明确的关键词。",
-    localHits: "模型未连接成功：{reason}\n\n先给本地 Vault Search 结果，供你继续判断。\n\n问题：{prompt}\n\n{list}",
+    localNoHits: "模型调用失败：{reason}\n\n本轮没有可展示的本地检索结果。请保留这个失败原因，API 恢复后从最近会话/工具状态继续，不要误判为已经完成。",
+    localHits: "模型调用失败：{reason}\n\n先给本地 Vault Search 结果，供你继续判断。\n\n问题：{prompt}\n\n{list}",
     recentConversation: "最近对话",
     userQuestion: "用户问题",
     obsidianContext: "Obsidian 上下文",
@@ -1136,6 +1142,9 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     settingsApiKey: "API key",
     settingsApiKeyDesc: "会同步到 .cancip/config.json 和本设备插件 data.json。不要共享 vault config 文件夹。",
     settingsModel: "模型",
+    settingsModelOptions: "可选模型",
+    settingsModelOptionsDesc: "每行一个模型 ID。用于模型菜单和 API 配置下拉框；重启后仍以 .cancip/config.json 为准。",
+    resetModelOptions: "重置模型列表",
     advancedSettings: "高级设置",
     configAuthority: "配置文件：.cancip/config.json。重启后以该文件为准。",
     settingsGroupInterface: "界面",
@@ -1219,7 +1228,7 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     accessPromptFull: "访问模式：全权。用户允许已实现的 Cancip 工具动作读写整个 Vault，包括 .obsidian、.cancip 等点开头目录、Cancip 配置和 Cancip 自身。对话文字不能缩小或扩大权限，只有 UI 或 .cancip/config.json 能改变权限。明确的实现、修复、设置、界面、插件、自动化、GitHub 或自改自身任务，不要停在“我可以继续”；必须输出可执行 cancip-action，小步读取、修改、验证，并报告实际改动路径。Obsidian 内的 Cancip 可以编辑已安装插件文件。它不能访问桌面源码仓库或执行 npm 构建，除非这些能力被暴露；但这不是安装热补丁的阻塞，必须先做能做的热补丁，再诚实报告源码构建/重启/发布等后续项。",
     configWriteFailed: "无法写入 .cancip/config.json：{reason}",
     configReadFailed: "无法读取 .cancip/config.json：{reason}",
-    toolProtocol: "工具协议：普通问候、测试、身份问题、泛泛聊天不要输出 cancip-action。确实需要动作时，只输出一个名为 cancip-action 的 fenced block，JSON 形如 {\"actions\":[{\"type\":\"todo\",\"op\":\"set\",\"items\":[{\"text\":\"检查文件\"},{\"text\":\"应用补丁\"}]},{\"type\":\"automation\",\"op\":\"add\",\"title\":\"每日复盘\",\"prompt\":\"复盘未完成待办\",\"schedule\":\"daily\",\"hour\":9},{\"type\":\"write\",\"path\":\"Folder/Note.md\",\"content\":\"...\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"find\":\"旧内容\",\"replace\":\"新内容\"},{\"type\":\"command\",\"command\":\"cancip.searchVault\",\"args\":{\"query\":\"关键词\",\"limit\":8}}]}。支持动作：read、write、append、patch、todo、automation、mkdir、rename、copy、command。todo 支持 set、add、update、remove、list、clear，并会更新可见 Plan 面板。automation 支持 add、update、remove、list、run；schedule 可用 manual、hourly、daily。文件动作只能使用 Vault 相对路径。命令动作走命令总线：obsidian.listCommands、obsidian.execute、cancip.reviewGate、cancip.reviewGate.list、cancip.sessionEvents、cancip.automation.templates、cancip.automation.addTemplate、cancip.searchVault、cancip.rebuildIndex、cancip.previewVaultSearch、cancip.localVersionCommit、cancip.importCodexMemory、cancip.automation.list、cancip.automation.add、cancip.automation.run、cancip.automation.remove、github.help、github.status、github.repo、github.issues、github.pulls、github.releases、github.workflowRuns、github.branches、github.file、github.createIssue、github.installObsidianPlugin。设置/界面/插件/自身修复类任务，先用 read/search 检查相关源码或配置，再 patch/write 并验证；若桌面源码不可用，就把 .obsidian/plugins/cancip 下的已安装插件文件作为手机热补丁实现面，不能仅因 npm build/重启/源码同步不可用就停止。写已安装 Cancip 插件文件后必须说明需要重载/重启才有可见效果。只有长期记忆和已提供上下文不够时才用 cancip.searchVault 搜库，然后只读取必要命中文件。动作批次要小，等待工具结果后继续。工具失败就是权威上下文，必须解释失败或改用更小的下一步。Vault 整理、移动、重命名、合并、拆分、修复链接等高风险改动前，先用 cancip.reviewGate 程序化生成手机 HTML 审核包；它不是提示词。Plan mode 只增加计划/待办层，不改变访问权限。原始 JavaScript eval 阻止。",
+    toolProtocol: "工具协议：普通问候、测试、身份问题、泛泛聊天不要输出 cancip-action。确实需要动作时，只输出一个名为 cancip-action 的 fenced block，JSON 形如 {\"actions\":[{\"type\":\"todo\",\"op\":\"set\",\"items\":[{\"text\":\"检查文件\"},{\"text\":\"应用补丁\"}]},{\"type\":\"automation\",\"op\":\"add\",\"title\":\"每日复盘\",\"prompt\":\"复盘未完成待办\",\"schedule\":\"daily\",\"hour\":9},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"query\":\"锚点\",\"maxChars\":8000},{\"type\":\"write\",\"path\":\"Folder/Note.md\",\"content\":\"...\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"find\":\"旧内容\",\"replace\":\"新内容\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"regex\":true,\"find\":\"旧内容\\\\s+模式\",\"replace\":\"新内容\",\"flags\":\"m\"},{\"type\":\"command\",\"command\":\"cancip.searchVault\",\"args\":{\"query\":\"关键词\",\"limit\":8}}]}。支持动作：read、write、append、patch、todo、automation、mkdir、rename、copy、command。read 支持 query、occurrence、maxChars，用来精确读取大文件/压缩构建文件里的当前片段。patch 支持精确 find/replace，也支持 regex:true 和可选 flags；如果 patch 提示 find text was not found，绝对不要重复同一个 find，必须先用 query 读取当前文件片段，再换更小锚点或正则补丁。todo 支持 set、add、update、remove、list、clear，并会更新可见 Plan 面板。automation 支持 add、update、remove、list、run；schedule 可用 manual、hourly、daily。文件动作只能使用 Vault 相对路径。命令动作走命令总线：obsidian.listCommands、obsidian.execute、cancip.reviewGate、cancip.reviewGate.list、cancip.sessionEvents、cancip.automation.templates、cancip.automation.addTemplate、cancip.searchVault、cancip.rebuildIndex、cancip.previewVaultSearch、cancip.localVersionCommit、cancip.importCodexMemory、cancip.automation.list、cancip.automation.add、cancip.automation.run、cancip.automation.remove、github.help、github.status、github.repo、github.issues、github.pulls、github.releases、github.workflowRuns、github.branches、github.file、github.createIssue、github.installObsidianPlugin。设置/界面/插件/自身修复类任务，先用 read/search 检查相关源码或配置，再 patch/write 并验证；若桌面源码不可用，就把 .obsidian/plugins/cancip 下的已安装插件文件作为手机热补丁实现面，不能仅因 npm build/重启/源码同步不可用就停止。写已安装 Cancip 插件文件后必须说明需要重载/重启才有可见效果。只有长期记忆和已提供上下文不够时才用 cancip.searchVault 搜库，然后只读取必要命中文件。动作批次要小，等待工具结果后继续。工具失败就是权威上下文，必须解释失败或改用更小的下一步。Vault 整理、移动、重命名、合并、拆分、修复链接等高风险改动前，先用 cancip.reviewGate 程序化生成手机 HTML 审核包；它不是提示词。Plan mode 只增加计划/待办层，不改变访问权限。原始 JavaScript eval 阻止。",
     actionsNeedApproval: "动作块已进入确认队列，尚未执行。\n\n{summary}",
     actionsExecuted: "工具执行结果：\n\n{summary}",
     toolRunsQueued: "{count} 个工具调用已排队。确认后点 Run 执行。",
@@ -1239,7 +1248,7 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     toolFeedbackSaved: "工具反馈已记录",
     toolContinueStatus: "正在根据工具结果继续...",
     toolRunResult: "工具结果",
-    toolContinuationPrompt: "上一步工具执行结果：\n\n{summary}\n\n请根据这些结果继续完成任务。工具失败是权威上下文，不能忽略：要解释失败原因，改用更小且更明确的下一步，或直接给最终回答。如果用户要求实现/修改，而目前只执行了读取、搜索、待办或列表步骤，说明还没完成：除非有真实阻塞，否则继续给出下一个 patch/write/command 具体动作。如果写入、补丁或命令已经成功，必须再通过读取改动路径或检查命令结果验证，然后给用户能直接看懂的最终结论。若还需要工具动作，只输出一个 cancip-action 块；否则最终回答必须写明状态、改动路径、验证结果和阻塞项。",
+    toolContinuationPrompt: "上一步工具执行结果：\n\n{summary}\n\n请根据这些结果继续完成任务。工具失败是权威上下文，不能忽略：要解释失败原因，改用更小且更明确的下一步，或直接给最终回答。如果 patch 因 find text was not found 失败，绝对不要重复同一个 find；先用 query/maxChars 读取当前文件片段，再换更小的精确锚点或 regex:true 补丁。如果用户要求实现/修改，而目前只执行了读取、搜索、待办或列表步骤，说明还没完成：除非有真实阻塞，否则继续给出下一个 patch/write/command 具体动作。如果写入、补丁或命令已经成功，必须再通过读取改动路径或检查命令结果验证，然后给用户能直接看懂的最终结论。若还需要工具动作，只输出一个 cancip-action 块；否则最终回答必须写明状态、改动路径、验证结果和阻塞项。",
     invalidActionBlock: "Cancip 找到了动作块，但里面不是可执行的 JSON。请使用一个 fenced ```cancip-action JSON 块，或 <cancip-action>JSON</cancip-action>。",
     actionFailed: "动作失败：{reason}",
     actionRead: "read {path}\n{content}",
@@ -1384,6 +1393,9 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     settingsGroupExport: "匯出",
     settingsGroupSupport: "收款碼設定",
     settingsGroupModelAdvanced: "模型進階",
+    settingsModelOptions: "可選模型",
+    settingsModelOptionsDesc: "每行一個模型 ID。用於模型選單和 API 設定下拉；重啟後仍以 .cancip/config.json 為準。",
+    resetModelOptions: "重設模型列表",
     settingsMaxOutputTokens: "最大輸出 tokens",
     settingsCoreMemoryFolder: "核心記憶資料夾",
     settingsMaxContextFiles: "最大上下文檔案數",
@@ -2347,6 +2359,9 @@ const SETTINGS_I18N_PATCHES: Partial<Record<Language, Partial<Record<I18nKey, st
     settingsGroupExport: "چىقىرىش",
     settingsGroupSupport: "پۇل ئېلىش QR كودى",
     settingsGroupModelAdvanced: "مودېل ئىلغار",
+    settingsModelOptions: "مودېل تاللاشلىرى",
+    settingsModelOptionsDesc: "ھەر قۇرغا بىر مودېل ID. مودېل تاللىغۇچ ۋە API تىزىملىكىدە ئىشلىتىلىدۇ؛ قايتا قوزغالغاندا .cancip/config.json ئۈستۈن تۇرىدۇ.",
+    resetModelOptions: "مودېل تىزىملىكىنى ئەسلىگە قايتۇرۇش",
     settingsShowAttachmentButton: "قوشۇمچە كۇنۇپكىسىنى كۆرسىتىش",
     settingsCompactHeader: "قىسقا باشلىق",
     settingsAutoOpenPlanPanel: "پىلان تاختىسىنى ئاپتوماتىك ئېچىش",
@@ -2395,6 +2410,9 @@ const SETTINGS_I18N_PATCHES: Partial<Record<Language, Partial<Record<I18nKey, st
     settingsGroupExport: "Dışa aktarma",
     settingsGroupSupport: "Ödeme QR kodları",
     settingsGroupModelAdvanced: "Gelişmiş model",
+    settingsModelOptions: "Model seçenekleri",
+    settingsModelOptionsDesc: "Her satıra bir model ID. Model seçici ve API profili açılır menüsünde kullanılır; yeniden başlatmada .cancip/config.json önceliklidir.",
+    resetModelOptions: "Model listesini sıfırla",
     settingsShowAttachmentButton: "Ek düğmesini göster",
     settingsCompactHeader: "Kompakt başlık",
     settingsAutoOpenPlanPanel: "Plan panelini otomatik aç",
@@ -2443,6 +2461,9 @@ const SETTINGS_I18N_PATCHES: Partial<Record<Language, Partial<Record<I18nKey, st
     settingsGroupExport: "Экспорт",
     settingsGroupSupport: "Платёжные QR-коды",
     settingsGroupModelAdvanced: "Модель",
+    settingsModelOptions: "Список моделей",
+    settingsModelOptionsDesc: "Один ID модели на строку. Используется в выборе модели и профиле API; после перезапуска приоритет у .cancip/config.json.",
+    resetModelOptions: "Сбросить список моделей",
     settingsShowAttachmentButton: "Показывать кнопку вложений",
     settingsCompactHeader: "Компактный заголовок",
     settingsAutoOpenPlanPanel: "Автооткрытие панели плана",
@@ -2491,6 +2512,9 @@ const SETTINGS_I18N_PATCHES: Partial<Record<Language, Partial<Record<I18nKey, st
     settingsGroupExport: "エクスポート",
     settingsGroupSupport: "支払いQRコード",
     settingsGroupModelAdvanced: "モデル詳細",
+    settingsModelOptions: "モデル候補",
+    settingsModelOptionsDesc: "1行に1つのモデルID。モデル選択とAPIプロファイルのドロップダウンで使います。再起動後は .cancip/config.json が優先です。",
+    resetModelOptions: "モデル一覧をリセット",
     settingsShowAttachmentButton: "添付ボタンを表示",
     settingsCompactHeader: "コンパクトヘッダー",
     settingsAutoOpenPlanPanel: "計画パネルを自動で開く",
@@ -2539,6 +2563,9 @@ const SETTINGS_I18N_PATCHES: Partial<Record<Language, Partial<Record<I18nKey, st
     settingsGroupExport: "내보내기",
     settingsGroupSupport: "결제 QR 코드",
     settingsGroupModelAdvanced: "고급 모델",
+    settingsModelOptions: "모델 옵션",
+    settingsModelOptionsDesc: "한 줄에 모델 ID 하나. 모델 선택기와 API 프로필 드롭다운에 사용되며 재시작 후 .cancip/config.json이 우선합니다.",
+    resetModelOptions: "모델 목록 재설정",
     settingsShowAttachmentButton: "첨부 버튼 표시",
     settingsCompactHeader: "컴팩트 헤더",
     settingsAutoOpenPlanPanel: "계획 패널 자동 열기",
@@ -2587,6 +2614,9 @@ const SETTINGS_I18N_PATCHES: Partial<Record<Language, Partial<Record<I18nKey, st
     settingsGroupExport: "Exportación",
     settingsGroupSupport: "QR de pago",
     settingsGroupModelAdvanced: "Modelo avanzado",
+    settingsModelOptions: "Opciones de modelo",
+    settingsModelOptionsDesc: "Un ID de modelo por línea. Se usa en el selector de modelo y el perfil API; .cancip/config.json gana al reiniciar.",
+    resetModelOptions: "Restablecer modelos",
     settingsShowAttachmentButton: "Mostrar botón de adjuntos",
     settingsCompactHeader: "Encabezado compacto",
     settingsAutoOpenPlanPanel: "Abrir panel de plan automáticamente",
@@ -2635,6 +2665,9 @@ const SETTINGS_I18N_PATCHES: Partial<Record<Language, Partial<Record<I18nKey, st
     settingsGroupExport: "Export",
     settingsGroupSupport: "QR de paiement",
     settingsGroupModelAdvanced: "Modèle avancé",
+    settingsModelOptions: "Options de modèle",
+    settingsModelOptionsDesc: "Un ID de modèle par ligne. Utilisé par le sélecteur de modèle et le profil API ; .cancip/config.json gagne au redémarrage.",
+    resetModelOptions: "Réinitialiser la liste",
     settingsShowAttachmentButton: "Afficher le bouton pièce jointe",
     settingsCompactHeader: "En-tête compact",
     settingsAutoOpenPlanPanel: "Ouvrir le panneau Plan automatiquement",
@@ -2683,6 +2716,9 @@ const SETTINGS_I18N_PATCHES: Partial<Record<Language, Partial<Record<I18nKey, st
     settingsGroupExport: "Export",
     settingsGroupSupport: "Zahlungs-QR-Codes",
     settingsGroupModelAdvanced: "Erweitertes Modell",
+    settingsModelOptions: "Modelloptionen",
+    settingsModelOptionsDesc: "Eine Modell-ID pro Zeile. Wird im Modellmenü und API-Profil verwendet; nach Neustart hat .cancip/config.json Vorrang.",
+    resetModelOptions: "Modellliste zurücksetzen",
     settingsShowAttachmentButton: "Anhang-Schaltfläche anzeigen",
     settingsCompactHeader: "Kompakte Kopfzeile",
     settingsAutoOpenPlanPanel: "Plan-Panel automatisch öffnen",
@@ -2731,6 +2767,9 @@ const SETTINGS_I18N_PATCHES: Partial<Record<Language, Partial<Record<I18nKey, st
     settingsGroupExport: "التصدير",
     settingsGroupSupport: "رموز QR للدفع",
     settingsGroupModelAdvanced: "النموذج المتقدم",
+    settingsModelOptions: "خيارات النموذج",
+    settingsModelOptionsDesc: "معرّف نموذج واحد في كل سطر. يُستخدم في قائمة النموذج وملف API؛ بعد إعادة التشغيل تكون الأولوية لـ .cancip/config.json.",
+    resetModelOptions: "إعادة ضبط قائمة النماذج",
     settingsShowAttachmentButton: "إظهار زر المرفقات",
     settingsCompactHeader: "رأس مضغوط",
     settingsAutoOpenPlanPanel: "فتح لوحة الخطة تلقائياً",
@@ -4178,9 +4217,7 @@ class CancipView extends ItemView {
 
   private toggleModelMenu(): void {
     const active = this.plugin.activeApiProfile();
-    const presets = MODEL_PRESETS.includes(active.model as typeof MODEL_PRESETS[number])
-      ? [...MODEL_PRESETS]
-      : [active.model, ...MODEL_PRESETS].filter(Boolean);
+    const presets = normalizeModelOptions(this.plugin.settings.modelOptions, active.model);
     this.toggleCommandMenu("model", this.t("modelMenuTitle"), presets.map((model) => ({
       icon: "cpu",
       label: model,
@@ -4882,8 +4919,9 @@ class CancipView extends ItemView {
         this.addMessage("assistant", actionReport.report);
         const finalReport = await this.continueAfterToolRuns(context, actionReport, request, rawPrompt);
         const finalActionReport = finalReport ?? actionReport;
-        this.ensureFinalConclusion(finalActionReport, startedAt);
-        if (shouldExpectToolActionForPrompt(rawPrompt) && shouldNeedMoreActionAfterToolRuns(finalActionReport.runs)) {
+        const needsMoreAction = shouldExpectToolActionForPrompt(rawPrompt) && shouldNeedMoreActionForPrompt(rawPrompt, finalActionReport.runs);
+        this.ensureFinalConclusion(finalActionReport, startedAt, needsMoreAction);
+        if (needsMoreAction) {
           this.setStatus(this.t("callFailed"));
           await this.finishCurrentSessionStatus("failed", true, request);
           return;
@@ -5742,17 +5780,26 @@ class CancipView extends ItemView {
     const searchHits: SearchHit[] = [];
     const settings = this.plugin.settings;
     const lightContext = shouldSuppressToolActionsForPrompt(prompt);
+    const implementationContext = shouldExpectToolActionForPrompt(prompt);
 
     const workingState = this.sessionWorkingState();
     if (workingState) parts.push(`## Current session working state\n${workingState}`);
 
     if (settings.includeCoreMemory && !lightContext) {
-      const memory = await this.safeContextStep(this.t("coreMemory"), () => this.readMemoryFolder(), "", CONTEXT_STEP_TIMEOUT_MS);
+      const memory = await this.safeContextStep(
+        this.t("coreMemory"),
+        () => this.readMemoryFolder(
+          implementationContext ? 1200 : settings.maxFolderFileContextChars,
+          implementationContext ? Math.min(1, settings.maxCoreMemoryFiles) : settings.maxCoreMemoryFiles
+        ),
+        "",
+        CONTEXT_STEP_TIMEOUT_MS
+      );
       if (memory) parts.push(`## ${this.t("coreMemory")}\n${memory}`);
     }
 
     if (!lightContext) {
-      const experience = await this.safeContextStep(this.t("taskExperience"), () => this.readTaskExperience(), "", CONTEXT_STEP_TIMEOUT_MS);
+      const experience = await this.safeContextStep(this.t("taskExperience"), () => this.readTaskExperience(prompt), "", CONTEXT_STEP_TIMEOUT_MS);
       if (experience) parts.push(`## ${this.t("taskExperience")}\n${experience}`);
     }
 
@@ -5833,8 +5880,7 @@ class CancipView extends ItemView {
     const settings = this.plugin.settings;
     const profile = this.plugin.activeApiProfile();
     const recent = this.recentTranscript();
-    const workingState = this.sessionWorkingState();
-    const inputText = `${recent ? `${this.t("recentConversation")}:\n${recent}\n\n` : ""}${workingState ? `Current session working state:\n${workingState}\n\n` : ""}${this.t("userQuestion")}：${prompt}\n\n${this.t("obsidianContext")}：\n${context.contextText || this.t("none")}`;
+    const inputText = `${recent ? `${this.t("recentConversation")}:\n${recent}\n\n` : ""}${this.t("userQuestion")}：${prompt}\n\n${this.t("obsidianContext")}：\n${context.contextText || this.t("none")}`;
     const endpoint = normalizeApiUrl(profile.apiUrl);
     const mode = resolveApiMode(profile.apiMode, endpoint);
 
@@ -5956,10 +6002,10 @@ class CancipView extends ItemView {
     return await this.app.vault.adapter.read(normalizeActionPath(path));
   }
 
-  private async readMemoryFolder(): Promise<string> {
+  private async readMemoryFolder(perFileChars = this.plugin.settings.maxFolderFileContextChars, maxFilesOverride?: number): Promise<string> {
     const folder = this.plugin.settings.memoryFolder.trim();
     if (!folder) return "";
-    const maxFiles = this.plugin.settings.maxCoreMemoryFiles;
+    const maxFiles = maxFilesOverride ?? this.plugin.settings.maxCoreMemoryFiles;
     if (maxFiles <= 0) return "";
     const normalizedFolder = normalizePath(folder);
     const files = (await this.listTextFilesInFolder(normalizedFolder))
@@ -5970,7 +6016,7 @@ class CancipView extends ItemView {
     const chunks: string[] = [];
     for (const file of files) {
       const content = await this.readVaultTextFile(file.path);
-      chunks.push(`### ${file.path}\n${trimContext(content, this.plugin.settings.maxFolderFileContextChars)}`);
+      chunks.push(`### ${file.path}\n${trimContext(content, perFileChars)}`);
     }
     return chunks.join("\n\n");
   }
@@ -6699,12 +6745,13 @@ class CancipView extends ItemView {
     return await this.handleActionBlocks(hardAnswer, hardAssistantMessage);
   }
 
-  private async readTaskExperience(): Promise<string> {
+  private async readTaskExperience(prompt = ""): Promise<string> {
     try {
       const adapter = this.app.vault.adapter;
       if (!(await adapter.exists(EXPERIENCE_LOG_PATH))) return "";
       const raw = await adapter.read(EXPERIENCE_LOG_PATH);
-      return trimContext(raw, EXPERIENCE_CONTEXT_MAX_CHARS);
+      const maxChars = shouldExpectToolActionForPrompt(prompt) ? 1200 : EXPERIENCE_CONTEXT_MAX_CHARS;
+      return trimContext(selectRelevantExperience(raw, prompt), maxChars);
     } catch (error) {
       console.warn("Cancip task experience read failed", error);
       return "";
@@ -6718,21 +6765,28 @@ class CancipView extends ItemView {
     originalPrompt = ""
   ): Promise<ActionHandlingResult | null> {
     if (!this.plugin.settings.autoContinueAfterTools || !this.shouldContinueFromToolRuns(previous)) return previous;
-    const maxIterations = Math.max(0, Math.min(10, this.plugin.settings.maxToolIterations));
+    const configuredIterations = Math.max(0, Math.min(10, this.plugin.settings.maxToolIterations));
+    const maxIterations = originalPrompt && shouldExpectToolActionForPrompt(originalPrompt)
+      ? Math.max(5, configuredIterations)
+      : configuredIterations;
     let current: ActionHandlingResult | null = previous;
     let lastHandled: ActionHandlingResult = previous;
 
     for (let iteration = 0; iteration < maxIterations; iteration += 1) {
       if (!current || !this.shouldContinueFromToolRuns(current) || request.signal.aborted || !this.isCurrentRequest(request)) return lastHandled;
+      const implementationTask = originalPrompt ? shouldExpectToolActionForPrompt(originalPrompt) : false;
       this.setStatus(this.t("toolContinueStatus"));
       const continueStep = this.addProgressStep(this.t("toolContinueStatus"));
-      const experience = await this.safeContextStep(this.t("taskExperience"), () => this.readTaskExperience(), "", CONTEXT_STEP_TIMEOUT_MS);
+      const experience = await this.safeContextStep(this.t("taskExperience"), () => this.readTaskExperience(originalPrompt), "", CONTEXT_STEP_TIMEOUT_MS);
       const continuationContext = {
         system: this.modePrompt(),
-        contextText: [context.contextText, experience ? `## ${this.t("taskExperience")}\n${experience}` : ""].filter(Boolean).join("\n\n---\n\n")
+        contextText: [
+          trimContext(context.contextText, implementationTask ? 9000 : Math.max(9000, context.contextText.length)),
+          experience ? `## ${this.t("taskExperience")}\n${experience}` : ""
+        ].filter(Boolean).join("\n\n---\n\n")
       };
       const prompt = this.t("toolContinuationPrompt", {
-        summary: `${this.conversationForToolContinuation()}\n\n${this.toolRunsForPrompt(current.runs)}`.trim()
+        summary: `${this.conversationForToolContinuation(implementationTask ? 8 : undefined, implementationTask ? 500 : undefined)}\n\n${this.toolRunsForPrompt(current.runs, implementationTask ? 1200 : 4000, implementationTask ? 6 : undefined)}`.trim()
       });
       const answer = await this.callModel(prompt, continuationContext);
       if (request.signal.aborted || !this.isCurrentRequest(request)) return null;
@@ -6740,7 +6794,14 @@ class CancipView extends ItemView {
       const assistantMessage = this.addMessage("assistant", answer);
       current = await this.handleActionBlocks(answer, assistantMessage);
       if (!current) {
-        if (originalPrompt && shouldExpectToolActionForPrompt(originalPrompt) && shouldNeedMoreActionAfterToolRuns(lastHandled.runs)) {
+        const recovery = await this.recoverFromPatchFindFailure(lastHandled, request);
+        if (recovery) {
+          this.addMessage("assistant", recovery.report);
+          current = recovery;
+          lastHandled = recovery;
+          continue;
+        }
+        if (originalPrompt && shouldExpectToolActionForPrompt(originalPrompt) && shouldNeedMoreActionForPrompt(originalPrompt, lastHandled.runs)) {
           current = await this.forceToolActionForImplementationTask(originalPrompt, continuationContext, request);
           if (!current) return lastHandled;
         } else {
@@ -6750,7 +6811,7 @@ class CancipView extends ItemView {
       this.addMessage("assistant", current.report);
       lastHandled = current;
     }
-    if (originalPrompt && shouldExpectToolActionForPrompt(originalPrompt) && shouldNeedMoreActionAfterToolRuns(lastHandled.runs)) {
+    if (originalPrompt && shouldExpectToolActionForPrompt(originalPrompt) && shouldNeedMoreActionForPrompt(originalPrompt, lastHandled.runs)) {
       const forced = await this.forceToolActionForImplementationTask(originalPrompt, {
         system: this.modePrompt(),
         contextText: context.contextText
@@ -6761,6 +6822,37 @@ class CancipView extends ItemView {
       }
     }
     return lastHandled;
+  }
+
+  private async recoverFromPatchFindFailure(
+    previous: ActionHandlingResult,
+    request: AbortController
+  ): Promise<ActionHandlingResult | null> {
+    const failed = [...previous.runs].reverse().find((run) =>
+      run.status === "failed"
+      && run.action.type === "patch"
+      && /was not found|find text/i.test(run.error ?? "")
+    );
+    if (!failed || failed.action.type !== "patch") return null;
+    if (request.signal.aborted || !this.isCurrentRequest(request)) return null;
+
+    const readAction: CancipAction = {
+      type: "read",
+      path: failed.action.path,
+      query: patchRecoveryQuery(failed.action.find),
+      maxChars: 8000
+    };
+    const run = this.createToolRun(readAction);
+    const result = await this.executeToolRun(run);
+    return {
+      report: this.formatActionReport([{
+        title: this.t("actionsExecuted", { summary: "" }).trim(),
+        summary: this.toolRunCompactSummary([run]),
+        detail: result
+      }]),
+      runs: [run],
+      executed: run.status === "executed"
+    };
   }
 
   private ensurePlainFinalConclusion(startedAt: number): void {
@@ -6777,18 +6869,18 @@ class CancipView extends ItemView {
     this.renderMessages();
   }
 
-  private ensureFinalConclusion(result: ActionHandlingResult, startedAt?: number): void {
+  private ensureFinalConclusion(result: ActionHandlingResult, startedAt?: number, needsMoreAction = false): void {
     if (!result.runs.length) return;
     const lastAssistant = [...this.messages].reverse().find((message) => message.role === "assistant");
     if (lastAssistant && !prepareMessageDisplay(redactSensitiveText(lastAssistant.content)).processOnly && !isWeakFinalConclusion(lastAssistant.content)) return;
     const summary = [
-      this.humanFinalConclusion(result.runs),
+      this.humanFinalConclusion(result.runs, needsMoreAction),
       typeof startedAt === "number" ? this.t("totalElapsed", { elapsed: formatElapsed(Date.now() - startedAt) }) : ""
     ].filter(Boolean).join("\n\n");
     this.addMessage("assistant", this.t("finalConclusionFallback", { summary }));
   }
 
-  private humanFinalConclusion(runs: ToolRun[]): string {
+  private humanFinalConclusion(runs: ToolRun[], needsMoreAction = false): string {
     const failed = runs.filter((run) => run.status === "failed");
     const rejected = runs.filter((run) => run.status === "rejected");
     const pending = runs.filter((run) => run.status === "pending" || run.status === "blocked");
@@ -6807,11 +6899,23 @@ class CancipView extends ItemView {
 
     if (failed.length || rejected.length) {
       const firstIssue = failed[0]?.error || rejected[0]?.error || this.t("toolRunFailed");
+      const patchFindFailed = failed.some((run) => run.action.type === "patch" && /was not found|find text/i.test(run.error ?? ""));
       return [
         writes.length ? "部分完成，但还有步骤失败。" : "未完成，工具步骤没有全部成功。",
         writes.length && paths.length ? `已完成的改动：${paths.join("、")}` : reads.length ? "已完成读取/检索，但还没有形成可用结论或改动。" : "",
         `失败原因：${trimContext(redactSensitiveText(firstIssue), 220)}`,
-        "建议：根据上方过程记录里的失败项，缩小任务范围后继续，或让我按失败原因继续修。"
+        patchFindFailed
+          ? "下一步：必须读取目标文件的当前片段，换更小锚点或 regex patch；不能重复同一个失败补丁。"
+          : "下一步：根据上方过程记录里的失败项，改用更小且可验证的动作继续；如果确实受限，应明确具体阻塞。"
+      ].filter(Boolean).join("\n\n");
+    }
+
+    if (needsMoreAction) {
+      return [
+        writes.length ? "部分完成，但还没达到用户目标。" : "未完成。",
+        paths.length ? `已完成的改动：${paths.join("、")}` : reads.length ? "已完成读取/检索，但还没有形成目标要求的改动。" : "",
+        "原因：当前动作不足以证明任务完成，尤其是设置页、UI、插件自身或管理功能类任务，不能只改配置或只读文件就算完成。",
+        "下一步：必须基于最近工具结果继续做实际 patch/write/验证；如果确实受限，要明确具体缺少什么能力。"
       ].filter(Boolean).join("\n\n");
     }
 
@@ -6898,19 +7002,21 @@ class CancipView extends ItemView {
     };
   }
 
-  private conversationForToolContinuation(): string {
-    const limit = Math.max(4, Math.min(16, this.plugin.settings.maxRecentTranscriptMessages + 4));
+  private conversationForToolContinuation(limitOverride?: number, maxChars = 1600): string {
+    const limit = limitOverride ?? Math.max(4, Math.min(16, this.plugin.settings.maxRecentTranscriptMessages + 4));
     return this.messages
       .slice(-limit)
-      .map((message) => `${message.role}: ${trimContext(redactSensitiveText(messageOutlineText(message.content) || message.content), 1600)}`)
+      .filter((message) => !prepareMessageDisplay(redactSensitiveText(message.content)).processOnly || message.toolRuns?.length)
+      .map((message) => `${message.role}: ${trimContext(redactSensitiveText(messageOutlineText(message.content) || message.content), maxChars)}`)
       .join("\n\n");
   }
 
-  private toolRunsForPrompt(runs: ToolRun[]): string {
+  private toolRunsForPrompt(runs: ToolRun[], maxDetail = 4000, maxRuns?: number): string {
     return runs
+      .slice(-(maxRuns ?? runs.length))
       .map((run, index) => {
         const detail = run.result || run.error || "";
-        return `${index + 1}. ${run.status}: ${run.summary}${detail ? `\n${trimContext(detail, 4000)}` : ""}`;
+        return `${index + 1}. ${run.status}: ${run.summary}${detail ? `\n${trimContext(detail, maxDetail)}` : ""}`;
       })
       .join("\n\n");
   }
@@ -6968,7 +7074,7 @@ class CancipView extends ItemView {
 
     if (action.type === "read") {
       const content = await adapter.read(path);
-      return this.t("actionRead", { path, content: trimContext(redactSensitiveText(content), 2000) });
+      return this.t("actionRead", { path, content: this.formatReadResult(path, content, action) });
     }
 
     if (action.type === "write") {
@@ -6986,8 +7092,9 @@ class CancipView extends ItemView {
     if (action.type === "patch") {
       const current = await adapter.read(path);
       if (!action.find) throw new Error("patch action requires a non-empty find field");
-      if (!current.includes(action.find)) throw new Error(`patch find text was not found in ${path}`);
-      const updated = action.all ? current.split(action.find).join(action.replace) : current.replace(action.find, action.replace);
+      const updated = action.regex
+        ? this.applyRegexPatch(path, current, action)
+        : this.applyExactPatch(path, current, action);
       await adapter.write(path, updated);
       return this.withSelfPatchNotice(path, this.t("actionPatch", { path }));
     }
@@ -7008,6 +7115,62 @@ class CancipView extends ItemView {
     await ensureParentFolder(adapter, newPath);
     await adapter.copy(path, newPath);
     return this.withSelfPatchNotice(newPath, this.t("actionCopy", { path, newPath }));
+  }
+
+  private formatReadResult(path: string, content: string, action: Extract<CancipAction, { type: "read" }>): string {
+    const maxChars = clampInt(action.maxChars, 2000, 500, 12000);
+    const query = action.query?.trim();
+    if (!query) {
+      return trimContext(redactSensitiveText(content), maxChars);
+    }
+
+    const occurrences = stringOccurrences(content, query);
+    if (!occurrences.length) {
+      return trimContext(redactSensitiveText([
+        `query not found: ${query}`,
+        `file length: ${content.length}`,
+        "",
+        "Head:",
+        content.slice(0, Math.min(1200, maxChars)),
+        "",
+        "Tail:",
+        content.slice(Math.max(0, content.length - Math.min(1200, maxChars)))
+      ].join("\n")), maxChars);
+    }
+
+    const occurrenceIndex = Math.max(0, Math.min(occurrences.length - 1, clampInt(action.occurrence, 1, 1, occurrences.length) - 1));
+    const at = occurrences[occurrenceIndex];
+    return trimContext(redactSensitiveText([
+      `query: ${query}`,
+      `match: ${occurrenceIndex + 1}/${occurrences.length} at char ${at}`,
+      `file length: ${content.length}`,
+      "",
+      snippetAroundIndex(content, at, maxChars)
+    ].join("\n")), maxChars);
+  }
+
+  private applyExactPatch(path: string, current: string, action: Extract<CancipAction, { type: "patch" }>): string {
+    if (!current.includes(action.find)) {
+      throw new Error(formatPatchFindFailure(path, current, action.find, false));
+    }
+    return action.all ? current.split(action.find).join(action.replace) : current.replace(action.find, action.replace);
+  }
+
+  private applyRegexPatch(path: string, current: string, action: Extract<CancipAction, { type: "patch" }>): string {
+    let pattern: RegExp;
+    try {
+      pattern = new RegExp(action.find, normalizePatchRegexFlags(action.flags, Boolean(action.all)));
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new Error(`invalid patch regex for ${path}: ${reason}`);
+    }
+
+    pattern.lastIndex = 0;
+    if (!pattern.test(current)) {
+      throw new Error(formatPatchFindFailure(path, current, action.find, true));
+    }
+    pattern.lastIndex = 0;
+    return current.replace(pattern, action.replace);
   }
 
   private withSelfPatchNotice(path: string, result: string): string {
@@ -7462,10 +7625,13 @@ class CancipView extends ItemView {
     if (action.type === "todo") return this.t("actionTodo", { op: action.op });
     if (action.type === "automation") return this.t("actionAutomation", { op: action.op });
     const path = action.path;
-    if (action.type === "read") return this.t("actionRead", { path, content: "" }).trim();
+    if (action.type === "read") {
+      const suffix = action.query?.trim() ? ` query "${trimContext(action.query.trim(), 60)}"` : "";
+      return `${this.t("actionRead", { path, content: "" }).trim()}${suffix}`;
+    }
     if (action.type === "write") return this.t("actionWrite", { path });
     if (action.type === "append") return this.t("actionAppend", { path });
-    if (action.type === "patch") return this.t("actionPatch", { path });
+    if (action.type === "patch") return `${this.t("actionPatch", { path })}${action.regex ? " regex" : ""}`;
     if (action.type === "mkdir") return this.t("actionMkdir", { path });
     if (action.type === "rename") return this.t("actionRename", { path, newPath: action.newPath });
     return this.t("actionCopy", { path, newPath: action.newPath });
@@ -7499,7 +7665,8 @@ class CancipView extends ItemView {
     if (limit <= 0) return "";
     return this.messages
       .slice(-(limit + 1), -1)
-      .map((message) => `${message.role}: ${trimContext(redactSensitiveText(message.content), 1800)}`)
+      .filter((message) => !prepareMessageDisplay(redactSensitiveText(message.content)).processOnly)
+      .map((message) => `${message.role}: ${trimContext(messageOutlineText(message.content) || redactSensitiveText(message.content), 700)}`)
       .join("\n\n");
   }
 
@@ -8365,6 +8532,30 @@ class CancipSettingTab extends PluginSettingTab {
       this.plugin.settings.maxOutputTokens = value;
       await this.plugin.saveSettings();
     });
+    new Setting(parent)
+      .setName(this.plugin.t("settingsModelOptions"))
+      .setDesc(this.plugin.t("settingsModelOptionsDesc"))
+      .addTextArea((text) => {
+        text.inputEl.rows = 8;
+        text
+          .setPlaceholder(MODEL_PRESETS.join("\n"))
+          .setValue(this.plugin.settings.modelOptions.join("\n"))
+          .onChange(async (value) => {
+            this.plugin.settings.modelOptions = normalizeModelOptions(value, this.plugin.activeApiProfile().model);
+            await this.plugin.saveSettings();
+            this.plugin.refreshOpenViews();
+          });
+      })
+      .addButton((button) => {
+        button
+          .setButtonText(this.plugin.t("resetModelOptions"))
+          .onClick(async () => {
+            this.plugin.settings.modelOptions = normalizeModelOptions(MODEL_PRESETS, this.plugin.activeApiProfile().model);
+            await this.plugin.saveSettings();
+            this.plugin.refreshOpenViews();
+            this.display();
+          });
+      });
   }
 
   private renderSupportCodes(parent: HTMLElement): void {
@@ -8488,10 +8679,9 @@ class CancipSettingTab extends PluginSettingTab {
           });
       });
 
-    const modelOptions: Record<string, string> = Object.fromEntries(MODEL_PRESETS.map((model) => [model, model]));
-    if (active.model && !MODEL_PRESETS.includes(active.model as typeof MODEL_PRESETS[number])) {
-      modelOptions[active.model] = active.model;
-    }
+    const modelOptions: Record<string, string> = Object.fromEntries(
+      normalizeModelOptions(this.plugin.settings.modelOptions, active.model).map((model) => [model, model])
+    );
 
     new Setting(parent)
       .setName(this.plugin.t("settingsModel"))
@@ -8627,6 +8817,26 @@ function makeMemorySnippet(content: string, tokens: string[], maxChars: number):
   if (hit === undefined) return trimContext(normalized, maxChars);
   const start = Math.max(0, hit - Math.floor(maxChars / 3));
   return trimContext(normalized.slice(start, start + maxChars), maxChars);
+}
+
+function selectRelevantExperience(raw: string, prompt: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+  const entries = trimmed
+    .split(/\n(?=## \d{4}-\d{2}-\d{2}T)/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  if (entries.length <= 1) return trimmed;
+  const header = entries[0].startsWith("# ") ? entries.shift() : "# Cancip Experience";
+  const tokens = tokenize(prompt).filter((token) => token.length >= 2).slice(0, 12);
+  const relevant = tokens.length
+    ? entries.filter((entry) => {
+      const lower = entry.toLowerCase();
+      return tokens.some((token) => lower.includes(token));
+    })
+    : [];
+  const selected = (relevant.length ? relevant : entries).slice(-5);
+  return [header, ...selected].filter(Boolean).join("\n\n");
 }
 
 function normalizeAutomationTask(raw: unknown): AutomationTask | null {
@@ -9097,6 +9307,22 @@ function shouldNeedMoreActionAfterToolRuns(runs: ToolRun[]): boolean {
   return hasUnverifiedWriteAction(active);
 }
 
+function shouldNeedMoreActionForPrompt(prompt: string, runs: ToolRun[]): boolean {
+  if (shouldNeedMoreActionAfterToolRuns(runs)) return true;
+  const lower = prompt.toLowerCase();
+  const isUiOrPluginTask = /(settings?\s*(page|tab|ui)|ui|interface|button|model\s*options?|model\s*management|设置页|设置中|界面|按钮|可选模型|模型管理|插件|自身|自己)/i.test(lower);
+  if (!isUiOrPluginTask) return false;
+  const active = runs.filter((run) => run.status === "executed");
+  const writePaths = uniqueStrings(active
+    .filter((run) => isWriteActionForContinuation(run.action))
+    .map((run) => actionVerificationPath(run.action))
+    .filter(Boolean));
+  if (!writePaths.length) return true;
+  const hasPluginWrite = writePaths.some((path) => path.startsWith(".obsidian/plugins/cancip/"));
+  if (hasPluginWrite) return false;
+  return writePaths.every((path) => path === ".cancip/config.json" || path.startsWith(".cancip/"));
+}
+
 function hasUnverifiedWriteAction(runs: ToolRun[]): boolean {
   const writePaths = uniqueStrings(runs
     .filter((run) => run.status === "executed" && isWriteActionForContinuation(run.action))
@@ -9341,6 +9567,25 @@ function normalizeApiProfiles(raw: unknown, legacy: ApiProfile): ApiProfile[] {
   return profiles.length ? profiles : [legacy];
 }
 
+function normalizeModelOptions(raw: unknown, activeModel?: string): string[] {
+  const values: string[] = [];
+  const push = (value: unknown): void => {
+    if (typeof value !== "string") return;
+    for (const part of value.split(/[\r\n,]+/)) {
+      const model = part.trim();
+      if (model) values.push(model);
+    }
+  };
+  if (Array.isArray(raw)) {
+    for (const item of raw) push(item);
+  } else {
+    push(raw);
+  }
+  if (!values.length) values.push(...MODEL_PRESETS);
+  if (activeModel?.trim()) values.unshift(activeModel.trim());
+  return uniqueStrings(values).slice(0, 80);
+}
+
 function getActiveApiProfile(settings: Settings): ApiProfile {
   return settings.apiProfiles.find((profile) => profile.id === settings.activeApiProfileId) ?? settings.apiProfiles[0] ?? getDefaultApiProfile();
 }
@@ -9383,7 +9628,7 @@ function migrateDefaultMemorySearchPolicy(settings: Settings): Settings {
 function isOutdatedSystemPrompt(prompt: string): boolean {
   const normalized = prompt.trim();
   if (!normalized) return true;
-  if (/Cancip Core Prompt v0\.1\.\d+/i.test(normalized) && !normalized.includes("Cancip Core Prompt v0.1.86")) return true;
+  if (/Cancip Core Prompt v0\.1\.\d+/i.test(normalized) && !normalized.includes("Cancip Core Prompt v0.1.89")) return true;
   return (
     normalized === LEGACY_SYSTEM_PROMPT ||
     normalized.includes("核心记忆和 Vault Search 上下文回答") ||
@@ -9427,6 +9672,7 @@ function normalizeSettings(input: Partial<Settings>): Settings {
       ? merged.activeApiProfileId
       : apiProfiles[0].id;
   const activeProfile = apiProfiles.find((profile) => profile.id === activeApiProfileId) ?? apiProfiles[0];
+  const modelOptions = normalizeModelOptions(merged.modelOptions, activeProfile.model);
   return {
     ...merged,
     language: isLanguageMode(merged.language) ? merged.language : DEFAULT_SETTINGS.language,
@@ -9437,6 +9683,7 @@ function normalizeSettings(input: Partial<Settings>): Settings {
     apiUrl: activeProfile.apiUrl,
     apiKey: activeProfile.apiKey,
     model: activeProfile.model,
+    modelOptions,
     temperature: Number.isFinite(temperature) ? Math.max(0, Math.min(2, temperature)) : DEFAULT_SETTINGS.temperature,
     maxOutputTokens: Number.isFinite(maxOutputTokens) ? Math.max(16, Math.min(32000, maxOutputTokens)) : DEFAULT_SETTINGS.maxOutputTokens,
     maxContextFiles: Number.isFinite(maxContextFiles) ? Math.max(1, Math.min(20, maxContextFiles)) : DEFAULT_SETTINGS.maxContextFiles,
@@ -9497,6 +9744,7 @@ function settingsToCancipConfig(settings: Settings): Record<string, unknown> {
     apiKey: settings.apiKey,
     apiMode: settings.apiMode,
     model: settings.model,
+    modelOptions: settings.modelOptions,
     temperature: settings.temperature,
     maxOutputTokens: settings.maxOutputTokens,
     maxContextFiles: settings.maxContextFiles,
@@ -9570,6 +9818,7 @@ function parseCancipConfig(raw: unknown): Partial<Settings> {
   if (typeof raw.apiKey === "string") config.apiKey = raw.apiKey;
   if (isApiMode(raw.apiMode)) config.apiMode = raw.apiMode;
   if (typeof raw.model === "string") config.model = raw.model;
+  if (Array.isArray(raw.modelOptions) || typeof raw.modelOptions === "string") config.modelOptions = normalizeModelOptions(raw.modelOptions, typeof raw.model === "string" ? raw.model : undefined);
   if (typeof raw.temperature === "number" || typeof raw.temperature === "string") config.temperature = Number(raw.temperature);
   if (typeof raw.maxOutputTokens === "number" || typeof raw.maxOutputTokens === "string") config.maxOutputTokens = Number.parseInt(String(raw.maxOutputTokens), 10);
   if (typeof raw.maxContextFiles === "number" || typeof raw.maxContextFiles === "string") config.maxContextFiles = Number.parseInt(String(raw.maxContextFiles), 10);
@@ -10045,7 +10294,13 @@ function parseCancipAction(input: unknown): CancipAction | null {
   }
 
   if (input.type === "read") {
-    return { type: "read", path: input.path };
+    return {
+      type: "read",
+      path: input.path,
+      query: typeof input.query === "string" ? input.query : undefined,
+      occurrence: typeof input.occurrence === "number" ? input.occurrence : Number.isFinite(Number.parseInt(String(input.occurrence ?? ""), 10)) ? Number.parseInt(String(input.occurrence), 10) : undefined,
+      maxChars: typeof input.maxChars === "number" ? input.maxChars : Number.isFinite(Number.parseInt(String(input.maxChars ?? ""), 10)) ? Number.parseInt(String(input.maxChars), 10) : undefined
+    };
   }
 
   if (input.type === "write" && typeof input.content === "string") {
@@ -10057,7 +10312,15 @@ function parseCancipAction(input: unknown): CancipAction | null {
   }
 
   if (input.type === "patch" && typeof input.find === "string" && typeof input.replace === "string") {
-    return { type: "patch", path: input.path, find: input.find, replace: input.replace, all: Boolean(input.all) };
+    return {
+      type: "patch",
+      path: input.path,
+      find: input.find,
+      replace: input.replace,
+      all: Boolean(input.all),
+      regex: Boolean(input.regex),
+      flags: typeof input.flags === "string" ? input.flags : undefined
+    };
   }
 
   if (input.type === "mkdir") {
@@ -10147,6 +10410,103 @@ function trimContext(content: string, maxLength: number): string {
   const trimmed = content.trim();
   if (trimmed.length <= maxLength) return trimmed;
   return `${trimmed.slice(0, maxLength)}\n\n...[truncated]`;
+}
+
+function stringOccurrences(content: string, query: string): number[] {
+  const indexes: number[] = [];
+  if (!query) return indexes;
+  let cursor = 0;
+  while (cursor <= content.length) {
+    const index = content.indexOf(query, cursor);
+    if (index < 0) break;
+    indexes.push(index);
+    cursor = index + Math.max(1, query.length);
+  }
+  return indexes;
+}
+
+function snippetAroundIndex(content: string, index: number, maxLength: number): string {
+  const safeMax = Math.max(200, maxLength);
+  const start = Math.max(0, index - Math.floor(safeMax / 2));
+  const end = Math.min(content.length, start + safeMax);
+  const prefix = start > 0 ? `...[start ${start}]\n` : "";
+  const suffix = end < content.length ? `\n...[end ${end}]` : "";
+  return `${prefix}${content.slice(start, end)}${suffix}`;
+}
+
+function normalizePatchRegexFlags(rawFlags: string | undefined, all: boolean): string {
+  const allowed = new Set(["i", "m", "s", "u"]);
+  const flags: string[] = [];
+  for (const flag of String(rawFlags ?? "")) {
+    if (flag === "g") continue;
+    if (allowed.has(flag) && !flags.includes(flag)) flags.push(flag);
+  }
+  if (all) flags.push("g");
+  return flags.join("");
+}
+
+function formatPatchFindFailure(path: string, current: string, find: string, regex: boolean): string {
+  const hint = patchFailureHint(current, find);
+  return [
+    `patch ${regex ? "regex" : "find text"} was not found in ${path}.`,
+    "Do not retry the same patch. First read the current file with a focused query, or use a smaller anchored patch.",
+    `Suggested read action: {"type":"read","path":"${path}","query":"<short current anchor>","maxChars":8000}`,
+    `file length: ${current.length}`,
+    `missing ${regex ? "regex" : "find"}: ${trimContext(redactSensitiveText(find), 500)}`,
+    hint ? `closest current snippet:\n${trimContext(redactSensitiveText(hint), 1200)}` : ""
+  ].filter(Boolean).join("\n\n");
+}
+
+function patchFailureHint(current: string, find: string): string {
+  const candidates = patchFindCandidates(find);
+  for (const candidate of candidates) {
+    const index = current.indexOf(candidate);
+    if (index >= 0) return snippetAroundIndex(current, index, 1200);
+  }
+  return "";
+}
+
+function patchFindCandidates(find: string): string[] {
+  const normalized = find.replace(/\s+/g, " ").trim();
+  const candidates: string[] = [];
+  const push = (value: string) => {
+    const trimmed = value.trim();
+    if (trimmed.length >= 12 && !candidates.includes(trimmed)) candidates.push(trimmed);
+  };
+  push(normalized.slice(0, 160));
+  if (normalized.length > 220) {
+    push(normalized.slice(Math.max(0, Math.floor(normalized.length / 2) - 80), Math.floor(normalized.length / 2) + 80));
+    push(normalized.slice(-160));
+  }
+  const tokenPattern = /[A-Za-z_$][A-Za-z0-9_$]{8,}|[\u4e00-\u9fff]{4,}/g;
+  let match: RegExpExecArray | null;
+  while ((match = tokenPattern.exec(find)) !== null) {
+    push(match[0]);
+    if (candidates.length >= 8) break;
+  }
+  return candidates;
+}
+
+function patchRecoveryQuery(find: string): string | undefined {
+  const cleaned = find
+    .replace(/\\s[+*?]?/g, " ")
+    .replace(/\\([/\\.^$*+?()[\]{}|])/g, "$1")
+    .replace(/\(\?:/g, "(")
+    .replace(/\s+/g, " ");
+  const stopWords = new Set([
+    "function", "return", "const", "let", "var", "this", "type", "path",
+    "patch", "regex", "replace", "find", "true", "false", "string",
+    "number", "object", "undefined", "null"
+  ]);
+  const tokenPattern = /[.#]?[A-Za-z_$][A-Za-z0-9_$-]{5,}|[\u4e00-\u9fff]{3,}/g;
+  let match: RegExpExecArray | null;
+  while ((match = tokenPattern.exec(cleaned)) !== null) {
+    const token = match[0].trim();
+    const normalized = token.replace(/^[.#]/, "").toLowerCase();
+    if (stopWords.has(normalized)) continue;
+    return token.slice(0, 80);
+  }
+  return patchFindCandidates(cleaned)[0]?.slice(0, 80);
 }
 
 function escapeRegExp(input: string): string {
