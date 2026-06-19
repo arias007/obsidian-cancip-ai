@@ -351,12 +351,6 @@ type ActionHandlingResult = {
   executed: boolean;
 };
 
-type FinalReviewDecision = {
-  verdict: "ok" | "revise" | "continue";
-  reason?: string;
-  final?: string;
-};
-
 type ActionReportSection = {
   title: string;
   summary: string;
@@ -645,10 +639,6 @@ const EN = {
   copyMessage: "Copy",
   scrollToBottom: "Scroll to bottom",
   queueMessage: "Queue message",
-  finalReviewStatus: "Checking final answer",
-  finalReviewPrompt: "Check the user's original request against Cancip's current final answer.\n\nUser request:\n{prompt}\n\nCurrent final answer:\n{final}\n\nRecent conversation/tool context:\n{context}\n\nReturn only compact JSON first: {\"verdict\":\"ok|revise|continue\",\"reason\":\"short reason\",\"final\":\"corrected final answer if verdict is revise\"}.\nUse ok if the final answer directly answers the user and no further action is useful.\nUse revise if the answer is off-topic, too template-like, unclear, or missing the user-facing result, but no tool is needed.\nUse continue only if Cancip can still make concrete progress with an executable tool action; then include exactly one cancip-action fenced block after the JSON. Do not say continue without an executable action.",
-  finalReviewRevised: "Final answer revised after self-check.",
-  finalReviewNoAction: "Self-check said more work is possible, but did not provide an executable action.",
   copyDone: "Copied",
   copyFailed: "Copy failed: {reason}",
   toolJsonDetails: "Tool / command details",
@@ -1000,10 +990,6 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     copyMessage: "复制",
     scrollToBottom: "到底部",
     queueMessage: "加入队列",
-    finalReviewStatus: "核实最终结论",
-    finalReviewPrompt: "核实一遍用户原问题和 Cancip 当前最终结论是否对齐。\n\n用户原问题：\n{prompt}\n\n当前最终结论：\n{final}\n\n最近会话/工具上下文：\n{context}\n\n先只返回紧凑 JSON：{\"verdict\":\"ok|revise|continue\",\"reason\":\"简短原因\",\"final\":\"verdict 为 revise 时填写修正后的最终结论\"}。\nok 表示最终结论已经直接回答用户且没有必要继续。\nrevise 表示结论跑偏、模板化、不清楚或缺少面向用户的结果，但不需要工具。\ncontinue 表示 Cancip 还能用可执行工具动作继续推进；此时 JSON 后必须附带且只附带一个 cancip-action fenced block。没有可执行动作就不要说 continue。",
-    finalReviewRevised: "最终结论已按自检修正。",
-    finalReviewNoAction: "自检认为还能继续，但没有给出可执行动作。",
     copyDone: "已复制",
     copyFailed: "复制失败：{reason}",
   toolJsonDetails: "工具/命令详情",
@@ -4956,16 +4942,13 @@ class CancipView extends ItemView {
         const finalActionReport = finalReport ?? actionReport;
         const needsMoreAction = shouldExpectToolActionForPrompt(rawPrompt) && shouldNeedMoreActionForPrompt(rawPrompt, finalActionReport.runs);
         this.ensureFinalConclusion(finalActionReport, startedAt, needsMoreAction, rawPrompt);
-        const review = await this.reviewFinalAnswerAndMaybeContinue(rawPrompt, context, request, startedAt);
-        const stillNeedsMoreAction = needsMoreAction || Boolean(review?.needsMoreAction);
-        if (stillNeedsMoreAction) {
+        if (needsMoreAction) {
           this.setStatus(this.t("callFailed"));
           await this.finishCurrentSessionStatus("failed", true, request);
           return;
         }
       } else {
         this.ensurePlainFinalConclusion(startedAt);
-        await this.reviewFinalAnswerAndMaybeContinue(rawPrompt, context, request, startedAt);
       }
       this.setStatus(this.t("done"));
       await this.finishCurrentSessionStatus("completed", true, request);
@@ -6916,102 +6899,6 @@ class CancipView extends ItemView {
       typeof startedAt === "number" ? this.t("totalElapsed", { elapsed: formatElapsed(Date.now() - startedAt) }) : ""
     ].filter(Boolean).join("\n\n");
     this.addMessage("assistant", this.t("finalConclusionFallback", { summary }));
-  }
-
-  private async reviewFinalAnswerAndMaybeContinue(
-    rawPrompt: string,
-    context: { system: string; contextText: string },
-    request: AbortController,
-    startedAt: number
-  ): Promise<{ needsMoreAction: boolean } | null> {
-    if (!this.shouldRunFinalAnswerReview(rawPrompt)) return null;
-    if (request.signal.aborted || !this.hasRequest(request)) return null;
-    const finalMessage = this.latestVisibleAssistantMessage();
-    if (!finalMessage) return null;
-    const display = prepareMessageDisplay(redactSensitiveText(finalMessage.content));
-    const finalText = trimContext(display.visibleContent || messageOutlineText(finalMessage.content) || finalMessage.content, 2400);
-    if (!finalText) return null;
-
-    const reviewStep = this.addProgressStep(this.t("finalReviewStatus"));
-    try {
-      const reviewPrompt = this.t("finalReviewPrompt", {
-        prompt: trimContext(redactSensitiveText(rawPrompt), 1200),
-        final: finalText,
-        context: trimContext(this.conversationForToolContinuation(8, 500), 3200)
-      });
-      const answer = await withTimeout(
-        this.callModel(reviewPrompt, { system: this.modePrompt(), contextText: context.contextText }),
-        Math.min(MODEL_CALL_TIMEOUT_MS, 45000),
-        "final review timed out"
-      );
-      if (request.signal.aborted || !this.hasRequest(request)) {
-        this.stopProgressStepTimer(reviewStep.id);
-        return null;
-      }
-
-      const decision = parseFinalReviewDecision(answer);
-      if (!decision) {
-        this.updateProgressStep(reviewStep, this.t("finalReviewStatus"), "invalid review response", this.t("toolRunFailed"));
-        void this.recordSessionEvent({ kind: "message.add", summary: this.t("finalReviewStatus"), detail: "invalid review response" });
-        return null;
-      }
-      this.updateProgressStep(reviewStep, this.t("finalReviewStatus"), `${decision.verdict}: ${decision.reason ?? ""}`.trim(), this.t("done"));
-
-      if (decision.verdict === "ok") return { needsMoreAction: false };
-
-      if (decision.verdict === "revise") {
-        const final = (decision.final || removeCancipActionBlocks(answer)).trim();
-        if (final) {
-          const summary = [
-            final,
-            this.t("totalElapsed", { elapsed: formatElapsed(Date.now() - startedAt) })
-          ].join("\n\n");
-          this.addMessage("assistant", this.t("finalConclusionFallback", { summary }));
-          this.setStatus(this.t("finalReviewRevised"));
-        }
-        return { needsMoreAction: false };
-      }
-
-      if (!extractCancipActions(answer).length) {
-        const summary = [
-          this.t("finalReviewNoAction"),
-          decision.reason ? `原因：${decision.reason}` : "",
-          this.t("totalElapsed", { elapsed: formatElapsed(Date.now() - startedAt) })
-        ].filter(Boolean).join("\n\n");
-        this.addMessage("assistant", this.t("finalConclusionFallback", { summary }));
-        return { needsMoreAction: true };
-      }
-
-      const visibleAnswer = removeCancipActionBlocks(answer).trim();
-      const assistantMessage = this.addMessage("assistant", visibleAnswer || this.t("toolActionForcedVisible"));
-      const actionReport = await this.handleActionBlocks(answer, assistantMessage);
-      if (!actionReport) return { needsMoreAction: true };
-      this.addMessage("assistant", actionReport.report);
-      const finalReport = await this.continueAfterToolRuns(context, actionReport, request, rawPrompt);
-      const finalActionReport = finalReport ?? actionReport;
-      const needsMoreAction = shouldExpectToolActionForPrompt(rawPrompt) && shouldNeedMoreActionForPrompt(rawPrompt, finalActionReport.runs);
-      this.ensureFinalConclusion(finalActionReport, startedAt, needsMoreAction, rawPrompt);
-      return { needsMoreAction };
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
-      this.updateProgressStep(reviewStep, this.t("finalReviewStatus"), reason, this.t("toolRunFailed"));
-      void this.recordSessionEvent({ kind: "prompt.error", summary: this.t("finalReviewStatus"), detail: reason });
-      return null;
-    }
-  }
-
-  private shouldRunFinalAnswerReview(rawPrompt: string): boolean {
-    if (!rawPrompt.trim()) return false;
-    if (shouldSuppressToolActionsForPrompt(rawPrompt)) return false;
-    return true;
-  }
-
-  private latestVisibleAssistantMessage(): ChatMessage | null {
-    return [...this.messages].reverse().find((message) => {
-      if (message.role !== "assistant") return false;
-      const display = prepareMessageDisplay(redactSensitiveText(message.content));
-      return !display.processOnly && Boolean(display.visibleContent.trim());
-    }) ?? null;
   }
 
   private humanFinalConclusion(runs: ToolRun[], needsMoreAction = false, originalPrompt = ""): string {
@@ -9486,28 +9373,6 @@ function isWeakFinalConclusion(content: string): boolean {
     || normalized.includes("动作失败");
 }
 
-function parseFinalReviewDecision(answer: string): FinalReviewDecision | null {
-  const withoutActions = removeCancipActionBlocks(answer).trim();
-  const fenced = withoutActions.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  const source = (fenced?.[1] ?? withoutActions).trim();
-  const start = source.indexOf("{");
-  const end = source.lastIndexOf("}");
-  if (start < 0 || end <= start) return null;
-  try {
-    const parsed = JSON.parse(source.slice(start, end + 1)) as unknown;
-    if (!isRecord(parsed)) return null;
-    const verdictRaw = typeof parsed.verdict === "string" ? parsed.verdict.toLowerCase().trim() : "";
-    if (verdictRaw !== "ok" && verdictRaw !== "revise" && verdictRaw !== "continue") return null;
-    return {
-      verdict: verdictRaw,
-      reason: typeof parsed.reason === "string" ? trimContext(parsed.reason, 400) : undefined,
-      final: typeof parsed.final === "string" ? parsed.final.trim() : undefined
-    };
-  } catch {
-    return null;
-  }
-}
-
 function formatElapsed(ms: number): string {
   const safe = Math.max(0, Math.round(ms));
   if (safe < 1000) return `${safe}ms`;
@@ -9854,7 +9719,7 @@ function migrateDefaultMemorySearchPolicy(settings: Settings): Settings {
 function isOutdatedSystemPrompt(prompt: string): boolean {
   const normalized = prompt.trim();
   if (!normalized) return true;
-  if (/Cancip Core Prompt v0\.1\.\d+/i.test(normalized) && !normalized.includes("Cancip Core Prompt v0.1.92")) return true;
+  if (/Cancip Core Prompt v0\.1\.\d+/i.test(normalized) && !normalized.includes("Cancip Core Prompt v0.1.91")) return true;
   return (
     normalized === LEGACY_SYSTEM_PROMPT ||
     normalized.includes("核心记忆和 Vault Search 上下文回答") ||
