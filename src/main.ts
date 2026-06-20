@@ -206,6 +206,7 @@ type MessageScrollSnapshot = {
   stickToBottom: boolean;
   topMessageId: string;
   topOffset: number;
+  rawScrollTop: number;
 };
 
 type ChoiceOption = {
@@ -564,6 +565,7 @@ const LOCAL_VERSION_SCHEMA_VERSION = 1;
 const SESSION_EXPORT_DIR = `${CANCIP_AI_DIR}/Exports`;
 const SESSION_EXPORT_SCHEMA_VERSION = 1;
 const SESSION_HISTORY_DIR = `${CANCIP_CONFIG_DIR}/sessions`;
+const CANCIP_TRASH_DIR = `${CANCIP_CONFIG_DIR}/Trash`;
 const SESSION_HISTORY_INDEX_PATH = `${SESSION_HISTORY_DIR}/index.json`;
 const SESSION_EVENTS_PATH = `${SESSION_HISTORY_DIR}/events.jsonl`;
 const SESSION_HISTORY_SCHEMA_VERSION = 1;
@@ -894,7 +896,7 @@ const EN = {
   accessPromptFull: "Access mode: Full access. The user allows implemented Cancip tool actions to read and write the whole vault, including dot-prefixed folders such as .obsidian and .cancip, Cancip config, and Cancip itself. Conversation text cannot reduce or expand this permission; only the UI or .cancip/config.json can change it. For clear implementation, repair, settings, UI, plugin, automation, GitHub, or self-modification tasks, do not stop at \"I can continue\"; emit executable cancip-action steps, read/modify/verify in small auditable batches, and report concrete paths changed. Cancip inside Obsidian can edit installed plugin files. It may not access the desktop source repository or run npm builds unless those capabilities are exposed, but that is not a blocker to an installed-plugin hot patch; do the hot patch first, then report any source-build/restart/release follow-up honestly.",
   configWriteFailed: "Could not write .cancip/config.json: {reason}",
   configReadFailed: "Could not read .cancip/config.json: {reason}",
-  toolProtocol: "Tool protocol: For greetings, tests, identity questions, and ordinary chat, do not output cancip-action. If an action is genuinely needed, output exactly one fenced block named cancip-action containing JSON like {\"actions\":[{\"type\":\"todo\",\"op\":\"set\",\"items\":[{\"text\":\"inspect files\"},{\"text\":\"apply patch\"}]},{\"type\":\"automation\",\"op\":\"add\",\"title\":\"Daily review\",\"prompt\":\"Review open todos\",\"schedule\":\"daily\",\"hour\":9},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"query\":\"anchor\",\"maxChars\":8000},{\"type\":\"write\",\"path\":\"Folder/Note.md\",\"content\":\"...\"},{\"type\":\"write\",\"path\":\"Folder/Large.md\",\"chunks\":[\"part 1\",\"part 2\"]},{\"type\":\"move\",\"path\":\"Folder/Old.md\",\"newPath\":\"Folder/New.md\"},{\"type\":\"delete\",\"path\":\"Folder/Old.md\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"find\":\"old\",\"replace\":\"new\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"regex\":true,\"find\":\"old\\\\s+pattern\",\"replace\":\"new\",\"flags\":\"m\"},{\"type\":\"config\",\"set\":{\"maxToolIterations\":6},\"unset\":[\"oldSetting\"]},{\"type\":\"command\",\"command\":\"cancip.searchVault\",\"args\":{\"query\":\"keyword\",\"limit\":8}}]}. Supported action types: read, write, append, patch, config, todo, automation, mkdir, rename, move, copy, delete, command. Read supports query, occurrence, and maxChars for focused snippets from large/minified files. Write and append support content or chunks:[\"part1\",\"part2\"]; for large files prefer chunks because Cancip writes/appends sequentially and verifies the result by reading it back. Move is the normal file/folder move action; rename is kept as an alias. Delete moves to trash by default; only use permanent:true when the user explicitly asks for permanent deletion. Patch supports exact find/replace or regex:true with optional flags; if patch text is not found, do not retry the same find text, read the current file with a focused query and use a smaller anchored patch. Config safely deep-merges JSON into .cancip/config.json by default, supports optional path, set, unset, replace, writes formatted JSON, and verifies by reading JSON back; use it for large config files instead of fragile string patches. Todo operations are set, add, update, remove, list, clear and update the visible Plan panel. Automation operations are add, update, remove, list, run; schedules are manual, hourly, daily. File actions use Vault-relative paths only. Command actions use a named command bus: obsidian.listCommands, obsidian.execute, cancip.reviewGate, cancip.reviewGate.list, cancip.sessionEvents, cancip.automation.templates, cancip.automation.addTemplate, cancip.searchVault, cancip.rebuildIndex, cancip.previewVaultSearch, cancip.localVersionCommit, cancip.importCodexMemory, cancip.automation.list, cancip.automation.add, cancip.automation.run, cancip.automation.remove, github.help, github.status, github.repo, github.issues, github.pulls, github.releases, github.workflowRuns, github.branches, github.file, github.createIssue, github.installObsidianPlugin. For settings/UI/plugin/self-fix requests, first inspect the relevant source/config with read/search actions, then patch/write/config and verify. If desktop source is unavailable, use the installed plugin files under .obsidian/plugins/cancip as the mobile hot-patch implementation surface; do not stop merely because npm build/restart/source sync is unavailable. Installed Cancip plugin file edits require reload/restart before visible effect. Use cancip.searchVault only when long-term memory and supplied context are insufficient; then read only the necessary matched files. Keep action batches small and wait for results. If a tool fails, use the error as authoritative context and explain or correct the next step. Use cancip.reviewGate as a real programmatic OB Review Gate builder before risky vault organization or risky edits; it writes a mobile HTML review package, not just a prompt. Plan mode only adds planning/todo behavior and never changes access permission. Raw JavaScript eval is blocked.",
+  toolProtocol: "Tool protocol: For greetings, tests, identity questions, and ordinary chat, do not output cancip-action. If an action is genuinely needed, output exactly one fenced block named cancip-action containing JSON like {\"actions\":[{\"type\":\"todo\",\"op\":\"set\",\"items\":[{\"text\":\"inspect files\"},{\"text\":\"apply patch\"}]},{\"type\":\"automation\",\"op\":\"add\",\"title\":\"Daily review\",\"prompt\":\"Review open todos\",\"schedule\":\"daily\",\"hour\":9},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"query\":\"anchor\",\"maxChars\":8000},{\"type\":\"write\",\"path\":\"Folder/Note.md\",\"content\":\"...\"},{\"type\":\"write\",\"path\":\"Folder/Large.md\",\"chunks\":[\"part 1\",\"part 2\"]},{\"type\":\"move\",\"path\":\"Folder/Old.md\",\"newPath\":\"Folder/New.md\"},{\"type\":\"move\",\"path\":\"Folder/Old.md\",\"newPath\":\"Archive\"},{\"type\":\"delete\",\"path\":\"Folder/Old.md\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"find\":\"old\",\"replace\":\"new\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"regex\":true,\"find\":\"old\\\\s+pattern\",\"replace\":\"new\",\"flags\":\"m\"},{\"type\":\"config\",\"set\":{\"maxToolIterations\":6},\"unset\":[\"oldSetting\"]},{\"type\":\"command\",\"command\":\"cancip.searchVault\",\"args\":{\"query\":\"keyword\",\"limit\":8}}]}. Supported action types: read, write, append, patch, config, todo, automation, mkdir, rename, move, copy, delete, command. Read supports query, occurrence, and maxChars for focused snippets from large/minified files. Write and append support content or chunks:[\"part1\",\"part2\"]; for large files prefer chunks because Cancip writes/appends sequentially and verifies the result by reading it back. Move is the normal file/folder move action; rename is kept as an alias. If newPath is a folder path, Cancip keeps the original file/folder name under that folder. Delete moves to trash by default; if platform trash is unavailable, Cancip moves the target to .cancip/Trash; only use permanent:true when the user explicitly asks for permanent deletion. Patch supports exact find/replace or regex:true with optional flags; if patch text is not found, do not retry the same find text, read the current file with a focused query and use a smaller anchored patch. Config safely deep-merges JSON into .cancip/config.json by default, supports optional path, set, unset, replace, writes formatted JSON, and verifies by reading JSON back; use it for large config files instead of fragile string patches. Todo operations are set, add, update, remove, list, clear and update the visible Plan panel. Automation operations are add, update, remove, list, run; schedules are manual, hourly, daily. File actions use Vault-relative paths only. Command actions use a named command bus: obsidian.listCommands, obsidian.execute, cancip.reviewGate, cancip.reviewGate.list, cancip.sessionEvents, cancip.automation.templates, cancip.automation.addTemplate, cancip.searchVault, cancip.rebuildIndex, cancip.previewVaultSearch, cancip.localVersionCommit, cancip.importCodexMemory, cancip.automation.list, cancip.automation.add, cancip.automation.run, cancip.automation.remove, github.help, github.status, github.repo, github.issues, github.pulls, github.releases, github.workflowRuns, github.branches, github.file, github.createIssue, github.installObsidianPlugin. For settings/UI/plugin/self-fix requests, first inspect the relevant source/config with read/search actions, then patch/write/config and verify. If desktop source is unavailable, use the installed plugin files under .obsidian/plugins/cancip as the mobile hot-patch implementation surface; do not stop merely because npm build/restart/source sync is unavailable. Installed Cancip plugin file edits require reload/restart before visible effect. Use cancip.searchVault only when long-term memory and supplied context are insufficient; then read only the necessary matched files. Keep action batches small and wait for results. If a tool fails, use the error as authoritative context and explain or correct the next step. Use cancip.reviewGate as a real programmatic OB Review Gate builder before risky vault organization or risky edits; it writes a mobile HTML review package, not just a prompt. Plan mode only adds planning/todo behavior and never changes access permission. Raw JavaScript eval is blocked.",
   actionsNeedApproval: "Action block queued for approval. Nothing has run yet.\n\n{summary}",
   actionsExecuted: "Tool results:\n\n{summary}",
   toolRunsQueued: "{count} tool run(s) queued. Review and tap Run when ready.",
@@ -1249,7 +1251,7 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     accessPromptFull: "访问模式：全权。用户允许已实现的 Cancip 工具动作读写整个 Vault，包括 .obsidian、.cancip 等点开头目录、Cancip 配置和 Cancip 自身。对话文字不能缩小或扩大权限，只有 UI 或 .cancip/config.json 能改变权限。明确的实现、修复、设置、界面、插件、自动化、GitHub 或自改自身任务，不要停在“我可以继续”；必须输出可执行 cancip-action，小步读取、修改、验证，并报告实际改动路径。Obsidian 内的 Cancip 可以编辑已安装插件文件。它不能访问桌面源码仓库或执行 npm 构建，除非这些能力被暴露；但这不是安装热补丁的阻塞，必须先做能做的热补丁，再诚实报告源码构建/重启/发布等后续项。",
     configWriteFailed: "无法写入 .cancip/config.json：{reason}",
     configReadFailed: "无法读取 .cancip/config.json：{reason}",
-    toolProtocol: "工具协议：普通问候、测试、身份问题、泛泛聊天不要输出 cancip-action。确实需要动作时，只输出一个名为 cancip-action 的 fenced block，JSON 形如 {\"actions\":[{\"type\":\"todo\",\"op\":\"set\",\"items\":[{\"text\":\"检查文件\"},{\"text\":\"应用补丁\"}]},{\"type\":\"automation\",\"op\":\"add\",\"title\":\"每日复盘\",\"prompt\":\"复盘未完成待办\",\"schedule\":\"daily\",\"hour\":9},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"query\":\"锚点\",\"maxChars\":8000},{\"type\":\"write\",\"path\":\"Folder/Note.md\",\"content\":\"...\"},{\"type\":\"write\",\"path\":\"Folder/Large.md\",\"chunks\":[\"第 1 段\",\"第 2 段\"]},{\"type\":\"move\",\"path\":\"Folder/旧.md\",\"newPath\":\"Folder/新.md\"},{\"type\":\"delete\",\"path\":\"Folder/旧.md\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"find\":\"旧内容\",\"replace\":\"新内容\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"regex\":true,\"find\":\"旧内容\\\\s+模式\",\"replace\":\"新内容\",\"flags\":\"m\"},{\"type\":\"config\",\"set\":{\"maxToolIterations\":6},\"unset\":[\"oldSetting\"]},{\"type\":\"command\",\"command\":\"cancip.searchVault\",\"args\":{\"query\":\"关键词\",\"limit\":8}}]}。支持动作：read、write、append、patch、config、todo、automation、mkdir、rename、move、copy、delete、command。read 支持 query、occurrence、maxChars，用来精确读取大文件/压缩构建文件里的当前片段。write/append 支持 content 或 chunks:[\"part1\",\"part2\"]；写大文件优先用 chunks，Cancip 会顺序写入/追加并读回校验。move 是正常移动文件/文件夹动作，rename 保留为别名。delete 默认进入回收站；只有用户明确要求永久删除时才使用 permanent:true。patch 支持精确 find/replace，也支持 regex:true 和可选 flags；如果 patch 提示 find text was not found，绝对不要重复同一个 find，必须先用 query 读取当前文件片段，再换更小锚点或正则补丁。config 默认安全深度合并写入 .cancip/config.json，可选 path、set、unset、replace，会格式化 JSON 并读回校验；改大型配置文件优先用 config，不要靠脆弱字符串 patch。todo 支持 set、add、update、remove、list、clear，并会更新可见 Plan 面板。automation 支持 add、update、remove、list、run；schedule 可用 manual、hourly、daily。文件动作只能使用 Vault 相对路径。命令动作走命令总线：obsidian.listCommands、obsidian.execute、cancip.reviewGate、cancip.reviewGate.list、cancip.sessionEvents、cancip.automation.templates、cancip.automation.addTemplate、cancip.searchVault、cancip.rebuildIndex、cancip.previewVaultSearch、cancip.localVersionCommit、cancip.importCodexMemory、cancip.automation.list、cancip.automation.add、cancip.automation.run、cancip.automation.remove、github.help、github.status、github.repo、github.issues、github.pulls、github.releases、github.workflowRuns、github.branches、github.file、github.createIssue、github.installObsidianPlugin。设置/界面/插件/自身修复类任务，先用 read/search 检查相关源码或配置，再 patch/write/config 并验证；若桌面源码不可用，就把 .obsidian/plugins/cancip 下的已安装插件文件作为手机热补丁实现面，不能仅因 npm build/重启/源码同步不可用就停止。写已安装 Cancip 插件文件后必须说明需要重载/重启才有可见效果。只有长期记忆和已提供上下文不够时才用 cancip.searchVault 搜库，然后只读取必要命中文件。动作批次要小，等待工具结果后继续。工具失败就是权威上下文，必须解释失败或改用更小的下一步。Vault 整理、移动、重命名、合并、拆分、修复链接等高风险改动前，先用 cancip.reviewGate 程序化生成手机 HTML 审核包；它不是提示词。Plan mode 只增加计划/待办层，不改变访问权限。原始 JavaScript eval 阻止。",
+    toolProtocol: "工具协议：普通问候、测试、身份问题、泛泛聊天不要输出 cancip-action。确实需要动作时，只输出一个名为 cancip-action 的 fenced block，JSON 形如 {\"actions\":[{\"type\":\"todo\",\"op\":\"set\",\"items\":[{\"text\":\"检查文件\"},{\"text\":\"应用补丁\"}]},{\"type\":\"automation\",\"op\":\"add\",\"title\":\"每日复盘\",\"prompt\":\"复盘未完成待办\",\"schedule\":\"daily\",\"hour\":9},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"query\":\"锚点\",\"maxChars\":8000},{\"type\":\"write\",\"path\":\"Folder/Note.md\",\"content\":\"...\"},{\"type\":\"write\",\"path\":\"Folder/Large.md\",\"chunks\":[\"第 1 段\",\"第 2 段\"]},{\"type\":\"move\",\"path\":\"Folder/旧.md\",\"newPath\":\"Folder/新.md\"},{\"type\":\"move\",\"path\":\"Folder/旧.md\",\"newPath\":\"归档\"},{\"type\":\"delete\",\"path\":\"Folder/旧.md\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"find\":\"旧内容\",\"replace\":\"新内容\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"regex\":true,\"find\":\"旧内容\\\\s+模式\",\"replace\":\"新内容\",\"flags\":\"m\"},{\"type\":\"config\",\"set\":{\"maxToolIterations\":6},\"unset\":[\"oldSetting\"]},{\"type\":\"command\",\"command\":\"cancip.searchVault\",\"args\":{\"query\":\"关键词\",\"limit\":8}}]}。支持动作：read、write、append、patch、config、todo、automation、mkdir、rename、move、copy、delete、command。read 支持 query、occurrence、maxChars，用来精确读取大文件/压缩构建文件里的当前片段。write/append 支持 content 或 chunks:[\"part1\",\"part2\"]；写大文件优先用 chunks，Cancip 会顺序写入/追加并读回校验。move 是正常移动文件/文件夹动作，rename 保留为别名；如果 newPath 是文件夹路径，工具层会保留原文件/文件夹名放进该文件夹。delete 默认进入回收站；平台回收站不可用时移入 .cancip/Trash；只有用户明确要求永久删除时才使用 permanent:true。patch 支持精确 find/replace，也支持 regex:true 和可选 flags；如果 patch 提示 find text was not found，绝对不要重复同一个 find，必须先用 query 读取当前文件片段，再换更小锚点或正则补丁。config 默认安全深度合并写入 .cancip/config.json，可选 path、set、unset、replace，会格式化 JSON 并读回校验；改大型配置文件优先用 config，不要靠脆弱字符串 patch。todo 支持 set、add、update、remove、list、clear，并会更新可见 Plan 面板。automation 支持 add、update、remove、list、run；schedule 可用 manual、hourly、daily。文件动作只能使用 Vault 相对路径。命令动作走命令总线：obsidian.listCommands、obsidian.execute、cancip.reviewGate、cancip.reviewGate.list、cancip.sessionEvents、cancip.automation.templates、cancip.automation.addTemplate、cancip.searchVault、cancip.rebuildIndex、cancip.previewVaultSearch、cancip.localVersionCommit、cancip.importCodexMemory、cancip.automation.list、cancip.automation.add、cancip.automation.run、cancip.automation.remove、github.help、github.status、github.repo、github.issues、github.pulls、github.releases、github.workflowRuns、github.branches、github.file、github.createIssue、github.installObsidianPlugin。设置/界面/插件/自身修复类任务，先用 read/search 检查相关源码或配置，再 patch/write/config 并验证；若桌面源码不可用，就把 .obsidian/plugins/cancip 下的已安装插件文件作为手机热补丁实现面，不能仅因 npm build/重启/源码同步不可用就停止。写已安装 Cancip 插件文件后必须说明需要重载/重启才有可见效果。只有长期记忆和已提供上下文不够时才用 cancip.searchVault 搜库，然后只读取必要命中文件。动作批次要小，等待工具结果后继续。工具失败就是权威上下文，必须解释失败或改用更小的下一步。Vault 整理、移动、重命名、合并、拆分、修复链接等高风险改动前，先用 cancip.reviewGate 程序化生成手机 HTML 审核包；它不是提示词。Plan mode 只增加计划/待办层，不改变访问权限。原始 JavaScript eval 阻止。",
     actionsNeedApproval: "动作块已进入确认队列，尚未执行。\n\n{summary}",
     actionsExecuted: "工具执行结果：\n\n{summary}",
     toolRunsQueued: "{count} 个工具调用已排队。确认后点 Run 执行。",
@@ -3636,6 +3638,10 @@ class CancipView extends ItemView {
   private toolRunTimers = new Map<string, number>();
   private detailsOpenState = new Map<string, boolean>();
   private userPinnedScroll = false;
+  private userInteractingWithMessages = false;
+  private programmaticScrollRestore = false;
+  private pendingMessageRender = false;
+  private messageInteractionIdleTimer: number | null = null;
   private drainQueueAfterRequest = true;
   private currentSessionStatus: NonNullable<SessionHistoryEntry["status"]> = "idle";
   private currentSessionCompletedNotice = false;
@@ -3853,9 +3859,18 @@ class CancipView extends ItemView {
     const messagesFrame = shell.createDiv({ cls: "obcc-messages-frame" });
     this.messagesEl = messagesFrame.createDiv({ cls: "obcc-messages" });
     this.messagesEl.addEventListener("scroll", () => {
+      if (this.programmaticScrollRestore) {
+        this.syncScrollBottomButton();
+        return;
+      }
+      this.markMessageScrollInteraction();
       this.userPinnedScroll = !this.shouldStickToMessageBottom();
       this.syncScrollBottomButton();
     });
+    this.messagesEl.addEventListener("touchstart", () => this.markMessageScrollInteraction(), { passive: true });
+    this.messagesEl.addEventListener("touchmove", () => this.markMessageScrollInteraction(), { passive: true });
+    this.messagesEl.addEventListener("pointerdown", () => this.markMessageScrollInteraction());
+    this.messagesEl.addEventListener("wheel", () => this.markMessageScrollInteraction(), { passive: true });
     this.scrollBottomButtonEl = messagesFrame.createEl("button", {
       cls: "obcc-scroll-bottom is-hidden",
       attr: { type: "button", title: this.t("scrollToBottom"), "aria-label": this.t("scrollToBottom") }
@@ -7170,20 +7185,23 @@ class CancipView extends ItemView {
     }
 
     if (action.type === "rename" || action.type === "move") {
-      const newPath = normalizeActionPath(action.newPath);
+      const currentPath = await this.resolveActionExistingPath(path);
+      const newPath = await this.resolveMoveTargetPath(currentPath, normalizeActionPath(action.newPath));
+      await this.ensureMoveDestination(adapter, currentPath, newPath);
       await ensureParentFolder(adapter, newPath);
-      await adapter.rename(path, newPath);
-      const sourceExists = await adapter.exists(path);
+      await adapter.rename(currentPath, newPath);
+      const sourceExists = await adapter.exists(currentPath);
       const targetExists = await adapter.exists(newPath);
       if (sourceExists || !targetExists) {
         throw new Error(`move verification failed: sourceExists=${sourceExists}, targetExists=${targetExists}`);
       }
       const key = action.type === "move" ? "actionMove" : "actionRename";
-      return this.t(key, { path, newPath });
+      return this.t(key, { path: currentPath, newPath });
     }
 
     if (action.type === "delete") {
-      return await this.executeDeleteAction(adapter, path, action.permanent === true);
+      const currentPath = await this.resolveActionExistingPath(path);
+      return await this.executeDeleteAction(adapter, currentPath, action.permanent === true);
     }
 
     const newPath = normalizeActionPath(action.newPath);
@@ -7235,19 +7253,40 @@ class CancipView extends ItemView {
 
     let mode = permanent ? "remove" : "trash";
     if (permanent) {
-      await adapter.remove(path);
+      await this.removeVaultPath(adapter, path);
     } else {
-      try {
-        const trashed = await adapter.trashSystem(path);
-        if (trashed === false) {
-          await adapter.trashLocal(path);
-          mode = "trash-local";
-        } else {
-          mode = "trash-system";
+      const abstractFile = this.app.vault.getAbstractFileByPath(path);
+      if (abstractFile) {
+        try {
+          await this.app.vault.trash(abstractFile, true);
+          mode = "vault-trash-system";
+        } catch {
+          try {
+            await this.app.vault.trash(abstractFile, false);
+            mode = "vault-trash-local";
+          } catch {
+            await this.moveToCancipTrash(adapter, path);
+            mode = "cancip-trash";
+          }
         }
-      } catch {
-        await adapter.trashLocal(path);
-        mode = "trash-local";
+      } else {
+        try {
+          const trashed = await adapter.trashSystem(path);
+          if (trashed === false) {
+            await adapter.trashLocal(path);
+            mode = "trash-local";
+          } else {
+            mode = "trash-system";
+          }
+        } catch {
+          try {
+            await adapter.trashLocal(path);
+            mode = "trash-local";
+          } catch {
+            await this.moveToCancipTrash(adapter, path);
+            mode = "cancip-trash";
+          }
+        }
       }
     }
 
@@ -7255,6 +7294,63 @@ class CancipView extends ItemView {
       throw new Error(`delete verification failed: ${path}`);
     }
     return this.t("actionDelete", { path, mode });
+  }
+
+  private async moveToCancipTrash(adapter: DataAdapter, path: string): Promise<string> {
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const target = `${CANCIP_TRASH_DIR}/${stamp}/${path}`;
+    await ensureParentFolder(adapter, target);
+    await adapter.rename(path, target);
+    return target;
+  }
+
+  private async removeVaultPath(adapter: DataAdapter, path: string): Promise<void> {
+    const stat = await adapter.stat(path);
+    if (stat?.type === "folder") {
+      await adapter.rmdir(path, true);
+      return;
+    }
+    await adapter.remove(path);
+  }
+
+  private async resolveActionExistingPath(path: string): Promise<string> {
+    const adapter = this.app.vault.adapter;
+    const normalized = normalizeActionPath(path);
+    if (await adapter.exists(normalized)) return normalized;
+
+    const withMd = normalized.includes(".") ? normalized : `${normalized}.md`;
+    if (withMd !== normalized && await adapter.exists(withMd)) return withMd;
+
+    const lower = normalized.toLowerCase();
+    const lowerWithMd = withMd.toLowerCase();
+    const loaded = this.app.vault.getAllLoadedFiles()
+      .map((file) => normalizePath(file.path))
+      .find((candidate) => candidate.toLowerCase() === lower || candidate.toLowerCase() === lowerWithMd);
+    if (loaded && await adapter.exists(loaded)) return loaded;
+
+    throw new Error(`target not found: ${path}`);
+  }
+
+  private async resolveMoveTargetPath(sourcePath: string, rawNewPath: string): Promise<string> {
+    const adapter = this.app.vault.adapter;
+    const newPath = normalizeActionPath(rawNewPath);
+    const sourceName = sourcePath.split("/").pop() || sourcePath;
+    const sourceStat = await adapter.stat(sourcePath);
+    const targetStat = await adapter.stat(newPath);
+    if (targetStat?.type === "folder") return `${newPath}/${sourceName}`;
+    if (sourceStat?.type === "file" && !newPath.split("/").pop()?.includes(".")) {
+      return `${newPath}/${sourceName}`;
+    }
+    return newPath;
+  }
+
+  private async ensureMoveDestination(adapter: DataAdapter, sourcePath: string, newPath: string): Promise<void> {
+    const sourceStat = await adapter.stat(sourcePath);
+    if (sourceStat?.type !== "file") return;
+    const sourceName = sourcePath.split("/").pop() || sourcePath;
+    if (!newPath.endsWith(`/${sourceName}`)) return;
+    const folder = newPath.slice(0, -sourceName.length - 1);
+    if (folder) await ensureFolder(adapter, folder);
   }
 
   private async executeConfigAction(action: Extract<CancipAction, { type: "config" }>): Promise<string> {
@@ -7871,12 +7967,17 @@ class CancipView extends ItemView {
   }
 
   private renderMessages(): void {
+    if (this.shouldDeferMessageRender()) {
+      this.pendingMessageRender = true;
+      return;
+    }
+    this.pendingMessageRender = false;
     const scrollSnapshot = this.captureMessageScrollSnapshot();
     this.messagesEl.empty();
     if (!this.messages.length) {
       const empty = this.messagesEl.createDiv({ cls: "obcc-empty" });
       empty.createEl("strong", { text: this.t("ready") });
-      this.afterMessagesRendered({ stickToBottom: true, topMessageId: "", topOffset: 0 });
+      this.afterMessagesRendered({ stickToBottom: true, topMessageId: "", topOffset: 0, rawScrollTop: 0 });
       return;
     }
     const rendered = this.messages.map((message, index) => ({
@@ -7917,28 +8018,30 @@ class CancipView extends ItemView {
 
   private captureMessageScrollSnapshot(): MessageScrollSnapshot {
     if (!this.messagesEl || !this.messagesEl.isConnected) {
-      return { stickToBottom: true, topMessageId: "", topOffset: 0 };
+      return { stickToBottom: true, topMessageId: "", topOffset: 0, rawScrollTop: 0 };
     }
     const stickToBottom = this.shouldStickToMessageBottom();
     if (stickToBottom && !this.userPinnedScroll) {
-      return { stickToBottom: true, topMessageId: "", topOffset: 0 };
+      return { stickToBottom: true, topMessageId: "", topOffset: 0, rawScrollTop: this.messagesEl.scrollTop };
     }
     const containerTop = this.messagesEl.getBoundingClientRect().top;
     const messages = Array.from(this.messagesEl.querySelectorAll<HTMLElement>("[data-message-id]"));
     const top = messages.find((message) => message.getBoundingClientRect().bottom >= containerTop + 1) ?? messages[0];
     if (!top?.dataset.messageId) {
-      return { stickToBottom: false, topMessageId: "", topOffset: this.messagesEl.scrollTop };
+      return { stickToBottom: false, topMessageId: "", topOffset: this.messagesEl.scrollTop, rawScrollTop: this.messagesEl.scrollTop };
     }
     return {
       stickToBottom: false,
       topMessageId: top.dataset.messageId,
-      topOffset: top.getBoundingClientRect().top - containerTop
+      topOffset: top.getBoundingClientRect().top - containerTop,
+      rawScrollTop: this.messagesEl.scrollTop
     };
   }
 
   private restoreMessageScrollSnapshot(snapshot: MessageScrollSnapshot): void {
     window.requestAnimationFrame(() => {
       if (!this.messagesEl) return;
+      this.programmaticScrollRestore = true;
       if (snapshot.topMessageId) {
         const target = this.messagesEl.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(snapshot.topMessageId)}"]`);
         if (target) {
@@ -7946,14 +8049,37 @@ class CancipView extends ItemView {
           const nextOffset = target.getBoundingClientRect().top - containerTop;
           this.messagesEl.scrollTop += nextOffset - snapshot.topOffset;
         } else {
-          this.messagesEl.scrollTop = Math.min(snapshot.topOffset, Math.max(0, this.messagesEl.scrollHeight - this.messagesEl.clientHeight));
+          this.messagesEl.scrollTop = Math.min(snapshot.rawScrollTop, Math.max(0, this.messagesEl.scrollHeight - this.messagesEl.clientHeight));
         }
       } else {
-        this.messagesEl.scrollTop = Math.min(snapshot.topOffset, Math.max(0, this.messagesEl.scrollHeight - this.messagesEl.clientHeight));
+        this.messagesEl.scrollTop = Math.min(snapshot.rawScrollTop, Math.max(0, this.messagesEl.scrollHeight - this.messagesEl.clientHeight));
       }
-      this.userPinnedScroll = !this.shouldStickToMessageBottom();
+      window.setTimeout(() => {
+        this.programmaticScrollRestore = false;
+        this.userPinnedScroll = !this.shouldStickToMessageBottom();
+        this.syncScrollBottomButton();
+      }, 0);
       this.syncScrollBottomButton();
     });
+  }
+
+  private shouldDeferMessageRender(): boolean {
+    return this.userInteractingWithMessages || (this.userPinnedScroll && !this.shouldStickToMessageBottom());
+  }
+
+  private markMessageScrollInteraction(): void {
+    this.userInteractingWithMessages = true;
+    if (this.messageInteractionIdleTimer !== null) {
+      window.clearTimeout(this.messageInteractionIdleTimer);
+    }
+    this.messageInteractionIdleTimer = window.setTimeout(() => {
+      this.userInteractingWithMessages = false;
+      this.messageInteractionIdleTimer = null;
+      if (this.pendingMessageRender) {
+        this.pendingMessageRender = false;
+        this.renderMessages();
+      }
+    }, 900);
   }
 
   private shouldStickToMessageBottom(): boolean {
@@ -7965,6 +8091,15 @@ class CancipView extends ItemView {
   private scrollMessagesToBottom(smooth: boolean): void {
     if (!this.messagesEl) return;
     this.userPinnedScroll = false;
+    this.userInteractingWithMessages = false;
+    if (this.messageInteractionIdleTimer !== null) {
+      window.clearTimeout(this.messageInteractionIdleTimer);
+      this.messageInteractionIdleTimer = null;
+    }
+    if (this.pendingMessageRender) {
+      this.pendingMessageRender = false;
+      this.renderMessages();
+    }
     window.requestAnimationFrame(() => {
       this.messagesEl.scrollTo({
         top: this.messagesEl.scrollHeight,
@@ -9923,7 +10058,7 @@ function migrateDefaultMemorySearchPolicy(settings: Settings): Settings {
 function isOutdatedSystemPrompt(prompt: string): boolean {
   const normalized = prompt.trim();
   if (!normalized) return true;
-  if (/Cancip Core Prompt v0\.1\.\d+/i.test(normalized) && !normalized.includes("Cancip Core Prompt v0.1.95")) return true;
+  if (/Cancip Core Prompt v0\.1\.\d+/i.test(normalized) && !normalized.includes("Cancip Core Prompt v0.1.97")) return true;
   return (
     normalized === LEGACY_SYSTEM_PROMPT ||
     normalized.includes("核心记忆和 Vault Search 上下文回答") ||
