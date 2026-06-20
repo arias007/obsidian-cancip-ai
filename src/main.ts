@@ -373,15 +373,17 @@ type ToolFeedbackEvent = {
 
 type CancipAction =
   | { type: "read"; path: string; query?: string; occurrence?: number; maxChars?: number }
-  | { type: "write"; path: string; content: string }
-  | { type: "append"; path: string; content: string }
+  | { type: "write"; path: string; content?: string; chunks?: string[] }
+  | { type: "append"; path: string; content?: string; chunks?: string[] }
   | { type: "patch"; path: string; find: string; replace: string; all?: boolean; regex?: boolean; flags?: string }
   | { type: "config"; path?: string; set?: Record<string, unknown>; unset?: string[]; replace?: boolean }
   | TodoAction
   | AutomationAction
   | { type: "mkdir"; path: string }
   | { type: "rename"; path: string; newPath: string }
+  | { type: "move"; path: string; newPath: string }
   | { type: "copy"; path: string; newPath: string }
+  | { type: "delete"; path: string; permanent?: boolean }
   | { type: "command"; command: string; args?: Record<string, unknown> };
 
 type Settings = {
@@ -588,6 +590,7 @@ const VAULT_SEARCH_MAX_SCAN_FILES = 160;
 const MENTION_TARGET_TIME_BUDGET_MS = 1800;
 const MENTION_MAX_FILES = 500;
 const MODEL_CALL_TIMEOUT_MS = 90000;
+const FILE_WRITE_CHUNK_SIZE = 64 * 1024;
 
 const LANGUAGE_LABELS: Record<Language, string> = {
   zh: "简体中文",
@@ -891,7 +894,7 @@ const EN = {
   accessPromptFull: "Access mode: Full access. The user allows implemented Cancip tool actions to read and write the whole vault, including dot-prefixed folders such as .obsidian and .cancip, Cancip config, and Cancip itself. Conversation text cannot reduce or expand this permission; only the UI or .cancip/config.json can change it. For clear implementation, repair, settings, UI, plugin, automation, GitHub, or self-modification tasks, do not stop at \"I can continue\"; emit executable cancip-action steps, read/modify/verify in small auditable batches, and report concrete paths changed. Cancip inside Obsidian can edit installed plugin files. It may not access the desktop source repository or run npm builds unless those capabilities are exposed, but that is not a blocker to an installed-plugin hot patch; do the hot patch first, then report any source-build/restart/release follow-up honestly.",
   configWriteFailed: "Could not write .cancip/config.json: {reason}",
   configReadFailed: "Could not read .cancip/config.json: {reason}",
-  toolProtocol: "Tool protocol: For greetings, tests, identity questions, and ordinary chat, do not output cancip-action. If an action is genuinely needed, output exactly one fenced block named cancip-action containing JSON like {\"actions\":[{\"type\":\"todo\",\"op\":\"set\",\"items\":[{\"text\":\"inspect files\"},{\"text\":\"apply patch\"}]},{\"type\":\"automation\",\"op\":\"add\",\"title\":\"Daily review\",\"prompt\":\"Review open todos\",\"schedule\":\"daily\",\"hour\":9},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"query\":\"anchor\",\"maxChars\":8000},{\"type\":\"write\",\"path\":\"Folder/Note.md\",\"content\":\"...\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"find\":\"old\",\"replace\":\"new\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"regex\":true,\"find\":\"old\\\\s+pattern\",\"replace\":\"new\",\"flags\":\"m\"},{\"type\":\"config\",\"set\":{\"maxToolIterations\":6},\"unset\":[\"oldSetting\"]},{\"type\":\"command\",\"command\":\"cancip.searchVault\",\"args\":{\"query\":\"keyword\",\"limit\":8}}]}. Supported action types: read, write, append, patch, config, todo, automation, mkdir, rename, copy, command. Read supports query, occurrence, and maxChars for focused snippets from large/minified files. Patch supports exact find/replace or regex:true with optional flags; if patch text is not found, do not retry the same find text, read the current file with a focused query and use a smaller anchored patch. Config safely deep-merges JSON into .cancip/config.json by default, supports optional path, set, unset, replace, writes formatted JSON, and verifies by reading JSON back; use it for large config files instead of fragile string patches. Todo operations are set, add, update, remove, list, clear and update the visible Plan panel. Automation operations are add, update, remove, list, run; schedules are manual, hourly, daily. File actions use Vault-relative paths only. Command actions use a named command bus: obsidian.listCommands, obsidian.execute, cancip.reviewGate, cancip.reviewGate.list, cancip.sessionEvents, cancip.automation.templates, cancip.automation.addTemplate, cancip.searchVault, cancip.rebuildIndex, cancip.previewVaultSearch, cancip.localVersionCommit, cancip.importCodexMemory, cancip.automation.list, cancip.automation.add, cancip.automation.run, cancip.automation.remove, github.help, github.status, github.repo, github.issues, github.pulls, github.releases, github.workflowRuns, github.branches, github.file, github.createIssue, github.installObsidianPlugin. For settings/UI/plugin/self-fix requests, first inspect the relevant source/config with read/search actions, then patch/write/config and verify. If desktop source is unavailable, use the installed plugin files under .obsidian/plugins/cancip as the mobile hot-patch implementation surface; do not stop merely because npm build/restart/source sync is unavailable. Installed Cancip plugin file edits require reload/restart before visible effect. Use cancip.searchVault only when long-term memory and supplied context are insufficient; then read only the necessary matched files. Keep action batches small and wait for results. If a tool fails, use the error as authoritative context and explain or correct the next step. Use cancip.reviewGate as a real programmatic OB Review Gate builder before risky vault organization or risky edits; it writes a mobile HTML review package, not just a prompt. Plan mode only adds planning/todo behavior and never changes access permission. Raw JavaScript eval is blocked.",
+  toolProtocol: "Tool protocol: For greetings, tests, identity questions, and ordinary chat, do not output cancip-action. If an action is genuinely needed, output exactly one fenced block named cancip-action containing JSON like {\"actions\":[{\"type\":\"todo\",\"op\":\"set\",\"items\":[{\"text\":\"inspect files\"},{\"text\":\"apply patch\"}]},{\"type\":\"automation\",\"op\":\"add\",\"title\":\"Daily review\",\"prompt\":\"Review open todos\",\"schedule\":\"daily\",\"hour\":9},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"query\":\"anchor\",\"maxChars\":8000},{\"type\":\"write\",\"path\":\"Folder/Note.md\",\"content\":\"...\"},{\"type\":\"write\",\"path\":\"Folder/Large.md\",\"chunks\":[\"part 1\",\"part 2\"]},{\"type\":\"move\",\"path\":\"Folder/Old.md\",\"newPath\":\"Folder/New.md\"},{\"type\":\"delete\",\"path\":\"Folder/Old.md\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"find\":\"old\",\"replace\":\"new\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"regex\":true,\"find\":\"old\\\\s+pattern\",\"replace\":\"new\",\"flags\":\"m\"},{\"type\":\"config\",\"set\":{\"maxToolIterations\":6},\"unset\":[\"oldSetting\"]},{\"type\":\"command\",\"command\":\"cancip.searchVault\",\"args\":{\"query\":\"keyword\",\"limit\":8}}]}. Supported action types: read, write, append, patch, config, todo, automation, mkdir, rename, move, copy, delete, command. Read supports query, occurrence, and maxChars for focused snippets from large/minified files. Write and append support content or chunks:[\"part1\",\"part2\"]; for large files prefer chunks because Cancip writes/appends sequentially and verifies the result by reading it back. Move is the normal file/folder move action; rename is kept as an alias. Delete moves to trash by default; only use permanent:true when the user explicitly asks for permanent deletion. Patch supports exact find/replace or regex:true with optional flags; if patch text is not found, do not retry the same find text, read the current file with a focused query and use a smaller anchored patch. Config safely deep-merges JSON into .cancip/config.json by default, supports optional path, set, unset, replace, writes formatted JSON, and verifies by reading JSON back; use it for large config files instead of fragile string patches. Todo operations are set, add, update, remove, list, clear and update the visible Plan panel. Automation operations are add, update, remove, list, run; schedules are manual, hourly, daily. File actions use Vault-relative paths only. Command actions use a named command bus: obsidian.listCommands, obsidian.execute, cancip.reviewGate, cancip.reviewGate.list, cancip.sessionEvents, cancip.automation.templates, cancip.automation.addTemplate, cancip.searchVault, cancip.rebuildIndex, cancip.previewVaultSearch, cancip.localVersionCommit, cancip.importCodexMemory, cancip.automation.list, cancip.automation.add, cancip.automation.run, cancip.automation.remove, github.help, github.status, github.repo, github.issues, github.pulls, github.releases, github.workflowRuns, github.branches, github.file, github.createIssue, github.installObsidianPlugin. For settings/UI/plugin/self-fix requests, first inspect the relevant source/config with read/search actions, then patch/write/config and verify. If desktop source is unavailable, use the installed plugin files under .obsidian/plugins/cancip as the mobile hot-patch implementation surface; do not stop merely because npm build/restart/source sync is unavailable. Installed Cancip plugin file edits require reload/restart before visible effect. Use cancip.searchVault only when long-term memory and supplied context are insufficient; then read only the necessary matched files. Keep action batches small and wait for results. If a tool fails, use the error as authoritative context and explain or correct the next step. Use cancip.reviewGate as a real programmatic OB Review Gate builder before risky vault organization or risky edits; it writes a mobile HTML review package, not just a prompt. Plan mode only adds planning/todo behavior and never changes access permission. Raw JavaScript eval is blocked.",
   actionsNeedApproval: "Action block queued for approval. Nothing has run yet.\n\n{summary}",
   actionsExecuted: "Tool results:\n\n{summary}",
   toolRunsQueued: "{count} tool run(s) queued. Review and tap Run when ready.",
@@ -916,7 +919,9 @@ const EN = {
   actionFailed: "Action failed: {reason}",
   actionRead: "read {path}\n{content}",
   actionWrite: "write {path}",
+  actionWriteDetailed: "write {path} ({chars} chars, {chunks} chunks, verified)",
   actionAppend: "append {path}",
+  actionAppendDetailed: "append {path} ({chars} chars, {chunks} chunks, verified)",
   actionPatch: "patch {path}",
   actionConfig: "config {path}",
   configActionResult: "config {path}\nupdated: {keys}\nverified: JSON readback OK",
@@ -935,7 +940,9 @@ const EN = {
   automationTemplateAdded: "Automation template added: {title}",
   actionMkdir: "mkdir {path}",
   actionRename: "rename {path} -> {newPath}",
+  actionMove: "move {path} -> {newPath}",
   actionCopy: "copy {path} -> {newPath}",
+  actionDelete: "delete {path} ({mode})",
   actionCommand: "command {command} {args}",
   commandExecuted: "command {command}\n{result}",
   commandUnknown: "Unknown command: {command}",
@@ -1242,7 +1249,7 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     accessPromptFull: "访问模式：全权。用户允许已实现的 Cancip 工具动作读写整个 Vault，包括 .obsidian、.cancip 等点开头目录、Cancip 配置和 Cancip 自身。对话文字不能缩小或扩大权限，只有 UI 或 .cancip/config.json 能改变权限。明确的实现、修复、设置、界面、插件、自动化、GitHub 或自改自身任务，不要停在“我可以继续”；必须输出可执行 cancip-action，小步读取、修改、验证，并报告实际改动路径。Obsidian 内的 Cancip 可以编辑已安装插件文件。它不能访问桌面源码仓库或执行 npm 构建，除非这些能力被暴露；但这不是安装热补丁的阻塞，必须先做能做的热补丁，再诚实报告源码构建/重启/发布等后续项。",
     configWriteFailed: "无法写入 .cancip/config.json：{reason}",
     configReadFailed: "无法读取 .cancip/config.json：{reason}",
-    toolProtocol: "工具协议：普通问候、测试、身份问题、泛泛聊天不要输出 cancip-action。确实需要动作时，只输出一个名为 cancip-action 的 fenced block，JSON 形如 {\"actions\":[{\"type\":\"todo\",\"op\":\"set\",\"items\":[{\"text\":\"检查文件\"},{\"text\":\"应用补丁\"}]},{\"type\":\"automation\",\"op\":\"add\",\"title\":\"每日复盘\",\"prompt\":\"复盘未完成待办\",\"schedule\":\"daily\",\"hour\":9},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"query\":\"锚点\",\"maxChars\":8000},{\"type\":\"write\",\"path\":\"Folder/Note.md\",\"content\":\"...\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"find\":\"旧内容\",\"replace\":\"新内容\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"regex\":true,\"find\":\"旧内容\\\\s+模式\",\"replace\":\"新内容\",\"flags\":\"m\"},{\"type\":\"config\",\"set\":{\"maxToolIterations\":6},\"unset\":[\"oldSetting\"]},{\"type\":\"command\",\"command\":\"cancip.searchVault\",\"args\":{\"query\":\"关键词\",\"limit\":8}}]}。支持动作：read、write、append、patch、config、todo、automation、mkdir、rename、copy、command。read 支持 query、occurrence、maxChars，用来精确读取大文件/压缩构建文件里的当前片段。patch 支持精确 find/replace，也支持 regex:true 和可选 flags；如果 patch 提示 find text was not found，绝对不要重复同一个 find，必须先用 query 读取当前文件片段，再换更小锚点或正则补丁。config 默认安全深度合并写入 .cancip/config.json，可选 path、set、unset、replace，会格式化 JSON 并读回校验；改大型配置文件优先用 config，不要靠脆弱字符串 patch。todo 支持 set、add、update、remove、list、clear，并会更新可见 Plan 面板。automation 支持 add、update、remove、list、run；schedule 可用 manual、hourly、daily。文件动作只能使用 Vault 相对路径。命令动作走命令总线：obsidian.listCommands、obsidian.execute、cancip.reviewGate、cancip.reviewGate.list、cancip.sessionEvents、cancip.automation.templates、cancip.automation.addTemplate、cancip.searchVault、cancip.rebuildIndex、cancip.previewVaultSearch、cancip.localVersionCommit、cancip.importCodexMemory、cancip.automation.list、cancip.automation.add、cancip.automation.run、cancip.automation.remove、github.help、github.status、github.repo、github.issues、github.pulls、github.releases、github.workflowRuns、github.branches、github.file、github.createIssue、github.installObsidianPlugin。设置/界面/插件/自身修复类任务，先用 read/search 检查相关源码或配置，再 patch/write/config 并验证；若桌面源码不可用，就把 .obsidian/plugins/cancip 下的已安装插件文件作为手机热补丁实现面，不能仅因 npm build/重启/源码同步不可用就停止。写已安装 Cancip 插件文件后必须说明需要重载/重启才有可见效果。只有长期记忆和已提供上下文不够时才用 cancip.searchVault 搜库，然后只读取必要命中文件。动作批次要小，等待工具结果后继续。工具失败就是权威上下文，必须解释失败或改用更小的下一步。Vault 整理、移动、重命名、合并、拆分、修复链接等高风险改动前，先用 cancip.reviewGate 程序化生成手机 HTML 审核包；它不是提示词。Plan mode 只增加计划/待办层，不改变访问权限。原始 JavaScript eval 阻止。",
+    toolProtocol: "工具协议：普通问候、测试、身份问题、泛泛聊天不要输出 cancip-action。确实需要动作时，只输出一个名为 cancip-action 的 fenced block，JSON 形如 {\"actions\":[{\"type\":\"todo\",\"op\":\"set\",\"items\":[{\"text\":\"检查文件\"},{\"text\":\"应用补丁\"}]},{\"type\":\"automation\",\"op\":\"add\",\"title\":\"每日复盘\",\"prompt\":\"复盘未完成待办\",\"schedule\":\"daily\",\"hour\":9},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"query\":\"锚点\",\"maxChars\":8000},{\"type\":\"write\",\"path\":\"Folder/Note.md\",\"content\":\"...\"},{\"type\":\"write\",\"path\":\"Folder/Large.md\",\"chunks\":[\"第 1 段\",\"第 2 段\"]},{\"type\":\"move\",\"path\":\"Folder/旧.md\",\"newPath\":\"Folder/新.md\"},{\"type\":\"delete\",\"path\":\"Folder/旧.md\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"find\":\"旧内容\",\"replace\":\"新内容\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"regex\":true,\"find\":\"旧内容\\\\s+模式\",\"replace\":\"新内容\",\"flags\":\"m\"},{\"type\":\"config\",\"set\":{\"maxToolIterations\":6},\"unset\":[\"oldSetting\"]},{\"type\":\"command\",\"command\":\"cancip.searchVault\",\"args\":{\"query\":\"关键词\",\"limit\":8}}]}。支持动作：read、write、append、patch、config、todo、automation、mkdir、rename、move、copy、delete、command。read 支持 query、occurrence、maxChars，用来精确读取大文件/压缩构建文件里的当前片段。write/append 支持 content 或 chunks:[\"part1\",\"part2\"]；写大文件优先用 chunks，Cancip 会顺序写入/追加并读回校验。move 是正常移动文件/文件夹动作，rename 保留为别名。delete 默认进入回收站；只有用户明确要求永久删除时才使用 permanent:true。patch 支持精确 find/replace，也支持 regex:true 和可选 flags；如果 patch 提示 find text was not found，绝对不要重复同一个 find，必须先用 query 读取当前文件片段，再换更小锚点或正则补丁。config 默认安全深度合并写入 .cancip/config.json，可选 path、set、unset、replace，会格式化 JSON 并读回校验；改大型配置文件优先用 config，不要靠脆弱字符串 patch。todo 支持 set、add、update、remove、list、clear，并会更新可见 Plan 面板。automation 支持 add、update、remove、list、run；schedule 可用 manual、hourly、daily。文件动作只能使用 Vault 相对路径。命令动作走命令总线：obsidian.listCommands、obsidian.execute、cancip.reviewGate、cancip.reviewGate.list、cancip.sessionEvents、cancip.automation.templates、cancip.automation.addTemplate、cancip.searchVault、cancip.rebuildIndex、cancip.previewVaultSearch、cancip.localVersionCommit、cancip.importCodexMemory、cancip.automation.list、cancip.automation.add、cancip.automation.run、cancip.automation.remove、github.help、github.status、github.repo、github.issues、github.pulls、github.releases、github.workflowRuns、github.branches、github.file、github.createIssue、github.installObsidianPlugin。设置/界面/插件/自身修复类任务，先用 read/search 检查相关源码或配置，再 patch/write/config 并验证；若桌面源码不可用，就把 .obsidian/plugins/cancip 下的已安装插件文件作为手机热补丁实现面，不能仅因 npm build/重启/源码同步不可用就停止。写已安装 Cancip 插件文件后必须说明需要重载/重启才有可见效果。只有长期记忆和已提供上下文不够时才用 cancip.searchVault 搜库，然后只读取必要命中文件。动作批次要小，等待工具结果后继续。工具失败就是权威上下文，必须解释失败或改用更小的下一步。Vault 整理、移动、重命名、合并、拆分、修复链接等高风险改动前，先用 cancip.reviewGate 程序化生成手机 HTML 审核包；它不是提示词。Plan mode 只增加计划/待办层，不改变访问权限。原始 JavaScript eval 阻止。",
     actionsNeedApproval: "动作块已进入确认队列，尚未执行。\n\n{summary}",
     actionsExecuted: "工具执行结果：\n\n{summary}",
     toolRunsQueued: "{count} 个工具调用已排队。确认后点 Run 执行。",
@@ -1267,7 +1274,9 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     actionFailed: "动作失败：{reason}",
     actionRead: "read {path}\n{content}",
     actionWrite: "write {path}",
+    actionWriteDetailed: "write {path}（{chars} 字符，{chunks} 块，已校验）",
     actionAppend: "append {path}",
+    actionAppendDetailed: "append {path}（{chars} 字符，{chunks} 块，已校验）",
     actionPatch: "patch {path}",
     actionConfig: "config {path}",
     configActionResult: "config {path}\n已更新：{keys}\n已校验：JSON 可读回",
@@ -1286,7 +1295,9 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     automationTemplateAdded: "已加入自动化模板：{title}",
     actionMkdir: "mkdir {path}",
     actionRename: "rename {path} -> {newPath}",
+    actionMove: "move {path} -> {newPath}",
     actionCopy: "copy {path} -> {newPath}",
+    actionDelete: "delete {path}（{mode}）",
     actionCommand: "command {command} {args}",
     commandExecuted: "command {command}\n{result}",
     commandUnknown: "未知命令：{command}",
@@ -6990,7 +7001,7 @@ class CancipView extends ItemView {
   }
 
   private isWriteLikeAction(action: CancipAction): boolean {
-    if (action.type === "write" || action.type === "append" || action.type === "patch" || action.type === "mkdir" || action.type === "rename" || action.type === "copy") return true;
+    if (action.type === "write" || action.type === "append" || action.type === "patch" || action.type === "mkdir" || action.type === "rename" || action.type === "move" || action.type === "copy" || action.type === "delete") return true;
     if (action.type === "config") return true;
     if (action.type === "todo") return action.op !== "list";
     if (action.type === "automation") return action.op !== "list";
@@ -7009,6 +7020,7 @@ class CancipView extends ItemView {
   }
 
   private actionPrimaryPath(action: CancipAction): string {
+    if (action.type === "rename" || action.type === "move" || action.type === "copy") return action.newPath;
     if (action.type === "config") return action.path?.trim() || CANCIP_CONFIG_PATH;
     if ("path" in action && typeof action.path === "string") return action.path;
     if (action.type === "automation" && action.id) return action.id;
@@ -7135,15 +7147,11 @@ class CancipView extends ItemView {
     }
 
     if (action.type === "write") {
-      await ensureParentFolder(adapter, path);
-      await adapter.write(path, action.content);
-      return this.withSelfPatchNotice(path, this.t("actionWrite", { path }));
+      return await this.executeChunkedTextWrite(adapter, path, action);
     }
 
     if (action.type === "append") {
-      await ensureParentFolder(adapter, path);
-      await adapter.append(path, action.content);
-      return this.withSelfPatchNotice(path, this.t("actionAppend", { path }));
+      return await this.executeChunkedTextWrite(adapter, path, action);
     }
 
     if (action.type === "patch") {
@@ -7161,17 +7169,92 @@ class CancipView extends ItemView {
       return this.t("actionMkdir", { path });
     }
 
-    if (action.type === "rename") {
+    if (action.type === "rename" || action.type === "move") {
       const newPath = normalizeActionPath(action.newPath);
       await ensureParentFolder(adapter, newPath);
       await adapter.rename(path, newPath);
-      return this.t("actionRename", { path, newPath });
+      const sourceExists = await adapter.exists(path);
+      const targetExists = await adapter.exists(newPath);
+      if (sourceExists || !targetExists) {
+        throw new Error(`move verification failed: sourceExists=${sourceExists}, targetExists=${targetExists}`);
+      }
+      const key = action.type === "move" ? "actionMove" : "actionRename";
+      return this.t(key, { path, newPath });
+    }
+
+    if (action.type === "delete") {
+      return await this.executeDeleteAction(adapter, path, action.permanent === true);
     }
 
     const newPath = normalizeActionPath(action.newPath);
     await ensureParentFolder(adapter, newPath);
     await adapter.copy(path, newPath);
     return this.withSelfPatchNotice(newPath, this.t("actionCopy", { path, newPath }));
+  }
+
+  private async executeChunkedTextWrite(
+    adapter: DataAdapter,
+    path: string,
+    action: Extract<CancipAction, { type: "write" | "append" }>
+  ): Promise<string> {
+    const content = textWriteActionContent(action);
+    const chunks = splitTextChunks(content, FILE_WRITE_CHUNK_SIZE);
+    await ensureParentFolder(adapter, path);
+
+    if (action.type === "write") {
+      await adapter.write(path, chunks[0] ?? "");
+      for (const chunk of chunks.slice(1)) {
+        await adapter.append(path, chunk);
+      }
+      const verified = await adapter.read(path);
+      if (verified.length !== content.length || await sha256Text(verified) !== await sha256Text(content)) {
+        throw new Error(`write verification failed: ${path}`);
+      }
+      return this.withSelfPatchNotice(path, this.t("actionWriteDetailed", { path, chars: content.length, chunks: chunks.length }));
+    }
+
+    const existed = await adapter.exists(path);
+    const before = existed ? await adapter.read(path) : "";
+    if (!existed) {
+      await adapter.write(path, "");
+    }
+    for (const chunk of chunks) {
+      await adapter.append(path, chunk);
+    }
+    const after = await adapter.read(path);
+    if (after.length !== before.length + content.length || !after.endsWith(content)) {
+      throw new Error(`append verification failed: ${path}`);
+    }
+    return this.withSelfPatchNotice(path, this.t("actionAppendDetailed", { path, chars: content.length, chunks: chunks.length }));
+  }
+
+  private async executeDeleteAction(adapter: DataAdapter, path: string, permanent: boolean): Promise<string> {
+    if (!await adapter.exists(path)) {
+      throw new Error(`delete target not found: ${path}`);
+    }
+
+    let mode = permanent ? "remove" : "trash";
+    if (permanent) {
+      await adapter.remove(path);
+    } else {
+      try {
+        const trashed = await adapter.trashSystem(path);
+        if (trashed === false) {
+          await adapter.trashLocal(path);
+          mode = "trash-local";
+        } else {
+          mode = "trash-system";
+        }
+      } catch {
+        await adapter.trashLocal(path);
+        mode = "trash-local";
+      }
+    }
+
+    if (await adapter.exists(path)) {
+      throw new Error(`delete verification failed: ${path}`);
+    }
+    return this.t("actionDelete", { path, mode });
   }
 
   private async executeConfigAction(action: Extract<CancipAction, { type: "config" }>): Promise<string> {
@@ -7196,7 +7279,7 @@ class CancipView extends ItemView {
     }
     if (!changed.size) throw new Error("config action requires set or unset changes");
     await ensureParentFolder(adapter, path);
-    await adapter.write(path, `${JSON.stringify(next, null, 2)}\n`);
+    await writeTextInChunks(adapter, path, `${JSON.stringify(next, null, 2)}\n`);
     try {
       const verified = JSON.parse(await adapter.read(path)) as unknown;
       if (JSON.stringify(verified) !== JSON.stringify(next)) throw new Error("readback mismatch");
@@ -7726,6 +7809,8 @@ class CancipView extends ItemView {
     if (action.type === "patch") return `${this.t("actionPatch", { path })}${action.regex ? " regex" : ""}`;
     if (action.type === "mkdir") return this.t("actionMkdir", { path });
     if (action.type === "rename") return this.t("actionRename", { path, newPath: action.newPath });
+    if (action.type === "move") return this.t("actionMove", { path, newPath: action.newPath });
+    if (action.type === "delete") return this.t("actionDelete", { path, mode: action.permanent ? "remove" : "trash" });
     return this.t("actionCopy", { path, newPath: action.newPath });
   }
 
@@ -9516,11 +9601,12 @@ function hasUnverifiedWriteAction(runs: ToolRun[]): boolean {
     .map((run) => actionVerificationPath(run.action))
     .filter(Boolean));
   if (!writePaths.length) return false;
+  if (runs.some((run) => run.status === "executed" && isSelfVerifyingAction(run.action, writePaths))) return false;
   return !runs.some((run) => run.status === "executed" && isVerificationAction(run.action, writePaths));
 }
 
 function isWriteActionForContinuation(action: CancipAction): boolean {
-  if (action.type === "write" || action.type === "append" || action.type === "patch" || action.type === "mkdir" || action.type === "rename" || action.type === "copy") return true;
+  if (action.type === "write" || action.type === "append" || action.type === "patch" || action.type === "mkdir" || action.type === "rename" || action.type === "move" || action.type === "copy" || action.type === "delete") return true;
   if (action.type === "config") return true;
   if (action.type === "todo") return action.op !== "list";
   if (action.type === "automation") return action.op !== "list";
@@ -9529,12 +9615,28 @@ function isWriteActionForContinuation(action: CancipAction): boolean {
 }
 
 function actionVerificationPath(action: CancipAction): string {
-  if (action.type === "rename" || action.type === "copy") return normalizePath(action.newPath);
+  if (action.type === "rename" || action.type === "move" || action.type === "copy") return normalizePath(action.newPath);
   if (action.type === "config") return normalizePath(action.path?.trim() || CANCIP_CONFIG_PATH);
   if ("path" in action && typeof action.path === "string") return normalizePath(action.path);
   if (action.type === "command") return action.command.trim();
   if (action.type === "automation") return action.id?.trim() || "automation";
   return "";
+}
+
+function isSelfVerifyingAction(action: CancipAction, writePaths: string[]): boolean {
+  if (action.type === "write" || action.type === "append" || action.type === "delete") {
+    const path = normalizePath(action.path);
+    return writePaths.some((target) => target === path);
+  }
+  if (action.type === "rename" || action.type === "move") {
+    const newPath = normalizePath(action.newPath);
+    return writePaths.some((target) => target === newPath);
+  }
+  if (action.type === "config") {
+    const path = normalizePath(action.path?.trim() || CANCIP_CONFIG_PATH);
+    return writePaths.some((target) => target === path);
+  }
+  return false;
 }
 
 function isVerificationAction(action: CancipAction, writePaths: string[]): boolean {
@@ -9821,7 +9923,7 @@ function migrateDefaultMemorySearchPolicy(settings: Settings): Settings {
 function isOutdatedSystemPrompt(prompt: string): boolean {
   const normalized = prompt.trim();
   if (!normalized) return true;
-  if (/Cancip Core Prompt v0\.1\.\d+/i.test(normalized) && !normalized.includes("Cancip Core Prompt v0.1.94")) return true;
+  if (/Cancip Core Prompt v0\.1\.\d+/i.test(normalized) && !normalized.includes("Cancip Core Prompt v0.1.95")) return true;
   return (
     normalized === LEGACY_SYSTEM_PROMPT ||
     normalized.includes("核心记忆和 Vault Search 上下文回答") ||
@@ -10569,12 +10671,16 @@ function parseCancipAction(input: unknown): CancipAction | null {
     };
   }
 
-  if (input.type === "write" && typeof input.content === "string") {
-    return { type: "write", path: input.path, content: input.content };
+  if (input.type === "write") {
+    const chunks = normalizeStringChunks(input.chunks);
+    if (typeof input.content !== "string" && !chunks) return null;
+    return { type: "write", path: input.path, content: typeof input.content === "string" ? input.content : undefined, chunks };
   }
 
-  if (input.type === "append" && typeof input.content === "string") {
-    return { type: "append", path: input.path, content: input.content };
+  if (input.type === "append") {
+    const chunks = normalizeStringChunks(input.chunks);
+    if (typeof input.content !== "string" && !chunks) return null;
+    return { type: "append", path: input.path, content: typeof input.content === "string" ? input.content : undefined, chunks };
   }
 
   if (input.type === "patch" && typeof input.find === "string" && typeof input.replace === "string") {
@@ -10597,8 +10703,16 @@ function parseCancipAction(input: unknown): CancipAction | null {
     return { type: "rename", path: input.path, newPath: input.newPath };
   }
 
+  if (input.type === "move" && typeof input.newPath === "string") {
+    return { type: "move", path: input.path, newPath: input.newPath };
+  }
+
   if (input.type === "copy" && typeof input.newPath === "string") {
     return { type: "copy", path: input.path, newPath: input.newPath };
+  }
+
+  if (input.type === "delete" || input.type === "remove") {
+    return { type: "delete", path: input.path, permanent: Boolean(input.permanent) };
   }
 
   return null;
@@ -10659,6 +10773,37 @@ async function ensureFolder(adapter: DataAdapter, folderPath: string): Promise<v
     if (stat?.type === "file") throw new Error(`Path is a file: ${current}`);
     if (!stat) await adapter.mkdir(current);
   }
+}
+
+function normalizeStringChunks(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const chunks = raw.filter((item): item is string => typeof item === "string");
+  return chunks.length === raw.length && chunks.length ? chunks : undefined;
+}
+
+function textWriteActionContent(action: Extract<CancipAction, { type: "write" | "append" }>): string {
+  if (Array.isArray(action.chunks)) return action.chunks.join("");
+  if (typeof action.content === "string") return action.content;
+  throw new Error(`${action.type} action requires content or chunks`);
+}
+
+function splitTextChunks(content: string, chunkSize: number): string[] {
+  if (!content.length) return [""];
+  if (content.length <= chunkSize) return [content];
+  const chunks: string[] = [];
+  for (let index = 0; index < content.length; index += chunkSize) {
+    chunks.push(content.slice(index, index + chunkSize));
+  }
+  return chunks;
+}
+
+async function writeTextInChunks(adapter: DataAdapter, path: string, content: string): Promise<number> {
+  const chunks = splitTextChunks(content, FILE_WRITE_CHUNK_SIZE);
+  await adapter.write(path, chunks[0] ?? "");
+  for (const chunk of chunks.slice(1)) {
+    await adapter.append(path, chunk);
+  }
+  return chunks.length;
 }
 
 function makeExcerpt(content: string, tokens: string[]): string {
