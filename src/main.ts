@@ -266,6 +266,11 @@ type SessionHistoryEntry = {
   eventOnly?: boolean;
 };
 
+type StaleSessionRepair = {
+  entry: SessionHistoryEntry;
+  changed: boolean;
+};
+
 type SessionEventKind =
   | "plugin.load"
   | "session.open"
@@ -3234,16 +3239,107 @@ export default class CancipPlugin extends Plugin {
       const entries = await this.readSessionHistoryIndexForPlugin();
       let changed = false;
       const now = Date.now();
-      const next = entries.map((entry: SessionHistoryEntry) => {
-        if (entry.status !== "running") return entry;
+      const next: SessionHistoryEntry[] = [];
+      for (const entry of entries) {
+        if (entry.status !== "running") {
+          next.push(entry);
+          continue;
+        }
         const updated = Date.parse(entry.updatedAt);
-        if (Number.isFinite(updated) && now - updated < 5 * 60 * 1000) return entry;
-        changed = true;
-        return { ...entry, status: "completed" as const, completedNotice: true };
-      });
+        if (Number.isFinite(updated) && now - updated < 5 * 60 * 1000) {
+          next.push(entry);
+          continue;
+        }
+        const repaired = await this.repairStaleRunningSession(entry, now);
+        changed = changed || repaired.changed;
+        next.push(repaired.entry);
+      }
       if (changed) await this.writeSessionHistoryIndexForPlugin(next);
     } catch (error) {
       console.warn("Cancip stale running session reconciliation failed", error);
+    }
+  }
+
+  private async repairStaleRunningSession(entry: SessionHistoryEntry, now: number): Promise<StaleSessionRepair> {
+    const adapter = this.app.vault.adapter;
+    const updatedAt = new Date(now).toISOString();
+    const fallback: SessionHistoryEntry = {
+      ...entry,
+      updatedAt,
+      status: "failed",
+      completedNotice: true
+    };
+    if (!(await adapter.exists(entry.path))) {
+      await recordCancipSessionEvent(adapter, {
+        kind: "session.status",
+        sessionId: entry.id,
+        title: entry.title,
+        status: "failed",
+        detail: "stale running session closed; session file missing",
+        messageCount: entry.messageCount,
+        mode: entry.mode,
+        model: entry.model,
+        pluginVersion: this.manifest.version
+      });
+      return { entry: fallback, changed: true };
+    }
+
+    try {
+      const raw = await adapter.read(entry.path);
+      const snapshot = JSON.parse(raw) as Record<string, unknown>;
+      const messages = Array.isArray(snapshot.messages) ? snapshot.messages.filter(isRecord) : [];
+      const decision = classifyStaleRunningMessages(messages);
+      const nextMessages = decision.needsClosure
+        ? [
+            ...messages,
+            {
+              id: crypto.randomUUID(),
+              role: "assistant",
+              createdAt: updatedAt,
+              content: decision.content
+            }
+          ]
+        : messages;
+      snapshot.messages = nextMessages;
+      snapshot.status = decision.status;
+      snapshot.completedNotice = true;
+      snapshot.updatedAt = updatedAt;
+      await adapter.write(entry.path, `${JSON.stringify(snapshot, null, 2)}\n`);
+      await recordCancipSessionEvent(adapter, {
+        kind: "session.status",
+        sessionId: entry.id,
+        title: entry.title,
+        status: decision.status,
+        detail: decision.detail,
+        messageCount: nextMessages.length,
+        mode: entry.mode,
+        model: entry.model,
+        pluginVersion: this.manifest.version
+      });
+      return {
+        entry: {
+          ...entry,
+          updatedAt,
+          messageCount: nextMessages.length,
+          status: decision.status,
+          completedNotice: true
+        },
+        changed: true
+      };
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      await recordCancipSessionEvent(adapter, {
+        kind: "session.status",
+        sessionId: entry.id,
+        title: entry.title,
+        status: "failed",
+        detail: `stale running session repair failed: ${reason}`,
+        messageCount: entry.messageCount,
+        mode: entry.mode,
+        model: entry.model,
+        pluginVersion: this.manifest.version
+      });
+      return { entry: fallback, changed: true };
     }
   }
 
@@ -4762,7 +4858,11 @@ class CancipView extends ItemView {
       this.renderSources(this.messages.at(-1)?.sources ?? []);
       this.syncModeButtons();
       this.setStatus(this.t("sessionLoaded"));
-      void this.updateCurrentSessionStatus(entry.status ?? "idle", Boolean(entry.completedNotice));
+      if (this.isSessionRunning(entry.id)) {
+        void this.updateCurrentSessionStatus("running", false);
+      } else if (entry.status === "completed" || entry.status === "failed") {
+        void this.updateCurrentSessionStatus(entry.status, Boolean(entry.completedNotice));
+      }
       this.focusInput();
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
@@ -5460,7 +5560,7 @@ class CancipView extends ItemView {
     const now = Date.now();
     const generation = [...messages].reverse().find((message) => typeof message.content === "string" && message.content.includes(this.t("generating")));
     if (generation && typeof generation.content === "string") {
-      generation.content = this.formatProgressStep(this.t("generating"), this.t("done"), this.t("toolRunExecuted"), now - Number(generation.createdAt ?? now));
+      generation.content = this.formatProgressStep(this.t("generating"), this.t("done"), this.t("toolRunExecuted"), now - timestampMs(generation.createdAt, now));
       generation.createdAt = now;
     }
     const suppressedActions = suppressToolActions && extractCancipActions(answer).length > 0;
@@ -9773,6 +9873,110 @@ function isWeakFinalConclusion(content: string): boolean {
     || normalized.includes("动作失败");
 }
 
+function hasFinalConclusion(content: string): boolean {
+  return /(^|\n)\s*#{1,3}\s*(最终结论|Final conclusion|Final answer)\b/i.test(content)
+    || /(^|\n)\s*(最终结论|Final conclusion|Final answer)\s*[:：]/i.test(content);
+}
+
+function classifyStaleRunningMessages(messages: Record<string, unknown>[]): {
+  status: NonNullable<SessionHistoryEntry["status"]>;
+  needsClosure: boolean;
+  content: string;
+  detail: string;
+} {
+  const assistantMessages = messages
+    .filter((message) => message.role === "assistant" && typeof message.content === "string")
+    .map((message) => String(message.content));
+  const lastVisible = [...assistantMessages].reverse().find((content) => {
+    const stripped = removeCancipActionBlocks(content)
+      .replace(/<!--[\s\S]*?-->/g, "")
+      .replace(/<details>[\s\S]*?<\/details>/gi, "")
+      .trim();
+    return stripped.length > 0 && !isProcessOnlySessionContent(content);
+  });
+  if (lastVisible && hasFinalConclusion(lastVisible) && !isWeakFinalConclusion(lastVisible)) {
+    return {
+      status: "completed",
+      needsClosure: false,
+      content: "",
+      detail: "stale running session already had a final answer; marked completed"
+    };
+  }
+  const pluginList = extractCommunityPluginListFromMessages(messages);
+  if (pluginList.length) {
+    return {
+      status: "completed",
+      needsClosure: true,
+      content: formatRecoveredPluginListAnswer(pluginList),
+      detail: "stale running session recovered from completed plugin-list tool result"
+    };
+  }
+  return {
+    status: "failed",
+    needsClosure: true,
+    content: "## 最终结论\n\n这条会话不是还在执行，而是 Obsidian/Cancip 重载或切换会话后，请求被中断，历史状态卡在“运行中”。\n\n已自动把它收口为失败，避免继续转圈。原任务没有拿到最终模型回复，请重新发送或点继续后从最近工具结果接着做。",
+    detail: "stale running session had no active request and no recoverable final answer; marked failed"
+  };
+}
+
+function isProcessOnlySessionContent(content: string): boolean {
+  const normalized = content.replace(/<!--[\s\S]*?-->/g, "").replace(/\s+/g, "");
+  return normalized.includes("执行中·")
+    || normalized.includes("已执行·")
+    || normalized.includes("工具反馈：")
+    || normalized.includes("工具执行结果：")
+    || normalized.includes("正在根据工具结果继续")
+    || normalized.includes("模型生成中")
+    || normalized.includes("正在准备上下文");
+}
+
+function extractCommunityPluginListFromMessages(messages: Record<string, unknown>[]): string[] {
+  for (const message of [...messages].reverse()) {
+    const toolRuns = Array.isArray(message.toolRuns) ? message.toolRuns.filter(isRecord) : [];
+    for (const run of toolRuns) {
+      if (!isRecord(run.action)) continue;
+      if (run.action.type !== "read" || run.action.path !== ".obsidian/community-plugins.json") continue;
+      if (typeof run.result !== "string") continue;
+      const parsed = parseJsonArrayFromText(run.result);
+      if (parsed.length) return parsed;
+    }
+  }
+  for (const message of [...messages].reverse()) {
+    if (typeof message.content !== "string" || !message.content.includes(".obsidian/community-plugins.json")) continue;
+    const parsed = parseJsonArrayFromText(message.content);
+    if (parsed.length) return parsed;
+  }
+  return [];
+}
+
+function parseJsonArrayFromText(text: string): string[] {
+  const match = text.match(/\[[\s\S]*?\]/);
+  if (!match) return [];
+  try {
+    const parsed = JSON.parse(match[0]) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+  } catch {
+    return [];
+  }
+}
+
+function formatRecoveredPluginListAnswer(plugins: string[]): string {
+  const list = plugins.map((plugin) => `- ${plugin}`).join("\n");
+  return `## 最终结论\n\n已完成。你当前启用的社区插件共 ${plugins.length} 个：\n\n${list}\n\n这条会话之前卡在“正在根据工具结果继续”，但工具结果已经读到了插件列表；现在已把会话状态收口为完成，不会继续转圈。`;
+}
+
+function timestampMs(value: unknown, fallback = Date.now()): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) return parsed;
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) return numeric;
+  }
+  return fallback;
+}
+
 function formatElapsed(ms: number): string {
   const safe = Math.max(0, Math.round(ms));
   if (safe < 1000) return `${safe}ms`;
@@ -10147,7 +10351,7 @@ function migrateDefaultMemorySearchPolicy(settings: Settings): Settings {
 function isOutdatedSystemPrompt(prompt: string): boolean {
   const normalized = prompt.trim();
   if (!normalized) return true;
-  if (/Cancip Core Prompt v0\.1\.\d+/i.test(normalized) && !normalized.includes("Cancip Core Prompt v0.1.99")) return true;
+  if (/Cancip Core Prompt v0\.1\.\d+/i.test(normalized) && !normalized.includes("Cancip Core Prompt v0.1.101")) return true;
   return (
     normalized === LEGACY_SYSTEM_PROMPT ||
     normalized.includes("核心记忆和 Vault Search 上下文回答") ||
