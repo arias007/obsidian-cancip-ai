@@ -5377,6 +5377,7 @@ class CancipView extends ItemView {
     const headline = [this.t("progressStep", { status, summary }), elapsed].filter(Boolean).join(" · ");
     const trimmed = detail.trim();
     if (!trimmed) return `${PROGRESS_STEP_MARKER}\n${PROCESS_MESSAGE_MARKER}\n${headline}`;
+    const foldedDetail = markdownFenceLines(trimContext(redactSensitiveText(trimmed), PROCESS_DETAIL_MAX_CHARS), "text").join("\n");
     return [
       PROGRESS_STEP_MARKER,
       PROCESS_MESSAGE_MARKER,
@@ -5385,9 +5386,7 @@ class CancipView extends ItemView {
       "<details>",
       `<summary>${this.t("progressDetails")}</summary>`,
       "",
-      "```text",
-      trimContext(redactSensitiveText(trimmed), PROCESS_DETAIL_MAX_CHARS),
-      "```",
+      foldedDetail,
       "</details>"
     ].join("\n");
   }
@@ -5958,7 +5957,7 @@ class CancipView extends ItemView {
       lines.push("## Draft Context", "");
       for (const item of draftContext) {
         if (!isRecord(item)) continue;
-        lines.push(`### ${String(item.label ?? "")}`, "", "```text", String(item.content ?? ""), "```", "");
+        lines.push(`### ${String(item.label ?? "")}`, "", ...markdownFenceLines(String(item.content ?? ""), "text"), "");
       }
     }
 
@@ -5983,7 +5982,7 @@ class CancipView extends ItemView {
       if (display.hiddenToolBlocks.length) {
         lines.push("<details>", `<summary>${this.t("toolJsonDetails")} (${display.hiddenToolBlocks.length})</summary>`, "");
         for (const block of display.hiddenToolBlocks) {
-          lines.push(`#### ${block.title}`, "", "```text", redactSensitiveText(block.content), "```", "");
+          lines.push(`#### ${block.title}`, "", ...markdownFenceLines(redactSensitiveText(cleanFoldedBlockContent(block)), "text"), "");
         }
         lines.push("</details>", "");
       }
@@ -5992,10 +5991,12 @@ class CancipView extends ItemView {
       if (this.plugin.settings.exportMarkdownContextSnapshots && (systemPrompt || contextText)) {
         lines.push("<details>", "<summary>Model context snapshot</summary>", "");
         if (systemPrompt) {
-          lines.push("#### System prompt", "", "```text", redactSensitiveText(systemPrompt), "```", "");
+          lines.push(`- System prompt: ${systemPrompt.length} chars`, "");
+          lines.push("#### System prompt", "", ...markdownFenceLines(redactSensitiveText(systemPrompt), "text"), "");
         }
         if (contextText) {
-          lines.push("#### Context text", "", "```text", redactSensitiveText(contextText), "```", "");
+          lines.push(`- Context text: ${contextText.length} chars`, "");
+          lines.push("#### Context text", "", ...markdownFenceLines(redactSensitiveText(contextText), "text"), "");
         }
         lines.push("</details>", "");
       }
@@ -6015,7 +6016,7 @@ class CancipView extends ItemView {
           if (!isRecord(run)) continue;
           lines.push(`- ${String(run.status ?? "")}: ${String(run.summary ?? "")}`);
           const result = redactSensitiveText(String(run.result ?? run.error ?? "").trim());
-          if (result) lines.push("  ```text", result, "  ```");
+          if (result) lines.push(...markdownFenceLines(result, "text", "  "));
         }
         lines.push("");
       }
@@ -6992,9 +6993,10 @@ class CancipView extends ItemView {
         const visible = [section.title, section.summary ? trimContext(redactSensitiveText(section.summary), 360) : ""].filter(Boolean).join("\n\n");
         const detail = section.detail?.trim();
         if (!detail) return visible;
+        const foldedDetail = markdownFenceLines(trimContext(redactSensitiveText(detail), TOOL_RESULT_DETAIL_MAX_CHARS), "text").join("\n");
         return [
           visible,
-          `<details>\n<summary>${this.t("toolRunResult")}</summary>\n\n\`\`\`text\n${trimContext(redactSensitiveText(detail), TOOL_RESULT_DETAIL_MAX_CHARS)}\n\`\`\`\n</details>`
+          `<details>\n<summary>${this.t("toolRunResult")}</summary>\n\n${foldedDetail}\n</details>`
         ].join("\n\n");
       })
       .filter(Boolean)
@@ -7065,11 +7067,12 @@ class CancipView extends ItemView {
     const elapsed = run.status !== "pending" && Number.isFinite(startedAt)
       ? this.t("elapsedSuffix", { elapsed: formatElapsed(Math.max(0, endedAt - startedAt)) })
       : "";
+    const foldedDetail = detail ? markdownFenceLines(trimContext(redactSensitiveText(detail), TOOL_RESULT_DETAIL_MAX_CHARS), "text").join("\n") : "";
     const body = [
       marker,
       PROCESS_MESSAGE_MARKER,
       [this.t("toolFeedbackStep", { status, summary: run.summary }), elapsed].filter(Boolean).join(" · "),
-      detail ? `\n<details>\n<summary>${this.t("toolRunResult")}</summary>\n\n\`\`\`text\n${trimContext(redactSensitiveText(detail), TOOL_RESULT_DETAIL_MAX_CHARS)}\n\`\`\`\n</details>` : ""
+      foldedDetail ? `\n<details>\n<summary>${this.t("toolRunResult")}</summary>\n\n${foldedDetail}\n</details>` : ""
     ].filter(Boolean).join("\n\n");
     const existing = this.messages.find((message) => message.role === "assistant" && message.content.includes(marker));
     if (existing) {
@@ -7367,15 +7370,37 @@ class CancipView extends ItemView {
 
   private ensureFinalConclusion(result: ActionHandlingResult, startedAt?: number, needsMoreAction = false, originalPrompt = ""): void {
     if (!result.runs.length) return;
-    const recentAssistantMessages = [...this.messages].reverse().filter((message) => message.role === "assistant");
-    const lastVisibleAssistant = recentAssistantMessages.find((message) => !prepareMessageDisplay(redactSensitiveText(message.content)).processOnly);
-    if (lastVisibleAssistant && !isWeakFinalConclusion(lastVisibleAssistant.content)) return;
+    const processBoundary = this.latestProcessOrToolMessageIndex();
+    const finalAfterTools = this.latestStrongFinalAssistantAfter(processBoundary);
+    if (finalAfterTools) return;
     const summary = [
       this.humanFinalConclusion(result.runs, needsMoreAction, originalPrompt),
       typeof startedAt === "number" ? this.t("totalElapsed", { elapsed: formatElapsed(Date.now() - startedAt) }) : ""
     ].filter(Boolean).join("\n\n");
     this.addMessage("assistant", this.t("finalConclusionFallback", { summary }));
     this.renderMessages();
+  }
+
+  private latestProcessOrToolMessageIndex(): number {
+    for (let index = this.messages.length - 1; index >= 0; index -= 1) {
+      const message = this.messages[index];
+      if (message.role !== "assistant") continue;
+      if (message.toolRuns?.length) return index;
+      if (message.content.includes(PROGRESS_STEP_MARKER) || message.content.includes(PROCESS_MESSAGE_MARKER) || message.content.includes(TOOL_FEEDBACK_MARKER_PREFIX)) return index;
+      if (prepareMessageDisplay(redactSensitiveText(message.content)).processOnly) return index;
+    }
+    return -1;
+  }
+
+  private latestStrongFinalAssistantAfter(boundaryIndex: number): ChatMessage | null {
+    for (let index = this.messages.length - 1; index > boundaryIndex; index -= 1) {
+      const message = this.messages[index];
+      if (message.role !== "assistant") continue;
+      const display = prepareMessageDisplay(redactSensitiveText(message.content));
+      if (display.processOnly) continue;
+      if (hasFinalConclusion(message.content) && !isWeakFinalConclusion(message.content)) return message;
+    }
+    return null;
   }
 
   private humanFinalConclusion(runs: ToolRun[], needsMoreAction = false, originalPrompt = ""): string {
@@ -7811,6 +7836,10 @@ class CancipView extends ItemView {
     const adapter = this.app.vault.adapter;
     const path = normalizeActionPath(action.path?.trim() || CANCIP_CONFIG_PATH);
     if (!path.toLowerCase().endsWith(".json")) throw new Error(`config action only supports JSON files: ${path}`);
+    const isPrimaryConfig = normalizePath(path) === CANCIP_CONFIG_PATH;
+    if (isPrimaryConfig && action.replace) {
+      throw new Error(`${CANCIP_CONFIG_PATH} does not support replace:true; use set/unset so API profiles and keys are not wiped.`);
+    }
     const raw = await adapter.exists(path) ? await adapter.read(path) : "{}";
     let parsed: unknown;
     try {
@@ -7828,14 +7857,25 @@ class CancipView extends ItemView {
       if (deleteJsonPath(next, keyPath)) changed.add(keyPath.trim());
     }
     if (!changed.size) throw new Error("config action requires set or unset changes");
+    let writePayload = next;
+    let nextSettings: Settings | null = null;
+    if (isPrimaryConfig) {
+      assertCancipConfigWriteShape(next);
+      nextSettings = normalizeSettings(parseCancipConfig(next));
+      writePayload = settingsToCancipConfig(nextSettings);
+    }
     await ensureParentFolder(adapter, path);
-    await writeTextInChunks(adapter, path, `${JSON.stringify(next, null, 2)}\n`);
+    await writeTextInChunks(adapter, path, `${JSON.stringify(writePayload, null, 2)}\n`);
     try {
       const verified = JSON.parse(await adapter.read(path)) as unknown;
-      if (JSON.stringify(verified) !== JSON.stringify(next)) throw new Error("readback mismatch");
+      if (JSON.stringify(verified) !== JSON.stringify(writePayload)) throw new Error("readback mismatch");
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       throw new Error(`config write verification failed in ${path}: ${reason}`);
+    }
+    if (nextSettings) {
+      this.plugin.settings = nextSettings;
+      await this.plugin.saveData(this.plugin.settings);
     }
     const keys = [...changed].filter(Boolean).slice(0, 20).join(", ");
     return this.withSelfPatchNotice(path, this.t("configActionResult", { path, keys }));
@@ -11149,6 +11189,134 @@ function parseCancipConfig(raw: unknown): Partial<Settings> {
   return config;
 }
 
+const CANCIP_CONFIG_STRING_KEYS = new Set([
+  "activeApiProfileId",
+  "apiUrl",
+  "apiKey",
+  "model",
+  "memoryFolder",
+  "codexMemoryImportPath",
+  "githubApiBaseUrl",
+  "githubDownloadBaseUrl",
+  "githubOwner",
+  "githubRepo",
+  "githubToken",
+  "supportCodeOnePath",
+  "supportCodeTwoPath",
+  "supportCodeOneLabel",
+  "supportCodeTwoLabel",
+  "systemPrompt"
+]);
+
+const CANCIP_CONFIG_NUMBER_KEYS = new Set([
+  "schemaVersion",
+  "temperature",
+  "maxOutputTokens",
+  "maxContextFiles",
+  "maxCoreMemoryFiles",
+  "codexMemoryMaxFiles",
+  "codexMemoryMaxChars",
+  "maxToolIterations",
+  "maxRecentTranscriptMessages",
+  "maxMentionResults",
+  "maxMentionFolderFiles",
+  "maxFileContextChars",
+  "maxFolderFileContextChars",
+  "localVersionHour",
+  "localVersionMaxFileBytes",
+  "automationCheckMinutes"
+]);
+
+const CANCIP_CONFIG_BOOLEAN_KEYS = new Set([
+  "includeCurrentFile",
+  "includeCoreMemory",
+  "codexMemoryAutoImport",
+  "codexMemoryAutoSearch",
+  "useVaultSearchByDefault",
+  "showAttachmentButton",
+  "compactHeader",
+  "autoOpenPlanPanel",
+  "showLiveTodos",
+  "showManualTodos",
+  "commandBusEnabled",
+  "executeObsidianCommands",
+  "githubCommandsEnabled",
+  "autoContinueAfterTools",
+  "exportMarkdownContextSnapshots",
+  "exportMarkdownManualTodos",
+  "dailyLocalVersioning",
+  "automationsEnabled",
+  "showSupportCodes"
+]);
+
+function assertCancipConfigWriteShape(config: Record<string, unknown>): void {
+  const issues: string[] = [];
+  for (const [key, value] of Object.entries(config)) {
+    if (value === undefined) continue;
+    if (CANCIP_CONFIG_STRING_KEYS.has(key)) {
+      if (typeof value !== "string") issues.push(`${key} must be a string`);
+      continue;
+    }
+    if (CANCIP_CONFIG_NUMBER_KEYS.has(key)) {
+      if (!isFiniteConfigNumber(value)) issues.push(`${key} must be a finite number`);
+      continue;
+    }
+    if (CANCIP_CONFIG_BOOLEAN_KEYS.has(key)) {
+      if (typeof value !== "boolean") issues.push(`${key} must be a boolean`);
+      continue;
+    }
+    if (key === "language") {
+      if (!isLanguageMode(value)) issues.push("language is unsupported");
+      continue;
+    }
+    if (key === "accessMode") {
+      if (!isAccessMode(value)) issues.push("accessMode is unsupported");
+      continue;
+    }
+    if (key === "apiMode") {
+      if (!isApiMode(value)) issues.push("apiMode is unsupported");
+      continue;
+    }
+    if (key === "modelOptions") {
+      if (!isValidModelOptionsConfigValue(value)) issues.push("modelOptions must be a string or string[] of model IDs");
+      continue;
+    }
+    if (key === "apiProfiles") {
+      if (!isValidApiProfilesConfigValue(value)) issues.push("apiProfiles must be an array of profile objects");
+      continue;
+    }
+    issues.push(`${key} is not a supported Cancip config key`);
+  }
+  if (issues.length) {
+    throw new Error(`config schema violation in ${CANCIP_CONFIG_PATH}: ${issues.join("; ")}`);
+  }
+}
+
+function isFiniteConfigNumber(value: unknown): boolean {
+  if (typeof value === "number") return Number.isFinite(value);
+  if (typeof value !== "string") return false;
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  return Number.isFinite(Number(trimmed));
+}
+
+function isValidModelOptionsConfigValue(value: unknown): boolean {
+  if (typeof value === "string") return Boolean(value.trim());
+  return Array.isArray(value) && value.every((item) => typeof item === "string" && Boolean(item.trim()));
+}
+
+function isValidApiProfilesConfigValue(value: unknown): boolean {
+  if (!Array.isArray(value)) return false;
+  return value.every((item) => {
+    if (!isRecord(item)) return false;
+    return Object.entries(item).every(([key, field]) => {
+      if (["id", "name", "apiUrl", "apiKey", "model"].includes(key)) return typeof field === "string";
+      if (key === "apiMode") return isApiMode(field);
+      return true;
+    });
+  });
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -11291,6 +11459,33 @@ function normalizeManualTodos(raw: unknown): ManualTodo[] {
       createdAt: typeof item.createdAt === "string" ? item.createdAt : new Date().toISOString()
     }))
     .filter((item) => item.text);
+}
+
+function markdownFenceLines(content: string, lang = "text", indent = ""): string[] {
+  const normalized = content.replace(/\r\n?/g, "\n");
+  let maxTicks = 0;
+  const tickRuns = normalized.match(/`+/g);
+  if (tickRuns) {
+    for (const item of tickRuns) maxTicks = Math.max(maxTicks, item.length);
+  }
+  const fence = "`".repeat(Math.max(3, maxTicks + 1));
+  const opening = lang ? `${fence}${lang}` : fence;
+  return [
+    `${indent}${opening}`,
+    ...normalized.split("\n").map((line) => `${indent}${line}`),
+    `${indent}${fence}`
+  ];
+}
+
+function cleanFoldedBlockContent(block: FoldedMessageBlock): string {
+  const content = block.content.trim();
+  const lines = content.split(/\r?\n/);
+  const firstLine = lines[0]?.trim().toLowerCase();
+  const title = block.title.trim().toLowerCase();
+  const duplicatedTitle = Boolean(firstLine && firstLine === title && lines.length > 1);
+  const titleLooksLikeFenceLabel = /^(?:cancip-action|thinking|reasoning|process|details?|json|text|bash|sh|zsh|shell|powershell|ps1|cmd|bat|terminal|console|ts|tsx|js|jsx|html|css|python|py|diff)$/i.test(title);
+  if (duplicatedTitle && titleLooksLikeFenceLabel) return lines.slice(1).join("\n").trim();
+  return content;
 }
 
 function prepareMessageDisplay(content: string): MessageDisplay {
