@@ -67,6 +67,18 @@ type ApiProfile = {
   model: string;
 };
 
+type ModelCallAudit = {
+  mode: Exclude<ApiMode, "auto">;
+  url: string;
+  requestBody: unknown;
+  status?: number;
+  responseText?: string;
+  responseJson?: unknown;
+  extractedText?: string;
+  error?: string;
+  previousAttempts?: ModelCallAudit[];
+};
+
 type SearchHit = {
   path: string;
   title: string;
@@ -601,6 +613,8 @@ const EXPERIENCE_CONTEXT_MAX_CHARS = 2200;
 const PROGRESS_STEP_MARKER = "<!-- cancip-progress-step -->";
 const PROCESS_MESSAGE_MARKER = "<!-- cancip-process-message -->";
 const TOOL_FEEDBACK_MARKER_PREFIX = "<!-- cancip-tool-feedback:";
+const PROCESS_DETAIL_MAX_CHARS = 120000;
+const TOOL_RESULT_DETAIL_MAX_CHARS = 120000;
 const REVIEW_GATE_DIR = `${CANCIP_AI_DIR}/Review`;
 const REVIEW_GATE_HIDDEN_DIR = `${CANCIP_CONFIG_DIR}/review-gates`;
 const REVIEW_GATE_SCHEMA_VERSION = 1;
@@ -3727,6 +3741,7 @@ class CancipView extends ItemView {
   private draftContext: DraftContext[] = [];
   private manualTodos: ManualTodo[] = [];
   private sourceHits: SearchHit[] = [];
+  private lastModelCallAudit: ModelCallAudit | null = null;
   private hiddenContextKeys = new Set<string>();
   private messagesEl!: HTMLElement;
   private inputEl!: HTMLTextAreaElement;
@@ -5057,11 +5072,12 @@ class CancipView extends ItemView {
     let context = { system: this.modePrompt(), contextText: "", searchHits: [] as SearchHit[] };
     const contextStep = this.addProgressStep(this.t("preparingContext"));
     const requestProgressSteps: ChatMessage[] = [contextStep];
+    let generationStep: ChatMessage | null = null;
     try {
       this.setStatus(this.t("preparingContext"));
       context = await this.buildContext(taskGoal);
       if (request.signal.aborted || !this.hasRequest(request)) return;
-      this.updateProgressStep(contextStep, this.t("preparingContext"), `${this.t("obsidianContext")}: ${context.contextText.length} chars\n${this.t("hitCount", { count: context.searchHits.length })}`);
+      this.updateProgressStep(contextStep, this.t("preparingContext"), this.formatContextAuditDetail(rawPrompt, taskGoal, modelPrompt, context));
 
       userMessage.sources = context.searchHits;
       userMessage.contextText = context.contextText;
@@ -5083,7 +5099,7 @@ class CancipView extends ItemView {
       }
 
       this.setStatus(this.t("generating"));
-      const generationStep = this.addProgressStep(this.t("generating"));
+      generationStep = this.addProgressStep(this.t("generating"));
       requestProgressSteps.push(generationStep);
       const answer = await withTimeout(this.callModel(modelPrompt, context), MODEL_CALL_TIMEOUT_MS, "model request timed out");
       if (request.signal.aborted || !this.hasRequest(request)) return;
@@ -5095,9 +5111,9 @@ class CancipView extends ItemView {
         if (this.drainQueueAfterRequest) void this.drainQueuedPrompts();
         return;
       }
-      this.updateProgressStep(generationStep, this.t("generating"), this.t("done"));
       const suppressedActions = suppressToolActions && extractCancipActions(answer).length > 0;
       const visibleAnswer = suppressToolActions ? removeCancipActionBlocks(answer).trim() : answer.trim();
+      this.updateProgressStep(generationStep, this.t("generating"), this.formatGenerationAuditDetail(modelPrompt, context, activeProfile, answer, visibleAnswer));
       if (!visibleAnswer) {
         this.addMessage("assistant", suppressedActions ? this.t("emptyApiReplyWithSuppressedTools") : this.t("emptyApiReply"));
         this.setStatus(this.t("callFailed"));
@@ -5138,6 +5154,7 @@ class CancipView extends ItemView {
       const message = error instanceof Error ? error.message : String(error);
       void this.recordSessionEvent({ kind: "prompt.error", detail: message });
       void this.recordSessionEvent({ kind: "prompt.recoverable_error", detail: message, status: "failed" });
+      this.updateProgressStep(generationStep, this.t("generating"), this.formatGenerationAuditDetail(modelPrompt, context, this.plugin.activeApiProfile(), `Model call failed: ${message}`, ""), this.t("toolRunFailed"));
       this.addMessage("assistant", this.localFallback(taskGoal, context.searchHits, message));
       this.setStatus(this.t("callFailed"));
       await this.finishCurrentSessionStatus("failed", true, request);
@@ -5369,7 +5386,7 @@ class CancipView extends ItemView {
       `<summary>${this.t("progressDetails")}</summary>`,
       "",
       "```text",
-      trimContext(redactSensitiveText(trimmed), 4000),
+      trimContext(redactSensitiveText(trimmed), PROCESS_DETAIL_MAX_CHARS),
       "```",
       "</details>"
     ].join("\n");
@@ -5385,7 +5402,7 @@ class CancipView extends ItemView {
 
     const contextStep = this.addProgressStep(this.t("preparingContext"));
     const context = await this.buildContext(task.prompt);
-    this.updateProgressStep(contextStep, this.t("preparingContext"), `${this.t("obsidianContext")}: ${context.contextText.length} chars\n${this.t("hitCount", { count: context.searchHits.length })}`);
+    this.updateProgressStep(contextStep, this.t("preparingContext"), this.formatContextAuditDetail(prompt, task.prompt, task.prompt, context));
     userMessage.sources = context.searchHits;
     userMessage.contextText = context.contextText;
     userMessage.systemPrompt = context.system;
@@ -5407,11 +5424,12 @@ class CancipView extends ItemView {
     this.syncRequestControls();
     void this.updateCurrentSessionStatus("running", false);
     this.setStatus(this.t("automationStarted", { title: task.title }));
+    let generationStep: ChatMessage | null = null;
     try {
-      const generationStep = this.addProgressStep(this.t("automationStarted", { title: task.title }));
+      generationStep = this.addProgressStep(this.t("automationStarted", { title: task.title }));
       const answer = await this.callModel(task.prompt, context);
       if (request.signal.aborted || !this.isCurrentRequest(request)) return this.t("stopped");
-      this.updateProgressStep(generationStep, this.t("automationStarted", { title: task.title }), this.t("done"));
+      this.updateProgressStep(generationStep, this.t("automationStarted", { title: task.title }), this.formatGenerationAuditDetail(task.prompt, context, activeProfile, answer, answer.trim()));
       const assistantMessage = this.addMessage("assistant", answer);
       this.renderMessages();
       const actionReport = await this.handleActionBlocks(answer, assistantMessage);
@@ -5429,6 +5447,8 @@ class CancipView extends ItemView {
       await this.finishCurrentSessionStatus("completed", true, request);
       return result;
     } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      this.updateProgressStep(generationStep, this.t("automationStarted", { title: task.title }), this.formatGenerationAuditDetail(task.prompt, context, activeProfile, `Model call failed: ${reason}`, ""), this.t("toolRunFailed"));
       await this.finishCurrentSessionStatus("failed", true, request);
       throw error;
     } finally {
@@ -6123,13 +6143,85 @@ class CancipView extends ItemView {
     return `${base}\n\n${languagePrompt}\n\n${accessPrompt}\n\n${toolPrompt}\n\n${this.t("modePromptAsk")}`;
   }
 
-  private async callModel(prompt: string, context: { system: string; contextText: string }): Promise<string> {
-    const settings = this.plugin.settings;
-    const profile = this.plugin.activeApiProfile();
+  private modelInputText(prompt: string, context: { contextText: string }): string {
     const recent = this.recentTranscript();
-    const inputText = `${recent ? `${this.t("recentConversation")}:\n${recent}\n\n` : ""}${this.t("userQuestion")}：${prompt}\n\n${this.t("obsidianContext")}：\n${context.contextText || this.t("none")}`;
+    return `${recent ? `${this.t("recentConversation")}:\n${recent}\n\n` : ""}${this.t("userQuestion")}：${prompt}\n\n${this.t("obsidianContext")}：\n${context.contextText || this.t("none")}`;
+  }
+
+  private formatContextAuditDetail(
+    rawPrompt: string,
+    taskGoal: string,
+    modelPrompt: string,
+    context: { system: string; contextText: string; searchHits: SearchHit[] }
+  ): string {
+    return this.formatAuditSections([
+      { title: "Summary", content: `${this.t("obsidianContext")}: ${context.contextText.length} chars\n${this.t("hitCount", { count: context.searchHits.length })}` },
+      { title: "Raw user prompt", content: rawPrompt },
+      { title: "Resolved task goal", content: taskGoal },
+      { title: "Model prompt for this turn", content: modelPrompt },
+      { title: "System prompt sent", content: context.system },
+      { title: "Context text sent", content: context.contextText || this.t("none") },
+      { title: "Search hits / included sources", content: context.searchHits.length ? JSON.stringify(context.searchHits, null, 2) : this.t("none") }
+    ]);
+  }
+
+  private formatGenerationAuditDetail(
+    prompt: string,
+    context: { system: string; contextText: string },
+    profile: ApiProfile,
+    rawAnswer: string,
+    visibleAnswer: string
+  ): string {
+    const endpoint = normalizeApiUrl(profile.apiUrl);
+    const requestedMode = profile.apiMode;
+    const resolvedMode = resolveApiMode(profile.apiMode, endpoint);
+    return this.formatAuditSections([
+      {
+        title: "API profile",
+        content: JSON.stringify({
+          id: profile.id,
+          name: profile.name,
+          model: profile.model,
+          requestedMode,
+          resolvedMode,
+          hasApiUrl: Boolean(profile.apiUrl),
+          hasApiKey: Boolean(profile.apiKey),
+          apiUrl: profile.apiUrl,
+          chatUrl: endpoint.chatUrl,
+          responsesUrl: endpoint.responsesUrl,
+          temperature: this.plugin.settings.temperature,
+          maxOutputTokens: this.plugin.settings.maxOutputTokens
+        }, null, 2)
+      },
+      { title: "Actual API call audit", content: this.lastModelCallAudit ?? this.t("none") },
+      { title: "System prompt sent", content: context.system },
+      { title: "User input sent to model", content: this.modelInputText(prompt, context) },
+      { title: "Raw model reply", content: rawAnswer || this.t("none") },
+      { title: "Visible reply after UI filtering", content: visibleAnswer || this.t("none") }
+    ]);
+  }
+
+  private formatAuditSections(sections: Array<{ title: string; content: unknown }>): string {
+    return sections
+      .map((section) => {
+        const content = ensureDisplayText(section.content).trim() || this.t("none");
+        return `## ${section.title}\n${content}`;
+      })
+      .join("\n\n---\n\n");
+  }
+
+  private modelCallAuditSnapshot(error?: string): ModelCallAudit | null {
+    const audit = this.lastModelCallAudit;
+    if (!audit) return null;
+    return error ? { ...audit, error } : { ...audit };
+  }
+
+  private async callModel(prompt: string, context: { system: string; contextText: string }): Promise<string> {
+    const profile = this.plugin.activeApiProfile();
+    const inputText = this.modelInputText(prompt, context);
     const endpoint = normalizeApiUrl(profile.apiUrl);
     const mode = resolveApiMode(profile.apiMode, endpoint);
+    this.lastModelCallAudit = null;
 
     if (mode === "responses") {
       return await this.callResponsesApi(profile, endpoint.responsesUrl, context.system, inputText);
@@ -6143,10 +6235,26 @@ class CancipView extends ItemView {
       return await this.callResponsesApi(profile, endpoint.responsesUrl, context.system, inputText);
     } catch (error) {
       const firstError = error instanceof Error ? error.message : String(error);
+      const firstAudit = this.modelCallAuditSnapshot(firstError);
       try {
-        return await this.callCompatibleApi(profile, endpoint.chatUrl, context.system, inputText);
+        const answer = await this.callCompatibleApi(profile, endpoint.chatUrl, context.system, inputText);
+        const currentAudit = this.modelCallAuditSnapshot();
+        if (firstAudit && currentAudit) {
+          this.lastModelCallAudit = {
+            ...currentAudit,
+            previousAttempts: [...(currentAudit.previousAttempts ?? []), firstAudit]
+          };
+        }
+        return answer;
       } catch (secondError) {
         const second = secondError instanceof Error ? secondError.message : String(secondError);
+        const currentAudit = this.modelCallAuditSnapshot(second);
+        if (currentAudit) {
+          this.lastModelCallAudit = {
+            ...currentAudit,
+            previousAttempts: firstAudit ? [...(currentAudit.previousAttempts ?? []), firstAudit] : currentAudit.previousAttempts
+          };
+        }
         throw new Error(`Responses failed: ${firstError}; compatible failed: ${second}`);
       }
     }
@@ -6163,8 +6271,16 @@ class CancipView extends ItemView {
         { role: "user", content: inputText }
       ]
     };
+    this.lastModelCallAudit = { mode: "compatible", url, requestBody: body };
     const response = await this.postJson(url, body, profile.apiKey);
     const text = extractResponseText(response.json) || extractNonJsonText(response.text);
+    this.lastModelCallAudit = {
+      ...(this.lastModelCallAudit ?? { mode: "compatible", url, requestBody: body }),
+      status: response.status,
+      responseText: response.text,
+      responseJson: response.json,
+      extractedText: text
+    };
     if (text) return text;
     throw new Error(`Chat Completions returned no assistant text (${describeResponseShape(response.json)})`);
   }
@@ -6178,8 +6294,16 @@ class CancipView extends ItemView {
       temperature: settings.temperature,
       max_output_tokens: settings.maxOutputTokens
     };
+    this.lastModelCallAudit = { mode: "responses", url, requestBody: body };
     const response = await this.postJson(url, body, profile.apiKey);
     const text = extractResponseText(response.json) || extractNonJsonText(response.text);
+    this.lastModelCallAudit = {
+      ...(this.lastModelCallAudit ?? { mode: "responses", url, requestBody: body }),
+      status: response.status,
+      responseText: response.text,
+      responseJson: response.json,
+      extractedText: text
+    };
     if (text) return text;
     throw new Error(`Responses returned no assistant text (${describeResponseShape(response.json)})`);
   }
@@ -6870,7 +6994,7 @@ class CancipView extends ItemView {
         if (!detail) return visible;
         return [
           visible,
-          `<details>\n<summary>${this.t("toolRunResult")}</summary>\n\n\`\`\`text\n${trimContext(redactSensitiveText(detail), 5000)}\n\`\`\`\n</details>`
+          `<details>\n<summary>${this.t("toolRunResult")}</summary>\n\n\`\`\`text\n${trimContext(redactSensitiveText(detail), TOOL_RESULT_DETAIL_MAX_CHARS)}\n\`\`\`\n</details>`
         ].join("\n\n");
       })
       .filter(Boolean)
@@ -6945,7 +7069,7 @@ class CancipView extends ItemView {
       marker,
       PROCESS_MESSAGE_MARKER,
       [this.t("toolFeedbackStep", { status, summary: run.summary }), elapsed].filter(Boolean).join(" · "),
-      detail ? `\n<details>\n<summary>${this.t("toolRunResult")}</summary>\n\n\`\`\`text\n${trimContext(redactSensitiveText(detail), 4000)}\n\`\`\`\n</details>` : ""
+      detail ? `\n<details>\n<summary>${this.t("toolRunResult")}</summary>\n\n\`\`\`text\n${trimContext(redactSensitiveText(detail), TOOL_RESULT_DETAIL_MAX_CHARS)}\n\`\`\`\n</details>` : ""
     ].filter(Boolean).join("\n\n");
     const existing = this.messages.find((message) => message.role === "assistant" && message.content.includes(marker));
     if (existing) {
@@ -8747,7 +8871,7 @@ class CancipView extends ItemView {
         const details = row.createEl("details", { cls: "obcc-tool-run-details" });
         this.wireDetails(details, `tool-run:${message.id}:${run.id}`, run.status === "executing");
         details.createEl("summary", { cls: "obcc-tool-run-result-label", text: this.t("toolRunResult") });
-        details.createEl("pre", { cls: "obcc-tool-run-result", text: trimContext(redactSensitiveText(detail), 4000) });
+        details.createEl("pre", { cls: "obcc-tool-run-result", text: trimContext(redactSensitiveText(detail), TOOL_RESULT_DETAIL_MAX_CHARS) });
       }
     }
   }
@@ -10771,7 +10895,7 @@ function migrateDefaultMemorySearchPolicy(settings: Settings): Settings {
 function isOutdatedSystemPrompt(prompt: string): boolean {
   const normalized = prompt.trim();
   if (!normalized) return true;
-  if (/Cancip Core Prompt v0\.1\.\d+/i.test(normalized) && !normalized.includes("Cancip Core Prompt v0.1.104")) return true;
+  if (/Cancip Core Prompt v0\.1\.\d+/i.test(normalized) && !normalized.includes("Cancip Core Prompt v0.1.105")) return true;
   return (
     normalized === LEGACY_SYSTEM_PROMPT ||
     normalized.includes("核心记忆和 Vault Search 上下文回答") ||
