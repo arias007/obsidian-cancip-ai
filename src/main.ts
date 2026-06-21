@@ -757,6 +757,14 @@ const EN = {
   queuedCount: "Queued {count}",
   clearQueue: "Clear queue",
   queueCleared: "Queue cleared",
+  editQueuedPrompt: "Edit queued message",
+  saveQueuedPrompt: "Save queued message",
+  cancelQueuedPromptEdit: "Cancel editing",
+  removeQueuedPrompt: "Remove queued message",
+  moveQueuedPromptUp: "Move queued message up",
+  moveQueuedPromptDown: "Move queued message down",
+  queuedPromptUpdated: "Queued message updated",
+  queuedPromptRemoved: "Queued message removed",
   directSendQueued: "Direct send queued first. Stopping current request...",
   modelEffort: "Extra High",
   accessMenuTitle: "Access",
@@ -1113,6 +1121,14 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     queuedCount: "排队 {count}",
     clearQueue: "清空队列",
     queueCleared: "队列已清空",
+    editQueuedPrompt: "编辑待发送消息",
+    saveQueuedPrompt: "保存待发送消息",
+    cancelQueuedPromptEdit: "取消编辑",
+    removeQueuedPrompt: "删除待发送消息",
+    moveQueuedPromptUp: "上移待发送消息",
+    moveQueuedPromptDown: "下移待发送消息",
+    queuedPromptUpdated: "待发送消息已更新",
+    queuedPromptRemoved: "待发送消息已删除",
     directSendQueued: "已插队直发，正在停止当前请求...",
     modelEffort: "Extra High",
     accessMenuTitle: "权限",
@@ -1401,6 +1417,14 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     queuedCount: "排隊 {count}",
     clearQueue: "清空佇列",
     queueCleared: "佇列已清空",
+    editQueuedPrompt: "編輯待傳送訊息",
+    saveQueuedPrompt: "儲存待傳送訊息",
+    cancelQueuedPromptEdit: "取消編輯",
+    removeQueuedPrompt: "刪除待傳送訊息",
+    moveQueuedPromptUp: "上移待傳送訊息",
+    moveQueuedPromptDown: "下移待傳送訊息",
+    queuedPromptUpdated: "待傳送訊息已更新",
+    queuedPromptRemoved: "待傳送訊息已刪除",
     directSendQueued: "已插隊直發，正在停止目前請求...",
     accessMenuTitle: "權限",
     modelMenuTitle: "模型",
@@ -3764,6 +3788,7 @@ class CancipView extends ItemView {
   private activeHeaderMenu: HeaderMenuKind | null = null;
   private activeRequests = new Map<string, AbortController>();
   private queuedPrompts: QueuedPrompt[] = [];
+  private editingQueuedPromptId: string | null = null;
   private progressStepTimers = new Map<string, number>();
   private toolRunTimers = new Map<string, number>();
   private detailsOpenState = new Map<string, boolean>();
@@ -3861,10 +3886,12 @@ class CancipView extends ItemView {
     if (this.programmaticScrollReleaseTimer !== null) window.clearTimeout(this.programmaticScrollReleaseTimer);
     this.programmaticScrollReleaseTimer = null;
     this.queuedPrompts = [];
+    this.editingQueuedPromptId = null;
   }
 
   async newChat(): Promise<void> {
     this.queuedPrompts = [];
+    this.editingQueuedPromptId = null;
     this.renderQueueStatus();
     await this.saveCurrentSession();
     this.sessionId = sessionExportId(new Date());
@@ -4197,19 +4224,115 @@ class CancipView extends ItemView {
     const count = this.queuedPrompts.length;
     this.queueEl.toggleClass("is-hidden", count === 0);
     if (!count) return;
-    this.queueEl.createSpan({ cls: "obcc-queue-count", text: this.t("queuedCount", { count }) });
-    const next = this.queuedPrompts[0]?.prompt.trim();
-    if (next) this.queueEl.createSpan({ cls: "obcc-queue-next", text: trimContext(next, 42) });
-    const clearButton = this.queueEl.createEl("button", {
-      cls: "obcc-queue-clear",
-      attr: { type: "button", title: this.t("clearQueue"), "aria-label": this.t("clearQueue") }
-    });
-    setIcon(clearButton, "x");
-    clearButton.addEventListener("click", () => {
+    const head = this.queueEl.createDiv({ cls: "obcc-queue-head" });
+    head.createSpan({ cls: "obcc-queue-count", text: this.t("queuedCount", { count }) });
+    this.createQueueIconButton(head, "trash-2", this.t("clearQueue"), () => {
       this.queuedPrompts = [];
+      this.editingQueuedPromptId = null;
       this.renderQueueStatus();
       this.setStatus(this.t("queueCleared"));
+    }, false, "obcc-queue-clear");
+
+    const list = this.queueEl.createDiv({ cls: "obcc-queue-list" });
+    this.queuedPrompts.forEach((item, index) => this.renderQueuedPromptItem(list, item, index));
+  }
+
+  private renderQueuedPromptItem(parent: HTMLElement, item: QueuedPrompt, index: number): void {
+    const row = parent.createDiv({ cls: `obcc-queue-item ${this.editingQueuedPromptId === item.id ? "is-editing" : ""}` });
+    if (this.editingQueuedPromptId === item.id) {
+      const editor = row.createEl("textarea", {
+        cls: "obcc-queue-editor",
+        attr: { rows: "3", "aria-label": this.t("editQueuedPrompt") }
+      });
+      editor.value = item.prompt;
+      editor.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          this.cancelQueuedPromptEdit();
+          return;
+        }
+        if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+          event.preventDefault();
+          this.saveQueuedPrompt(item.id, editor.value);
+        }
+      });
+      const editActions = row.createDiv({ cls: "obcc-queue-edit-actions" });
+      this.createQueueIconButton(editActions, "check", this.t("saveQueuedPrompt"), () => this.saveQueuedPrompt(item.id, editor.value));
+      this.createQueueIconButton(editActions, "x", this.t("cancelQueuedPromptEdit"), () => this.cancelQueuedPromptEdit());
+      window.setTimeout(() => editor.focus(), 20);
+      return;
+    }
+
+    const preview = row.createEl("button", {
+      cls: "obcc-queue-preview",
+      text: item.prompt,
+      attr: { type: "button", title: item.prompt, "aria-label": this.t("editQueuedPrompt") }
     });
+    preview.addEventListener("click", () => this.editQueuedPrompt(item.id));
+
+    const actions = row.createDiv({ cls: "obcc-queue-actions" });
+    this.createQueueIconButton(actions, "arrow-up", this.t("moveQueuedPromptUp"), () => this.moveQueuedPrompt(item.id, -1), index === 0);
+    this.createQueueIconButton(actions, "arrow-down", this.t("moveQueuedPromptDown"), () => this.moveQueuedPrompt(item.id, 1), index === this.queuedPrompts.length - 1);
+    this.createQueueIconButton(actions, "pencil", this.t("editQueuedPrompt"), () => this.editQueuedPrompt(item.id));
+    this.createQueueIconButton(actions, "x", this.t("removeQueuedPrompt"), () => this.removeQueuedPrompt(item.id));
+  }
+
+  private createQueueIconButton(parent: HTMLElement, icon: string, label: string, onClick: () => void, disabled = false, extraClass = ""): HTMLButtonElement {
+    const button = parent.createEl("button", {
+      cls: `obcc-queue-button ${extraClass}`.trim(),
+      attr: { type: "button", title: label, "aria-label": label }
+    });
+    button.disabled = disabled;
+    setIcon(button, icon);
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      if (!button.disabled) onClick();
+    });
+    return button;
+  }
+
+  private moveQueuedPrompt(id: string, delta: -1 | 1): void {
+    const index = this.queuedPrompts.findIndex((item) => item.id === id);
+    const nextIndex = index + delta;
+    if (index < 0 || nextIndex < 0 || nextIndex >= this.queuedPrompts.length) return;
+    const [item] = this.queuedPrompts.splice(index, 1);
+    this.queuedPrompts.splice(nextIndex, 0, item);
+    this.renderQueueStatus();
+  }
+
+  private editQueuedPrompt(id: string): void {
+    if (!this.queuedPrompts.some((item) => item.id === id)) return;
+    this.editingQueuedPromptId = id;
+    this.renderQueueStatus();
+  }
+
+  private saveQueuedPrompt(id: string, prompt: string): void {
+    const index = this.queuedPrompts.findIndex((item) => item.id === id);
+    if (index < 0) return;
+    const nextPrompt = prompt.trim();
+    if (!nextPrompt) {
+      this.removeQueuedPrompt(id);
+      return;
+    }
+    this.queuedPrompts[index] = { ...this.queuedPrompts[index], prompt: nextPrompt };
+    this.editingQueuedPromptId = null;
+    this.renderQueueStatus();
+    this.setStatus(this.t("queuedPromptUpdated"));
+    if (!this.activeRequest) void this.drainQueuedPrompts();
+  }
+
+  private cancelQueuedPromptEdit(): void {
+    this.editingQueuedPromptId = null;
+    this.renderQueueStatus();
+    if (!this.activeRequest) void this.drainQueuedPrompts();
+  }
+
+  private removeQueuedPrompt(id: string): void {
+    this.queuedPrompts = this.queuedPrompts.filter((item) => item.id !== id);
+    if (this.editingQueuedPromptId === id) this.editingQueuedPromptId = null;
+    this.renderQueueStatus();
+    this.setStatus(this.queuedPrompts.length ? this.t("queuedPromptRemoved") : this.t("queueCleared"));
+    if (!this.activeRequest) void this.drainQueuedPrompts();
   }
 
   private resizeInput(): void {
@@ -4876,6 +4999,7 @@ class CancipView extends ItemView {
         : [];
       this.manualTodos = normalizeManualTodos(snapshot.manualTodos);
       this.queuedPrompts = [];
+      this.editingQueuedPromptId = null;
       this.messages = snapshot.messages
         .filter(isRecord)
         .map((item): ChatMessage | null => this.normalizeSessionMessage(item))
@@ -5038,6 +5162,7 @@ class CancipView extends ItemView {
 
   private async drainQueuedPrompts(): Promise<void> {
     if (this.activeRequest || !this.queuedPrompts.length) return;
+    if (this.editingQueuedPromptId) return;
     const next = this.queuedPrompts.shift();
     this.renderQueueStatus();
     if (!next) return;
@@ -8494,6 +8619,7 @@ class CancipView extends ItemView {
     const { drainQueue = true, clearQueue = false, notice = true } = options;
     if (clearQueue) {
       this.queuedPrompts = [];
+      this.editingQueuedPromptId = null;
       this.renderQueueStatus();
     }
     const request = this.activeRequest;

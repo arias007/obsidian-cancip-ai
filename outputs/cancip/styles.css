@@ -1398,10 +1398,11 @@
 
 .obcc-queue-status {
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
   min-width: 0;
+  max-width: 100%;
   margin: -1px 3px 0;
   color: var(--text-muted);
   font-size: 11px;
@@ -1412,37 +1413,109 @@
   display: none;
 }
 
+.obcc-queue-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
 .obcc-queue-count {
-  flex: 0 0 auto;
+  flex: 1 1 auto;
+  min-width: 0;
   color: var(--text-accent);
 }
 
-.obcc-queue-next {
-  flex: 1 1 120px;
+.obcc-queue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   min-width: 0;
   max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.obcc-queue-clear {
+.obcc-queue-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 3px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-primary-alt);
+}
+
+.obcc-queue-preview {
+  display: -webkit-box;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  padding: 2px 4px;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.3;
+  text-align: left;
+  white-space: normal;
+  overflow: hidden;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.obcc-queue-preview:hover {
+  color: var(--text-normal);
+}
+
+.obcc-queue-actions,
+.obcc-queue-edit-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+
+.obcc-queue-editor {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 54px;
+  max-height: 140px;
+  padding: 5px 6px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: 12px;
+  line-height: 1.35;
+  resize: vertical;
+}
+
+.obcc-queue-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  width: 18px;
-  height: 18px;
+  width: 22px;
+  height: 22px;
   padding: 0;
   border: 0;
-  border-radius: 50%;
+  border-radius: 6px;
   background: transparent;
   color: var(--text-faint);
 }
 
-.obcc-queue-clear:hover {
+.obcc-queue-button:hover:not(:disabled) {
   background: var(--background-modifier-hover);
   color: var(--text-normal);
+}
+
+.obcc-queue-button:disabled {
+  opacity: 0.35;
 }
 
 .obcc-input {
@@ -1605,7 +1678,7 @@
 .obcc-access-button svg,
 .obcc-model-button svg,
 .obcc-send svg,
-.obcc-queue-clear svg,
+.obcc-queue-button svg,
 .obcc-link-button svg {
   width: 16px;
   height: 16px;
