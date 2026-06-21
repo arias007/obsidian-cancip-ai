@@ -738,12 +738,12 @@
 
 .obcc-choice-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 132px), 1fr));
   align-items: flex-start;
   gap: 6px;
   margin-top: 8px;
   max-width: 100%;
-  overflow: visible;
+  overflow: hidden;
 }
 
 .obcc-choice-card {
@@ -756,15 +756,15 @@
   min-width: 0;
   min-height: 34px;
   height: auto !important;
-  max-height: none !important;
-  padding: 7px 8px;
+  max-height: calc(1.35em * 3 + 16px) !important;
+  padding: 6px 7px;
   border: 1px solid var(--background-modifier-border);
   border-radius: 7px;
   background: var(--background-primary);
   color: var(--text-normal);
   text-align: left;
   white-space: normal;
-  overflow: visible;
+  overflow: hidden;
   box-sizing: border-box;
   line-height: 1.35;
 }
@@ -778,15 +778,28 @@
   display: none;
 }
 
+.obcc-choice-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 14px;
+  height: 16px;
+  color: var(--text-faint);
+}
+
 .obcc-choice-text {
+  display: -webkit-box;
   min-width: 0;
   max-width: 100%;
   font-size: 12px;
   line-height: 1.35;
   overflow-wrap: anywhere;
   word-break: break-word;
-  overflow: visible;
+  overflow: hidden;
   text-align: left;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
 }
 
 .obcc-tool-runs {
@@ -1670,6 +1683,7 @@
 .obcc-mention-icon svg,
 .obcc-command-icon svg,
 .obcc-command-check svg,
+.obcc-choice-icon svg,
 .obcc-context-chip-icon svg,
 .obcc-context-remove svg,
 .obcc-todo-check svg,

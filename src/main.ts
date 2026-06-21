@@ -689,6 +689,7 @@ const EN = {
   queueMessage: "Queue message",
   copyDone: "Copied",
   copyFailed: "Copy failed: {reason}",
+  choiceInserted: "Suggestion inserted",
   toolJsonDetails: "Tool / command details",
   processDetails: "Process details",
   informationalActionBlocked: "Blocked because this is a read/list/explain question. Ask explicitly to create, modify, move, delete, configure, or run a write action.",
@@ -1053,6 +1054,7 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     queueMessage: "加入队列",
     copyDone: "已复制",
     copyFailed: "复制失败：{reason}",
+    choiceInserted: "已填入推荐项",
     toolJsonDetails: "工具/命令详情",
     processDetails: "过程详情",
     informationalActionBlocked: "已阻止：这是读取、清单、解释或分析类问题。只有用户明确要求新建、修改、移动、删除、配置或执行写入动作时，才会自动执行写入类工具。",
@@ -1417,6 +1419,7 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     queuedCount: "排隊 {count}",
     clearQueue: "清空佇列",
     queueCleared: "佇列已清空",
+    choiceInserted: "已填入推薦項",
     editQueuedPrompt: "編輯待傳送訊息",
     saveQueuedPrompt: "儲存待傳送訊息",
     cancelQueuedPromptEdit: "取消編輯",
@@ -8871,7 +8874,7 @@ class CancipView extends ItemView {
       void MarkdownRenderer.render(this.app, display.visibleContent, contentEl, this.markdownSourcePath(), this);
     }
     this.renderHiddenToolJson(item, display.hiddenToolBlocks, display.hasProcessFold);
-    this.renderChoiceCards(item, message, display.visibleContent);
+    this.renderChoiceCards(item, message, display.visibleContent, index === finalAssistantIndex);
     this.renderToolRuns(item, message);
   }
 
@@ -9008,20 +9011,23 @@ class CancipView extends ItemView {
     return pre;
   }
 
-  private renderChoiceCards(parent: HTMLElement, message: ChatMessage, content: string): void {
+  private renderChoiceCards(parent: HTMLElement, message: ChatMessage, content: string, isFinalAssistant: boolean): void {
     if (message.role !== "assistant") return;
-    const choices = extractChoiceOptions(content);
+    if (!isFinalAssistant || this.activeRequest) return;
+    const choices = finalChoiceOptions(content);
     if (!choices.length) return;
     const wrap = parent.createDiv({ cls: "obcc-choice-cards" });
     for (const choice of choices) {
       const button = wrap.createEl("button", {
         cls: "obcc-choice-card",
-        attr: { type: "button", title: this.t("chooseOption"), "aria-label": this.t("chooseOption") }
+        attr: { type: "button", title: choice.text, "aria-label": `${this.t("chooseOption")}: ${choice.text}` }
       });
+      setIcon(button.createSpan({ cls: "obcc-choice-icon" }), "corner-down-right");
       button.createSpan({ cls: "obcc-choice-text", text: choice.text });
       button.addEventListener("click", () => {
         this.inputEl.value = choice.text;
         this.resizeInput();
+        this.setStatus(this.t("choiceInserted"));
         this.focusInput();
       });
     }
@@ -11783,6 +11789,12 @@ function foldReasoningSections(content: string, hiddenToolBlocks: FoldedMessageB
   return kept.join("\n");
 }
 
+function finalChoiceOptions(content: string): ChoiceOption[] {
+  const explicit = extractChoiceOptions(content);
+  if (explicit.length) return explicit;
+  return fallbackChoiceOptions(content);
+}
+
 function extractChoiceOptions(content: string): ChoiceOption[] {
   const lines = content.split(/\r?\n/);
   const hasChoiceCue = lines.some((line) => /(?:下一步|建议|推荐|你可以|请选择|next step|recommended|suggest|choose|option|select|pick)/i.test(line));
@@ -11803,7 +11815,7 @@ function extractChoiceOptions(content: string): ChoiceOption[] {
       continue;
     }
     if (inNextStepSection && /^#{1,6}\s+\S/.test(trimmed) && !/(?:下一步|建议|推荐|Next|Suggest|Option)/i.test(trimmed)) break;
-    const match = trimmed.match(/^(?:(\d{1,2})[.)、]|([A-Ha-h])[.)]|[-*]\s+)\s*(.{2,160})$/);
+    const match = trimmed.match(/^(?:(\d{1,2})[.)、]|([A-Ha-h])[.)]|[-*]\s+)\s*(.{2,140})$/);
     if (!match) continue;
     const text = match[3].trim();
     if (!text || /^(https?:|```|\{|\[)/i.test(text)) continue;
@@ -11826,19 +11838,68 @@ function extractChoiceOptions(content: string): ChoiceOption[] {
 function looksLikeNextStepChoice(text: string): boolean {
   if (/[`{}[\]]/.test(text)) return false;
   if (looksLikePathQuery(text)) return false;
-  if (text.length > 72) return false;
-  return /^(?:继续|修复|检查|重试|总结|生成|打开|查看|应用|确认|取消|导出|保存|重新|补充|执行|测试|验证|Continue|Fix|Check|Retry|Summari[sz]e|Generate|Open|Review|Apply|Confirm|Cancel|Export|Save|Run|Test|Verify)\b/i.test(text)
-    || /(?:继续|修复|检查|重试|总结|生成|打开|查看|应用|确认|取消|导出|保存|重新|补充|执行|测试|验证|下一步)/.test(text);
+  if (text.length > 64) return false;
+  return /^(?:继续|修复|检查|重试|总结|生成|打开|查看|应用|确认|取消|导出|保存|重新|补充|执行|测试|验证|搜索|追问|提问|Continue|Fix|Check|Retry|Summari[sz]e|Generate|Open|Review|Apply|Confirm|Cancel|Export|Save|Run|Test|Verify|Search|Ask)\b/i.test(text)
+    || /(?:继续|修复|检查|重试|总结|生成|打开|查看|应用|确认|取消|导出|保存|重新|补充|执行|测试|验证|搜索|追问|提问|下一步)/.test(text);
 }
 
 function normalizeChoiceText(text: string): string {
-  const cleaned = text
+  let cleaned = text
+    .replace(/\[[^\]]+\]\([^)]+\)/g, (match) => match.replace(/^\[([^\]]+)\]\([^)]+\)$/, "$1"))
+    .replace(/[*_~#>]+/g, "")
+    .replace(/^\[[ x-]\]\s*/i, "")
+    .replace(/^(?:下一步|建议|推荐|推荐操作|推荐下一步|可选下一步|你可以|请选择|Next steps?|Recommended next steps?|Suggestions?|Options?)[:：]\s*/i, "")
     .replace(/\s+/g, " ")
     .replace(/[。；;,.，]+$/g, "")
     .trim();
+  cleaned = shortenChoiceText(cleaned);
   if (!cleaned || cleaned.length < 2) return "";
-  if (cleaned.length > 90) return "";
+  if (!isUsefulChoiceText(cleaned)) return "";
   return cleaned;
+}
+
+function shortenChoiceText(text: string): string {
+  let next = text.trim();
+  const colonIndex = next.search(/[：:]/);
+  if (colonIndex > 1 && next.length > 28) next = next.slice(0, colonIndex).trim();
+  next = next.split(/[。；;]/)[0].trim();
+  next = next.replace(/^(?:请|可以|你可以|建议|推荐|Please|You can|Recommended?)\s*/i, "").trim();
+  if (next.length <= 42) return next;
+  const separators = ["，", ",", "、", " - ", " — ", " – "];
+  for (const separator of separators) {
+    const index = next.indexOf(separator);
+    if (index > 4 && index <= 42) return next.slice(0, index).trim();
+  }
+  return next.length <= 48 ? next : "";
+}
+
+function isUsefulChoiceText(text: string): boolean {
+  if (!text || text.length > 48) return false;
+  if (/[`{}[\]]/.test(text)) return false;
+  if (looksLikePathQuery(text)) return false;
+  if (/^(?:read|write|patch|config|command|todo|automation|npm|git|gh|node|python|powershell|cmd)\b/i.test(text)) return false;
+  if (/^(?:https?:\/\/|[\w.-]+\/[\w./-]+$)/i.test(text)) return false;
+  if (/^(?:原因|说明|结果|路径|文件|失败原因|失败步骤|总耗时|Total elapsed)\b/i.test(text)) return false;
+  return looksLikeNextStepChoice(text) || /(?:下一步|继续|修复|检查|验证|总结|导出|重试|打开|查看|补充|确认|取消|搜索|追问|提问|fix|check|verify|retry|continue|summari[sz]e|export|open|review|search|ask)/i.test(text);
+}
+
+function fallbackChoiceOptions(content: string): ChoiceOption[] {
+  const compact = content.replace(/\s+/g, "");
+  const chinese = /[\u4e00-\u9fff]/.test(content);
+  let texts: string[];
+  if (/等待确认|待确认|确认后|approval|confirm/i.test(compact)) {
+    texts = chinese ? ["确认执行", "查看待确认操作", "取消这步"] : ["Confirm action", "Review pending action", "Cancel this step"];
+  } else if (/失败|没完成|未完成|还有步骤失败|报错|错误|blocked|failed|error|notcomplete|notdone/i.test(compact)) {
+    texts = chinese ? ["继续修复", "检查最新报错", "总结当前状态"] : ["Continue fixing", "Check latest error", "Summarize status"];
+  } else if (/已完成|已改动|已更新|完成|completed|done|updated/i.test(compact)) {
+    texts = chinese ? ["验证效果", "继续下一步", "导出会话"] : ["Verify result", "Continue next step", "Export session"];
+  } else {
+    texts = chinese ? ["继续追问", "总结要点", "搜索相关文件"] : ["Ask follow-up", "Summarize key points", "Search related files"];
+  }
+  return texts
+    .map((text, index) => ({ prefix: String(index + 1), text }))
+    .filter((choice) => isUsefulChoiceText(choice.text))
+    .slice(0, 3);
 }
 
 function normalizeToolRuns(raw: unknown): ToolRun[] {
