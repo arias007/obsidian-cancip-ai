@@ -8824,8 +8824,22 @@ class CancipView extends ItemView {
     for (const block of blocks) {
       const title = details.createDiv({ cls: "obcc-folded-block-title", text: block.title });
       title.setAttr("aria-hidden", "true");
-      details.createEl("pre", { text: redactSensitiveText(block.content) });
+      this.renderDeferredPre(details, block.content, undefined, PROCESS_DETAIL_MAX_CHARS);
     }
+  }
+
+  private renderDeferredPre(details: HTMLDetailsElement, content: string, cls?: string, maxChars = PROCESS_DETAIL_MAX_CHARS): HTMLPreElement {
+    const pre = cls ? details.createEl("pre", { cls }) : details.createEl("pre");
+    const load = () => {
+      if (pre.dataset.loaded === "true") return;
+      pre.setText(trimContext(redactSensitiveText(content), maxChars));
+      pre.dataset.loaded = "true";
+    };
+    if (details.open) load();
+    details.addEventListener("toggle", () => {
+      if (details.open) load();
+    });
+    return pre;
   }
 
   private renderChoiceCards(parent: HTMLElement, message: ChatMessage, content: string): void {
@@ -8871,7 +8885,7 @@ class CancipView extends ItemView {
         const details = row.createEl("details", { cls: "obcc-tool-run-details" });
         this.wireDetails(details, `tool-run:${message.id}:${run.id}`, run.status === "executing");
         details.createEl("summary", { cls: "obcc-tool-run-result-label", text: this.t("toolRunResult") });
-        details.createEl("pre", { cls: "obcc-tool-run-result", text: trimContext(redactSensitiveText(detail), TOOL_RESULT_DETAIL_MAX_CHARS) });
+        this.renderDeferredPre(details, detail, "obcc-tool-run-result", TOOL_RESULT_DETAIL_MAX_CHARS);
       }
     }
   }
