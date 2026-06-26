@@ -6,75 +6,6 @@
   overflow: hidden;
 }
 
-.obcc-statusbar {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 2px;
-  min-width: 0;
-  height: 18px;
-  padding: 0 2px;
-  cursor: pointer;
-  user-select: none;
-}
-
-.obcc-statusbar:hover,
-.obcc-statusbar:focus-visible {
-  color: var(--text-accent);
-}
-
-.obcc-statusbar-icon {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-}
-
-.obcc-statusbar-icon svg {
-  width: 14px;
-  height: 14px;
-}
-
-.obcc-statusbar-dot {
-  position: absolute;
-  top: -1px;
-  right: -2px;
-  display: none;
-  width: 7px;
-  height: 7px;
-  border: 1px solid var(--background-primary);
-  border-radius: 999px;
-  background: #2563eb;
-}
-
-.obcc-statusbar-badge {
-  display: none;
-  align-items: center;
-  justify-content: center;
-  margin-left: 1px;
-  min-width: 13px;
-  height: 13px;
-  padding: 0 3px;
-  border-radius: 999px;
-  background: #2563eb;
-  color: #fff;
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 13px;
-}
-
-.obcc-statusbar.has-chat-attention .obcc-statusbar-dot,
-.obcc-statusbar.has-review-attention .obcc-statusbar-badge {
-  display: inline-flex;
-}
-
-.obcc-statusbar-badge.is-large {
-  min-width: 17px;
-}
-
 .obcc-root {
   --obcc-footer-height: 72px;
   display: flex;
@@ -128,7 +59,7 @@
   height: 100%;
   min-height: 0;
   min-width: 0;
-  padding-bottom: 0;
+  padding-bottom: var(--obcc-footer-height);
   overflow: hidden;
   background: var(--background-primary);
   color: var(--text-normal);
@@ -158,9 +89,7 @@
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
-  width: min(100%, 100%);
   max-width: 100%;
-  overflow: hidden;
 }
 
 .obcc-title-line {
@@ -257,23 +186,13 @@
   display: inline-flex;
   flex: 0 1 auto;
   align-items: center;
-  justify-content: flex-end;
-  flex-wrap: nowrap;
   gap: 6px;
   min-width: 0;
-  max-width: min(52%, 238px);
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
-}
-
-.obcc-header-actions::-webkit-scrollbar {
-  display: none;
+  max-width: 100%;
 }
 
 .obcc-header-modes {
   display: inline-flex;
-  flex: 0 0 auto;
   align-items: center;
   gap: 4px;
   padding: 2px;
@@ -300,7 +219,6 @@
 
 .obcc-icon-button {
   display: inline-flex;
-  flex: 0 0 auto;
   align-items: center;
   justify-content: center;
   width: 34px;
@@ -830,12 +748,12 @@
 
 .obcc-choice-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 132px), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 136px), 1fr));
   align-items: flex-start;
   gap: 6px;
   margin-top: 8px;
   max-width: 100%;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .obcc-choice-card {
@@ -855,7 +773,7 @@
   color: var(--text-normal);
   text-align: left;
   white-space: normal;
-  overflow: hidden;
+  overflow: visible;
   box-sizing: border-box;
   line-height: 1.35;
 }
@@ -1006,11 +924,11 @@
 }
 
 .obcc-footer {
-  position: relative;
+  position: absolute;
   z-index: 80;
-  right: auto;
-  bottom: auto;
-  left: auto;
+  right: 0;
+  bottom: 0;
+  left: 0;
   flex: 0 0 auto;
   width: 100%;
   max-width: 100%;
@@ -1521,11 +1439,11 @@
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 0;
+  gap: 2px;
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  padding: 2px 6px 0;
+  padding: 4px 6px 3px;
   border: 1px solid var(--background-modifier-border);
   border-radius: 16px;
   background: var(--background-primary);
@@ -1534,28 +1452,20 @@
 
 .obcc-attachment-input {
   position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   opacity: 0;
-  pointer-events: none;
+  pointer-events: auto;
+  overflow: hidden;
+  cursor: pointer;
+  z-index: 2;
 }
 
 .obcc-attachment-button {
   position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  flex: 0 0 28px;
   cursor: pointer;
-  overflow: visible;
+  overflow: hidden;
 }
 
 .obcc-composer-context {
@@ -1705,16 +1615,16 @@
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  min-height: 28px;
+  min-height: 34px;
   max-height: 150px;
-  padding: 3px 38px 2px 6px;
+  padding: 5px 40px 4px 8px;
   border: 0;
   background: transparent;
   color: var(--text-normal);
   font-size: 14px;
   resize: none;
   outline: none;
-  line-height: 1.25;
+  line-height: 1.3;
 }
 
 .obcc-input::placeholder {
@@ -2014,7 +1924,7 @@
 
 .obcc-review-native-body {
   display: grid;
-  grid-template-columns: minmax(150px, 0.34fr) minmax(0, 1fr);
+  grid-template-columns: minmax(160px, 0.28fr) minmax(0, 1fr);
   gap: 8px;
   min-height: 0;
 }
@@ -2083,9 +1993,11 @@
 
 .obcc-review-detail {
   display: grid;
-  align-content: start;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  align-content: stretch;
   gap: 8px;
   padding-right: 2px;
+  overflow: hidden;
 }
 
 .obcc-review-item-head {
@@ -2100,7 +2012,7 @@
 .obcc-review-item-top {
   display: flex;
   align-items: start;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 8px;
   min-width: 0;
 }
@@ -2109,6 +2021,7 @@
   display: flex;
   gap: 6px;
   min-width: 0;
+  flex: 1 1 auto;
   overflow-wrap: anywhere;
   font-size: 12px;
   font-weight: 650;
@@ -2117,6 +2030,7 @@
 .obcc-review-mode-tabs {
   display: inline-flex;
   flex: 0 0 auto;
+  margin-left: 4px;
   gap: 3px;
   padding: 2px;
   border: 1px solid var(--background-modifier-border);
@@ -2125,23 +2039,13 @@
 }
 
 .obcc-review-mode-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 24px;
   min-height: 22px;
-  padding: 0;
+  padding: 2px 7px;
   border: 0;
   border-radius: 5px;
   background: transparent;
   color: var(--text-muted);
   font-size: 11px;
-}
-
-.obcc-review-mode-button svg {
-  width: 14px;
-  height: 14px;
 }
 
 .obcc-review-mode-button.is-active {
@@ -2187,7 +2091,7 @@
 .obcc-review-diff-row,
 .obcc-review-source-row {
   display: grid;
-  grid-template-columns: 38px 38px 20px minmax(0, 1fr);
+  grid-template-columns: 38px 38px minmax(0, 1fr);
   min-width: 0;
   border-bottom: 1px solid var(--background-modifier-border);
   font-family: var(--font-monospace);
@@ -2199,50 +2103,11 @@
   grid-template-columns: 38px minmax(0, 1fr);
 }
 
-.obcc-review-diff-row.is-context {
-  background: var(--background-primary);
-}
-
-.obcc-review-diff-row.is-added {
-  background: rgba(34, 197, 94, 0.16);
-}
-
-.obcc-review-diff-row.is-removed {
-  background: rgba(239, 68, 68, 0.14);
-}
-
-.theme-dark .obcc-review-diff-row.is-added {
-  background: rgba(34, 197, 94, 0.22);
-}
-
-.theme-dark .obcc-review-diff-row.is-removed {
-  background: rgba(239, 68, 68, 0.2);
-}
-
 .obcc-review-line-no {
   padding: 3px 4px;
   color: var(--text-faint);
-  background: rgba(0, 0, 0, 0.025);
-  border-right: 1px solid var(--background-modifier-border);
   text-align: right;
   user-select: none;
-}
-
-.obcc-review-diff-prefix {
-  padding: 3px 4px;
-  color: var(--text-muted);
-  text-align: center;
-  user-select: none;
-}
-
-.obcc-review-diff-row.is-added .obcc-review-diff-prefix {
-  color: #15803d;
-  font-weight: 700;
-}
-
-.obcc-review-diff-row.is-removed .obcc-review-diff-prefix {
-  color: #b91c1c;
-  font-weight: 700;
 }
 
 .obcc-review-diff-row pre,
@@ -2252,6 +2117,14 @@
   overflow: visible;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.obcc-review-diff-row.is-added pre {
+  background: rgba(34, 197, 94, 0.14);
+}
+
+.obcc-review-diff-row.is-removed pre {
+  background: rgba(239, 68, 68, 0.12);
 }
 
 .obcc-review-no-diff {
@@ -2264,6 +2137,9 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
 }
 
 .obcc-review-render-body {
@@ -2280,11 +2156,16 @@
   border: 1px solid var(--background-modifier-border);
   border-radius: 8px;
   background: var(--background-primary);
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  box-shadow: 0 -8px 18px rgba(0, 0, 0, 0.08);
 }
 
 .obcc-review-correction-input {
   width: 100%;
-  min-height: 64px;
+  min-height: 52px;
+  max-height: 104px;
   resize: vertical;
   padding: 7px 8px;
   border: 1px solid var(--background-modifier-border);
@@ -2340,583 +2221,13 @@
   color: var(--text-muted);
 }
 
-.obcc-review-leaf {
-  display: flex;
-  width: 100%;
-  height: 100%;
-  min-width: 0;
-  min-height: 0;
-  padding: 0;
-  overflow: hidden;
-  background: var(--background-primary);
-  color: var(--text-normal);
-}
-
-.obcc-review-leaf-shell {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  width: 100%;
-  height: 100%;
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.obcc-review-leaf-shell:has(.obcc-review-detail-view) {
-  grid-template-rows: minmax(0, 1fr);
-}
-
-.obcc-review-leaf-shell:has(.obcc-review-detail-view) > .obcc-review-leaf-head {
-  display: none;
-}
-
-.obcc-review-leaf-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  min-width: 0;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--background-modifier-border);
-  background: var(--background-primary);
-}
-
-.obcc-review-leaf-title,
-.obcc-review-detail-title,
-.obcc-review-detail-title-wrap {
-  min-width: 0;
-}
-
-.obcc-review-leaf-actions {
-  display: flex;
-  align-items: center;
-  flex: 0 0 auto;
-  gap: 4px;
-}
-
-.obcc-review-icon-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  width: 30px;
-  height: 30px;
-  padding: 0;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 7px;
-  background: var(--background-secondary);
-  color: var(--text-normal);
-}
-
-.obcc-review-icon-button svg {
-  width: 16px;
-  height: 16px;
-}
-
-.obcc-review-leaf-body {
-  display: grid;
-  grid-template-columns: 1fr;
-  min-width: 0;
-  min-height: 0;
-  padding: 8px;
-  overflow: hidden;
-}
-
-.obcc-review-file-nav {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  width: 100%;
-  height: 100%;
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 8px;
-  background: var(--background-primary);
-}
-
-.obcc-review-file-nav.is-page {
-  max-width: 920px;
-  margin: 0 auto;
-}
-
-.obcc-review-file-nav-head {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-  padding: 8px;
-  border-bottom: 1px solid var(--background-modifier-border);
-  background: var(--background-secondary);
-}
-
-.obcc-review-file-nav-tree {
-  display: grid;
-  align-content: start;
-  gap: 2px;
-  min-width: 0;
-  min-height: 0;
-  padding: 5px;
-  overflow: auto;
-  overscroll-behavior: contain;
-}
-
-.obcc-review-nav-folder {
-  min-width: 0;
-}
-
-.obcc-review-nav-folder > summary {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  min-height: 28px;
-  padding: 4px 5px;
-  border-radius: 6px;
-  cursor: pointer;
-  color: var(--text-muted);
-  font-size: 11.5px;
-}
-
-.obcc-review-nav-folder > summary:hover {
-  background: var(--background-modifier-hover);
-  color: var(--text-normal);
-}
-
-.obcc-review-nav-files {
-  display: grid;
-  gap: 1px;
-  margin-left: 10px;
-  padding: 1px 0 4px;
-}
-
-.obcc-review-nav-file {
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1fr);
-  gap: 5px;
-  min-width: 0;
-  min-height: 30px;
-  padding: 4px 5px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-normal);
-  text-align: left;
-}
-
-.obcc-review-nav-file:hover,
-.obcc-review-nav-file.is-active {
-  background: var(--background-modifier-hover);
-}
-
-.obcc-review-nav-file.is-active {
-  color: var(--text-accent);
-}
-
-.obcc-review-nav-file.is-changed .obcc-review-file-icon {
-  color: var(--interactive-accent);
-}
-
-.obcc-review-workspace {
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.obcc-review-folder-view {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 8px;
-  width: 100%;
-  height: 100%;
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.obcc-review-folder-tree {
-  display: grid;
-  align-content: start;
-  gap: 8px;
-  min-height: 0;
-  overflow: auto;
-  overscroll-behavior: contain;
-  padding-right: 2px;
-}
-
-.obcc-review-folder-group {
-  min-width: 0;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 8px;
-  background: var(--background-primary);
-  overflow: hidden;
-}
-
-.obcc-review-folder-group > summary {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  min-width: 0;
-  min-height: 32px;
-  padding: 6px 8px;
-  cursor: pointer;
-  background: var(--background-secondary);
-  font-size: 12px;
-  font-weight: 650;
-}
-
-.obcc-review-folder-icon svg {
-  width: 15px;
-  height: 15px;
-}
-
-.obcc-review-folder-name {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.obcc-review-folder-count {
-  flex: 0 0 auto;
-  color: var(--text-muted);
-  font-size: 11px;
-}
-
-.obcc-review-file-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 6px;
-  padding: 8px;
-}
-
-.obcc-review-file-card {
-  display: grid;
-  grid-template-columns: 20px minmax(0, 1fr);
-  gap: 7px;
-  min-width: 0;
-  min-height: 58px;
-  padding: 8px;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 8px;
-  background: var(--background-primary);
-  color: var(--text-normal);
-  text-align: left;
-}
-
-.obcc-review-file-card.is-changed {
-  border-color: color-mix(in srgb, var(--interactive-accent) 50%, var(--background-modifier-border));
-}
-
-.obcc-review-file-card:hover,
-.obcc-review-icon-button:hover,
-.obcc-review-package:hover {
-  background: var(--background-modifier-hover);
-}
-
-.obcc-review-file-card.is-changed .obcc-review-file-icon {
-  color: var(--interactive-accent);
-}
-
-.obcc-review-file-badges {
-  grid-column: 2;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 4px;
-}
-
-.obcc-review-file-badges span {
-  padding: 1px 5px;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 999px;
-  color: var(--text-muted);
-  font-size: 10px;
-}
-
-.obcc-review-detail-view {
-  display: grid;
-  grid-template-columns: 38px minmax(0, 1fr);
-  gap: 5px;
-  width: 100%;
-  height: 100%;
-  min-width: 0;
-  min-height: 0;
-  padding: 4px 4px max(34px, env(safe-area-inset-bottom));
-  overflow: hidden;
-}
-
-.obcc-review-detail-rail {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 5px;
-  min-width: 0;
-  min-height: 0;
-  padding: 3px;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 8px;
-  background: var(--background-primary);
-  overflow: hidden auto;
-  overscroll-behavior: contain;
-}
-
-.obcc-review-detail-rail .obcc-review-icon-button {
-  width: 30px;
-  height: 30px;
-  min-width: 30px;
-  min-height: 30px;
-  padding: 0;
-}
-
-.obcc-review-detail-rail-info {
-  display: flex;
-  align-items: stretch;
-  justify-content: center;
-  flex: 1 1 auto;
-  width: 100%;
-  min-width: 0;
-  min-height: 0;
-  padding: 2px;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 7px;
-  background: var(--background-secondary);
-  overflow: hidden;
-}
-
-.obcc-review-detail-rail-text {
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-  writing-mode: sideways-lr;
-  text-orientation: mixed;
-  white-space: nowrap;
-  color: var(--text-muted);
-  font-size: 9.5px;
-  font-weight: 600;
-  line-height: 1.15;
-  text-overflow: ellipsis;
-}
-
-.obcc-review-detail-rail .obcc-review-icon-button.is-active {
-  color: var(--text-on-accent);
-  background: var(--interactive-accent);
-  border-color: var(--interactive-accent);
-}
-
-.obcc-review-detail-rail .obcc-review-icon-button.is-disabled,
-.obcc-review-detail-rail .obcc-review-icon-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.38;
-}
-
-.obcc-review-detail-content {
-  position: relative;
-  display: grid;
-  grid-template-rows: minmax(0, 1fr);
-  gap: 0;
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.obcc-review-detail-head {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  align-items: center;
-  min-width: 0;
-  padding: 4px 7px;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 8px;
-  background: var(--background-primary);
-}
-
-.obcc-review-detail-file {
-  display: grid;
-  min-width: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--text-normal);
-  text-align: left;
-}
-
-.obcc-review-detail-file:hover,
-.obcc-review-detail-file:focus-visible {
-  color: var(--text-accent);
-}
-
-.obcc-review-detail-title {
-  display: grid;
-  min-width: 0;
-}
-
-.obcc-review-detail-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 4px;
-  min-width: 0;
-}
-
-.obcc-review-detail-title .obcc-review-file-name,
-.obcc-review-detail-title .obcc-review-file-path {
-  overflow: hidden;
-  max-width: 100%;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.obcc-review-detail-main {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 5px;
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.obcc-review-changes {
-  min-height: 0;
-}
-
-.obcc-review-changes-body {
-  display: grid;
-  gap: 5px;
-  min-height: 0;
-  padding: 5px;
-  overflow: auto;
-  overscroll-behavior: contain;
-}
-
-.obcc-review-changes[open] .obcc-review-changes-body {
-  height: min(46vh, 520px);
-  max-height: calc(100dvh - 150px);
-}
-
-.obcc-review-changes:not([open]) {
-  align-self: start;
-}
-
-.obcc-review-changes:not([open]) .obcc-review-changes-body {
-  display: none;
-}
-
-.obcc-review-detail-view .obcc-review-diff,
-.obcc-review-detail-view .obcc-review-source-body,
-.obcc-review-detail-view .obcc-review-render-body {
-  max-height: none;
-  min-height: 0;
-  overflow: auto;
-}
-
-.obcc-review-sources-paired {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 0;
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-  border: 2px solid var(--background-modifier-border);
-  border-radius: 9px;
-  background: var(--background-modifier-border);
-}
-
-.obcc-review-source-pane {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  width: 100%;
-  min-width: 0;
-  min-height: 0;
-  border: 0;
-  border-radius: 0;
-  background: var(--background-primary);
-  overflow: hidden;
-}
-
-.obcc-review-sources-paired .obcc-review-source-pane + .obcc-review-source-pane {
-  border-left: 3px solid color-mix(in srgb, var(--interactive-accent) 62%, var(--background-modifier-border));
-}
-
-.obcc-review-source-title {
-  min-height: 18px;
-  padding: 2px 6px;
-  border-bottom: 1px solid var(--background-modifier-border);
-  background: var(--background-secondary);
-  font-size: 11px;
-  font-weight: 650;
-}
-
-.obcc-review-source-pane.is-emphasized .obcc-review-source-title {
-  min-height: 18px;
-  padding-top: 2px;
-  padding-bottom: 2px;
-}
-
-.obcc-review-source-pane .obcc-review-source-body,
-.obcc-review-source-pane .obcc-review-render-body {
-  height: 100%;
-}
-
-.obcc-review-source-pane .obcc-review-source-body pre,
-.obcc-review-source-pane .obcc-review-render-body pre {
-  line-height: 1.16;
-}
-
-.obcc-review-source-row.is-padding {
-  opacity: 0.42;
-}
-
-.obcc-review-detail-content > .obcc-review-correction {
-  position: absolute;
-  right: 6px;
-  bottom: 0;
-  left: 6px;
-  z-index: 5;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: stretch;
-  gap: 6px;
-  min-width: 0;
-  max-height: 48px;
-  padding: 5px;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 8px;
-  background: var(--background-primary);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.28);
-  overflow: hidden;
-}
-
-.obcc-review-detail-content > .obcc-review-correction.is-hidden {
-  display: none;
-}
-
-.obcc-review-detail-content .obcc-review-correction-input {
-  height: 30px;
-  min-height: 30px;
-  max-height: 30px;
-  overflow-y: auto;
-  line-height: 1.25;
-  resize: none;
-}
-
-.obcc-review-detail-content .obcc-review-correction-button {
-  min-height: 30px;
-  max-height: 30px;
-  padding-top: 4px;
-  padding-bottom: 4px;
-  white-space: nowrap;
-}
-
 .obcc-history-popover.is-audit {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   gap: 8px;
-  width: min(760px, calc(100% - 12px));
-  height: min(82vh, calc(100% - var(--obcc-footer-height) - 24px));
-  max-height: min(82vh, calc(100% - 16px));
+  width: min(980px, calc(100% - 8px));
+  height: min(92vh, calc(100% - var(--obcc-footer-height) - 12px));
+  max-height: min(92vh, calc(100% - 8px));
   overflow: hidden;
   background: var(--background-primary);
   color: var(--text-normal);
@@ -2993,19 +2304,22 @@
   }
 
   .obcc-footer {
-    padding: 0 4px max(0px, env(safe-area-inset-bottom) - 16px);
+    bottom: 0;
+    padding: 0 4px max(0px, env(safe-area-inset-bottom) - 18px);
   }
 
   .obcc-composer {
     border-radius: 15px;
-    padding: 1px 5px 0;
-    margin-bottom: -2px;
+    padding: 4px 6px 3px;
+    margin-bottom: -3px;
+    gap: 2px;
   }
 
   .obcc-input {
-    min-height: 28px;
-    padding: 3px 37px 2px 6px;
-    line-height: 1.25;
+    min-height: 34px;
+    max-height: 132px;
+    padding: 5px 40px 4px 8px;
+    line-height: 1.3;
   }
 
   .obcc-composer-bar {
@@ -3018,8 +2332,8 @@
     bottom: calc(var(--obcc-footer-height) + max(4px, env(safe-area-inset-bottom)));
     left: 4px;
     width: auto;
-    height: min(78vh, calc(100% - var(--obcc-footer-height) - 10px));
-    max-height: min(78vh, calc(100% - 10px));
+    height: min(88vh, calc(100% - var(--obcc-footer-height) - 8px));
+    max-height: min(88vh, calc(100% - 8px));
     border-radius: 14px;
   }
 
@@ -3028,100 +2342,8 @@
     grid-template-columns: 1fr;
   }
 
-  .obcc-review-leaf-head {
-    align-items: start;
-    padding: 7px;
-  }
-
-  .obcc-review-leaf-body {
-    gap: 6px;
-    padding: 6px;
-  }
-
-  .obcc-review-file-nav {
-    min-height: 0;
-  }
-
-  .obcc-review-file-nav-tree {
-    padding: 4px;
-  }
-
-  .obcc-review-package {
-    max-width: 142px;
-  }
-
-  .obcc-review-stats {
-    justify-content: flex-start;
-  }
-
-  .obcc-review-file-grid {
-    grid-template-columns: 1fr;
-    padding: 6px;
-  }
-
-  .obcc-review-detail-view {
-    grid-template-columns: 38px minmax(0, 1fr);
-    gap: 4px;
-    padding: 3px 3px max(56px, env(safe-area-inset-bottom));
-  }
-
-  .obcc-review-detail-rail {
-    gap: 4px;
-    padding: 2px;
-  }
-
-  .obcc-review-detail-rail-info {
-    padding: 2px;
-  }
-
-  .obcc-review-detail-rail .obcc-review-icon-button {
-    width: 30px;
-    height: 30px;
-    min-width: 30px;
-    min-height: 30px;
-  }
-
-  .obcc-review-sources-paired {
-    grid-template-columns: 1fr;
-  }
-
-  .obcc-review-sources-paired .obcc-review-source-pane + .obcc-review-source-pane {
-    border-top: 3px solid color-mix(in srgb, var(--interactive-accent) 62%, var(--background-modifier-border));
-    border-left: 0;
-  }
-
-  .obcc-review-source-pane {
-    min-height: min(31vh, 250px);
-  }
-
-  .obcc-review-changes[open] .obcc-review-changes-body {
-    height: calc(100dvh - 164px);
-    max-height: calc(100dvh - 164px);
-  }
-
-  .obcc-review-detail-content > .obcc-review-correction {
-    grid-template-columns: minmax(0, 1fr) auto;
-    right: 5px;
-    bottom: 0;
-    left: 5px;
-    max-height: 46px;
-    padding: 4px;
-  }
-
-  .obcc-review-detail-content .obcc-review-correction-input {
-    height: 30px;
-    min-height: 30px;
-    max-height: 30px;
-  }
-
-  .obcc-review-detail-content .obcc-review-correction-button {
-    min-height: 30px;
-    max-height: 30px;
-    padding: 4px 7px;
-  }
-
-  .obcc-review-diff-row {
-    grid-template-columns: 30px 30px 16px minmax(0, 1fr);
+  .obcc-review-native-body {
+    grid-template-rows: minmax(82px, auto) minmax(0, 1fr);
   }
 
   .obcc-review-item-top {
@@ -3134,13 +2356,26 @@
   }
 
   .obcc-review-file-list {
-    max-height: 132px;
+    max-height: 118px;
   }
 
   .obcc-review-diff,
   .obcc-review-source-body,
   .obcc-review-render-body {
-    max-height: 32vh;
+    max-height: 44vh;
+  }
+
+  .obcc-review-correction {
+    padding: 7px;
+  }
+
+  .obcc-review-correction-input {
+    min-height: 48px;
+    max-height: 88px;
+  }
+
+  .obcc-choice-cards {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 144px), 1fr));
   }
 
   .obcc-panel-actions {
@@ -3208,24 +2443,6 @@
   .obcc-model-effort {
     display: none;
   }
-}
-
-.obcc-review-changes {
-  display: grid;
-  grid-template-rows: minmax(0, 1fr);
-  min-height: 0;
-}
-
-.obcc-review-changes > summary {
-  display: none;
-}
-
-.obcc-review-changes-body {
-  padding: 0;
-}
-
-.obcc-review-changes .obcc-review-diff {
-  max-height: none;
 }
 
 @media (max-width: 330px) {
@@ -3370,29 +2587,13 @@
 }
 
 @media (max-width: 640px) {
-  .obcc-review-leaf-body {
-    grid-template-columns: 1fr;
-  }
-
-  .obcc-review-detail-head {
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    gap: 6px;
-  }
-
   .obcc-header {
     min-height: 48px;
     padding: 8px 10px;
-    gap: 5px;
-  }
-
-  .obcc-title-wrap {
-    flex: 1 1 0;
-    max-width: calc(100% - 136px);
   }
 
   .obcc-header-actions {
     gap: 4px;
-    max-width: none;
   }
 
   .obcc-header-modes {
@@ -3406,26 +2607,8 @@
   }
 
   .obcc-header-actions .obcc-icon-button {
-    width: 28px;
-    height: 28px;
-  }
-
-  .obcc-command-popover.is-add {
-    right: 4px;
-    left: 4px;
-    width: auto;
-    max-width: none;
-    flex-wrap: wrap;
-    overflow-x: hidden;
-    overflow-y: auto;
-    max-height: min(46vh, 320px);
-  }
-
-  .obcc-mention-popover {
-    right: 4px;
-    left: 4px;
-    bottom: calc(var(--obcc-footer-height) + max(54px, env(safe-area-inset-bottom)));
-    max-height: 164px;
+    width: 30px;
+    height: 30px;
   }
 
   .obcc-messages {

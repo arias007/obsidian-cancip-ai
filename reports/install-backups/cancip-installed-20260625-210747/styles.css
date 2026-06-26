@@ -128,7 +128,7 @@
   height: 100%;
   min-height: 0;
   min-width: 0;
-  padding-bottom: 0;
+  padding-bottom: var(--obcc-footer-height);
   overflow: hidden;
   background: var(--background-primary);
   color: var(--text-normal);
@@ -158,9 +158,7 @@
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
-  width: min(100%, 100%);
   max-width: 100%;
-  overflow: hidden;
 }
 
 .obcc-title-line {
@@ -257,23 +255,13 @@
   display: inline-flex;
   flex: 0 1 auto;
   align-items: center;
-  justify-content: flex-end;
-  flex-wrap: nowrap;
   gap: 6px;
   min-width: 0;
-  max-width: min(52%, 238px);
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
-}
-
-.obcc-header-actions::-webkit-scrollbar {
-  display: none;
+  max-width: 100%;
 }
 
 .obcc-header-modes {
   display: inline-flex;
-  flex: 0 0 auto;
   align-items: center;
   gap: 4px;
   padding: 2px;
@@ -300,7 +288,6 @@
 
 .obcc-icon-button {
   display: inline-flex;
-  flex: 0 0 auto;
   align-items: center;
   justify-content: center;
   width: 34px;
@@ -1006,11 +993,11 @@
 }
 
 .obcc-footer {
-  position: relative;
+  position: absolute;
   z-index: 80;
-  right: auto;
-  bottom: auto;
-  left: auto;
+  right: 0;
+  bottom: 0;
+  left: 0;
   flex: 0 0 auto;
   width: 100%;
   max-width: 100%;
@@ -1536,24 +1523,13 @@
   position: absolute;
   width: 1px;
   height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
   opacity: 0;
   pointer-events: none;
+  overflow: hidden;
 }
 
 .obcc-attachment-button {
   position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  flex: 0 0 28px;
   cursor: pointer;
   overflow: visible;
 }
@@ -2872,7 +2848,7 @@
 .obcc-review-detail-content > .obcc-review-correction {
   position: absolute;
   right: 6px;
-  bottom: 0;
+  bottom: max(44px, env(safe-area-inset-bottom));
   left: 6px;
   z-index: 5;
   display: grid;
@@ -2880,13 +2856,11 @@
   align-items: stretch;
   gap: 6px;
   min-width: 0;
-  max-height: 48px;
-  padding: 5px;
+  padding: 6px;
   border: 1px solid var(--background-modifier-border);
   border-radius: 8px;
   background: var(--background-primary);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.28);
-  overflow: hidden;
 }
 
 .obcc-review-detail-content > .obcc-review-correction.is-hidden {
@@ -2894,17 +2868,14 @@
 }
 
 .obcc-review-detail-content .obcc-review-correction-input {
-  height: 30px;
-  min-height: 30px;
-  max-height: 30px;
-  overflow-y: auto;
+  min-height: 32px;
+  max-height: 82px;
   line-height: 1.25;
-  resize: none;
+  resize: vertical;
 }
 
 .obcc-review-detail-content .obcc-review-correction-button {
-  min-height: 30px;
-  max-height: 30px;
+  min-height: 32px;
   padding-top: 4px;
   padding-bottom: 4px;
   white-space: nowrap;
@@ -2993,6 +2964,7 @@
   }
 
   .obcc-footer {
+    bottom: 0;
     padding: 0 4px max(0px, env(safe-area-inset-bottom) - 16px);
   }
 
@@ -3102,21 +3074,17 @@
   .obcc-review-detail-content > .obcc-review-correction {
     grid-template-columns: minmax(0, 1fr) auto;
     right: 5px;
-    bottom: 0;
+    bottom: max(64px, env(safe-area-inset-bottom));
     left: 5px;
-    max-height: 46px;
-    padding: 4px;
+    padding: 5px;
   }
 
   .obcc-review-detail-content .obcc-review-correction-input {
-    height: 30px;
-    min-height: 30px;
-    max-height: 30px;
+    min-height: 34px;
   }
 
   .obcc-review-detail-content .obcc-review-correction-button {
-    min-height: 30px;
-    max-height: 30px;
+    min-height: 34px;
     padding: 4px 7px;
   }
 
@@ -3382,17 +3350,10 @@
   .obcc-header {
     min-height: 48px;
     padding: 8px 10px;
-    gap: 5px;
-  }
-
-  .obcc-title-wrap {
-    flex: 1 1 0;
-    max-width: calc(100% - 136px);
   }
 
   .obcc-header-actions {
     gap: 4px;
-    max-width: none;
   }
 
   .obcc-header-modes {
@@ -3406,26 +3367,8 @@
   }
 
   .obcc-header-actions .obcc-icon-button {
-    width: 28px;
-    height: 28px;
-  }
-
-  .obcc-command-popover.is-add {
-    right: 4px;
-    left: 4px;
-    width: auto;
-    max-width: none;
-    flex-wrap: wrap;
-    overflow-x: hidden;
-    overflow-y: auto;
-    max-height: min(46vh, 320px);
-  }
-
-  .obcc-mention-popover {
-    right: 4px;
-    left: 4px;
-    bottom: calc(var(--obcc-footer-height) + max(54px, env(safe-area-inset-bottom)));
-    max-height: 164px;
+    width: 30px;
+    height: 30px;
   }
 
   .obcc-messages {
