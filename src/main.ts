@@ -4652,6 +4652,8 @@ class CancipReviewLeafView extends ItemView {
   private packagePath = "";
   private selectedItemPath = "";
   private sourceMode: "source" | "render" = "source";
+  private keyboardLockHeight = 0;
+  private keyboardLockedElements: HTMLElement[] = [];
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -4697,7 +4699,31 @@ class CancipReviewLeafView extends ItemView {
     return this.packagePath || "cancip-review";
   }
 
+  private lockReviewKeyboardLayout(elements: HTMLElement[]): void {
+    if (!this.keyboardLockHeight) {
+      const root = this.containerEl.children[1] as HTMLElement | undefined;
+      const rect = root?.getBoundingClientRect();
+      this.keyboardLockHeight = Math.max(0, Math.floor(rect?.height ?? 0));
+    }
+    if (!this.keyboardLockHeight) return;
+    this.keyboardLockedElements = elements;
+    for (const el of elements) {
+      el.addClass("is-keyboard-layout-locked");
+      el.style.setProperty("--obcc-review-keyboard-lock-height", `${this.keyboardLockHeight}px`);
+    }
+  }
+
+  private unlockReviewKeyboardLayout(): void {
+    for (const el of this.keyboardLockedElements) {
+      el.removeClass("is-keyboard-layout-locked");
+      el.style.removeProperty("--obcc-review-keyboard-lock-height");
+    }
+    this.keyboardLockedElements = [];
+  }
+
   private async render(): Promise<void> {
+    this.unlockReviewKeyboardLayout();
+    this.keyboardLockHeight = 0;
     const root = this.containerEl.children[1];
     root.empty();
     root.addClass("obcc-review-leaf");
@@ -4846,7 +4872,10 @@ class CancipReviewLeafView extends ItemView {
   }
 
   private renderReviewDetail(parent: HTMLElement, data: ReviewGatePackageData, item: ReviewGateManifestItem, index: number, total: number): void {
-    this.containerEl.children[1].addClass("has-review-detail");
+    const root = this.containerEl.children[1] as HTMLElement;
+    root.addClass("has-review-detail");
+    const body = parent.closest(".obcc-review-leaf-body") as HTMLElement | null;
+    const shell = parent.closest(".obcc-review-leaf-shell") as HTMLElement | null;
     const detail = parent.createDiv({ cls: "obcc-review-detail-view" });
     const toolbar = detail.createDiv({ cls: "obcc-review-detail-rail" });
     const content = detail.createDiv({ cls: "obcc-review-detail-content" });
@@ -4959,6 +4988,9 @@ class CancipReviewLeafView extends ItemView {
     setIcon(correctionSubmitButton.createSpan({ cls: "obcc-command-icon" }), "edit-3");
     correctionSubmitButton.createSpan({ text: this.t("reviewGateCorrection") });
     const syncCorrectionButton = bindReviewCorrectionInput(correctionInput, correctionSubmitButton, true);
+    const keyboardLockTargets = [root, shell, body, detail].filter((el): el is HTMLElement => Boolean(el));
+    correctionInput.addEventListener("focus", () => this.lockReviewKeyboardLayout(keyboardLockTargets));
+    correctionInput.addEventListener("blur", () => this.unlockReviewKeyboardLayout());
     const setCorrectionOpen = (open: boolean) => {
       correction.toggleClass("is-hidden", !open);
       editCorrectionButton.toggleClass("is-active", open);
@@ -4966,6 +4998,7 @@ class CancipReviewLeafView extends ItemView {
       if (!open) {
         correctionInput.value = "";
         syncCorrectionButton();
+        this.unlockReviewKeyboardLayout();
       }
     };
 

@@ -1,9 +1,21 @@
 .workspace-leaf-content[data-type="cancip-view"],
+.workspace-leaf-content[data-type="cancip-review-view"],
+.workspace-leaf-content[data-type="cancip-review-view"] .view-content,
 .workspace-leaf-content[data-type="cancip-view"] .view-content {
   position: relative;
   height: 100%;
   min-height: 0;
   overflow: hidden;
+}
+
+.obcc-review-leaf.is-keyboard-layout-locked,
+.obcc-review-leaf-shell.is-keyboard-layout-locked,
+.obcc-review-leaf-body.is-keyboard-layout-locked,
+.obcc-review-detail-view.is-keyboard-layout-locked {
+  height: var(--obcc-review-keyboard-lock-height) !important;
+  max-height: var(--obcc-review-keyboard-lock-height) !important;
+  min-height: var(--obcc-review-keyboard-lock-height) !important;
+  overflow: hidden !important;
 }
 
 .obcc-statusbar {
@@ -2363,6 +2375,7 @@ input.obcc-review-correction-input {
   min-height: 0;
   padding: 0;
   overflow: hidden;
+  overflow-anchor: none;
   background: var(--background-primary);
   color: var(--text-normal);
 }
@@ -2375,6 +2388,7 @@ input.obcc-review-correction-input {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  overflow-anchor: none;
 }
 
 .obcc-review-leaf.has-review-detail .obcc-review-leaf-shell {
@@ -2435,6 +2449,7 @@ input.obcc-review-correction-input {
   min-height: 0;
   padding: 8px;
   overflow: hidden;
+  overflow-anchor: none;
 }
 
 .obcc-review-file-nav {
@@ -3072,15 +3087,15 @@ input.obcc-review-correction-input {
   .obcc-review-detail-view {
     grid-template-columns: 38px minmax(0, 1fr);
     gap: 4px;
-    height: auto;
-    min-height: 100%;
+    height: 100%;
+    min-height: 0;
     padding: 3px 3px max(18px, env(safe-area-inset-bottom));
-    overflow: visible;
+    overflow: hidden;
     overflow-anchor: none;
   }
 
   .obcc-review-detail-rail {
-    max-height: calc(100vh - 18px);
+    max-height: 100%;
     gap: 4px;
     padding: 2px;
     overflow: hidden auto;
@@ -3092,6 +3107,7 @@ input.obcc-review-correction-input {
     overflow: auto;
     overscroll-behavior: auto;
     padding-bottom: max(88px, env(safe-area-inset-bottom) + 72px);
+    scroll-padding-bottom: 0;
   }
 
   .obcc-review-detail-main {
@@ -3105,6 +3121,10 @@ input.obcc-review-correction-input {
     position: static;
     margin-top: 6px;
     margin-bottom: 8px;
+  }
+
+  input.obcc-review-correction-input {
+    scroll-margin-bottom: 0;
   }
 
   .obcc-review-detail-content > .obcc-review-correction.is-hidden {
