@@ -4065,7 +4065,7 @@ export default class CancipPlugin extends Plugin {
     if (configured !== "auto") {
       return [configured];
     }
-    return Platform.isAndroidApp ? ["android-system", "web-speech", "custom-url"] : ["web-speech", "android-system", "custom-url"];
+    return Platform.isMobileApp ? ["web-speech", "android-system", "custom-url"] : ["web-speech", "android-system", "custom-url"];
   }
 
   private async startTtsWithProvider(provider: TtsProvider, text: string): Promise<boolean> {
@@ -4076,7 +4076,23 @@ export default class CancipPlugin extends Plugin {
       return false;
     }
     if (provider === "android-system") return await this.startAndroidSystemTts(text);
-    if (provider === "web-speech") return this.startWebSpeechTts(text);
+    if (provider === "web-speech") {
+      if (!this.startWebSpeechTts(text)) return false;
+      if (!Platform.isMobileApp) return true;
+      const started = await this.waitForWebSpeechStart();
+      if (started) return true;
+      try {
+        window.speechSynthesis?.cancel();
+      } catch {
+        // Best effort before trying the next provider.
+      }
+      this.activeUtterance = null;
+      this.activeTtsParts = [];
+      this.activeTtsPartIndex = 0;
+      this.activeTtsLastError = this.activeTtsLastError || "Web Speech did not start on this mobile WebView";
+      this.activeTtsStartedAudio = false;
+      return false;
+    }
     if (provider === "custom-url") return await this.startCustomUrlTts(text, "custom-url");
     return false;
   }
@@ -4106,20 +4122,40 @@ export default class CancipPlugin extends Plugin {
     if (!synth || typeof SpeechSynthesisUtterance === "undefined") return false;
     this.activeTtsProvider = "web-speech";
     this.activeTtsMode = "playing";
-    this.activeTtsStartedAudio = true;
+    this.activeTtsStartedAudio = false;
     this.activeTtsParts = splitTtsText(text, Math.max(200, Math.min(1800, this.settings.ttsChunkChars || 900)));
     this.activeTtsPartIndex = 0;
-    const voices = synth.getVoices?.() ?? [];
-    if (Platform.isMobileApp && !voices.length) {
-      this.ttsVoiceWarmupTimer = window.setTimeout(() => {
-        this.ttsVoiceWarmupTimer = null;
-        if (this.activeTtsParts.length) this.speakNextTtsPart();
-      }, Platform.isAndroidApp ? 80 : 250);
+    try {
+      synth.cancel();
+      synth.resume();
       synth.getVoices?.();
-      return true;
+    } catch {
+      // Some mobile WebViews throw while the speech service is warming up.
     }
     this.speakNextTtsPart();
     return true;
+  }
+
+  private waitForWebSpeechStart(): Promise<boolean> {
+    return new Promise((resolve) => {
+      const started = () => Boolean(this.activeTtsStartedAudio || window.speechSynthesis?.speaking);
+      if (started()) {
+        resolve(true);
+        return;
+      }
+      const startedAt = Date.now();
+      const timer = window.setInterval(() => {
+        if (started()) {
+          window.clearInterval(timer);
+          resolve(true);
+          return;
+        }
+        if (Date.now() - startedAt > (Platform.isMobileApp ? 900 : 300)) {
+          window.clearInterval(timer);
+          resolve(false);
+        }
+      }, 50);
+    });
   }
 
   private async startCustomUrlTts(text: string, provider: TtsProvider): Promise<boolean> {
@@ -4376,6 +4412,12 @@ export default class CancipPlugin extends Plugin {
     utterance.rate = Math.max(0.25, Math.min(4, Number(this.settings.ttsRate) || 1));
     utterance.pitch = Math.max(0, Math.min(2, Number(this.settings.ttsPitch) || 1));
     utterance.volume = 1;
+    utterance.onstart = () => {
+      if (this.activeUtterance !== utterance) return;
+      this.activeTtsStartedAudio = true;
+      this.activeTtsLastError = "";
+      this.refreshOpenViews();
+    };
     utterance.onend = () => {
       if (this.activeUtterance !== utterance) return;
       if (this.activeTtsPaused) return;
@@ -4383,6 +4425,8 @@ export default class CancipPlugin extends Plugin {
       this.speakNextTtsPart();
     };
     utterance.onerror = (event) => {
+      const errorName = typeof event.error === "string" ? event.error : "speech synthesis error";
+      this.activeTtsLastError = errorName;
       console.warn("Cancip TTS utterance failed", event);
       if (this.activeUtterance === utterance) {
         if (this.activeTtsPaused) return;
@@ -4454,12 +4498,13 @@ export default class CancipPlugin extends Plugin {
       `- custom-url: ${configuredUrl ? `configured (${configuredUrl.replace(/\?.*$/, "?...")})` : "not configured"}`,
       "- Official review-clean builds do not bundle heavy offline model runtimes.",
       "- Android/system, Web Speech, and custom-url are the supported lightweight routes.",
-      "- web-speech: may use system voices in some WebViews. On Android, voices=0 is not treated as unavailable; Cancip still performs a real speak attempt.",
+      "- web-speech: must start from the tap/click gesture on mobile. If it does not really start, Cancip falls through to the next provider.",
+      `- installed tts folder: ${this.pluginInstallDir()}/tts may contain optional assets, but official review-clean main.js does not load ONNX/WASM runtimes.`,
       `- language: ${this.ttsLanguageCode() || "auto"}, voice: ${this.settings.ttsVoice.trim() || defaultTtsVoiceForLanguage(this.ttsLanguageCode())}, rate: ${this.settings.ttsRate}, pitch: ${this.settings.ttsPitch}`,
       "",
       "Executable routes:",
       "- Preferred: provider auto. Verify available bridges with cancip.tts.probe, then use cancip.tts.speak/readActive.",
-      "- For high-quality offline voices, use Android system engines or a trusted custom local bridge outside the official plugin release."
+      "- For reliable mobile high-quality voices, configure custom-url to a trusted local/private TTS bridge, or use a mobile Obsidian build that exposes a native TTS bridge."
     ];
     return lines.join("\n");
   }
@@ -4480,7 +4525,7 @@ export default class CancipPlugin extends Plugin {
       "- Providers:",
       "  - android-system only if Obsidian exposes a native bridge",
       "  - custom-url for a trusted local/private neural bridge",
-      "  - web-speech when the WebView exposes system voices",
+      "  - web-speech when the WebView can really start speech from a tap/click gesture",
       "- Web Speech voices:",
       webVoices
     ].join("\n");
