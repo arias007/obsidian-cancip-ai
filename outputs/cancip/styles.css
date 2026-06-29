@@ -618,6 +618,155 @@
   height: 14px;
 }
 
+.obcc-tts-floating {
+  position: fixed;
+  z-index: 100000;
+  display: grid;
+  gap: 8px;
+  width: min(420px, calc(100vw - 16px));
+  max-height: min(48vh, 320px);
+  padding: 10px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-primary);
+  box-shadow: 0 12px 34px rgb(0 0 0 / 22%);
+  color: var(--text-normal);
+  pointer-events: auto;
+}
+
+.obcc-tts-floating.is-hidden {
+  display: none;
+}
+
+.obcc-tts-floating.is-dragging {
+  opacity: 0.92;
+  user-select: none;
+}
+
+.obcc-tts-floating.is-starting .obcc-tts-floating-meta {
+  color: var(--interactive-accent);
+}
+
+.obcc-tts-floating.is-failed {
+  border-color: var(--text-error);
+}
+
+.obcc-tts-floating-handle {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 30px;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  cursor: grab;
+  touch-action: none;
+}
+
+.obcc-tts-floating.is-dragging .obcc-tts-floating-handle {
+  cursor: grabbing;
+}
+
+.obcc-tts-floating-title-wrap {
+  min-width: 0;
+}
+
+.obcc-tts-floating-title {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.obcc-tts-floating-meta {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.obcc-tts-floating-text {
+  max-height: 5.8em;
+  overflow: auto;
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--background-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.obcc-tts-floating-row {
+  display: grid;
+  grid-template-columns: 78px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.obcc-tts-floating-label,
+.obcc-tts-floating-rate-label {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.obcc-tts-floating-range,
+.obcc-tts-floating-rate-input {
+  width: 100%;
+  min-width: 0;
+}
+
+.obcc-tts-floating-controls {
+  display: grid;
+  grid-template-columns: 32px 32px 32px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.obcc-tts-floating-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 7px;
+  background: var(--background-secondary);
+  color: var(--text-normal);
+}
+
+.obcc-tts-floating-icon:hover {
+  background: var(--background-modifier-hover);
+}
+
+.obcc-tts-floating-icon:disabled {
+  opacity: 0.38;
+}
+
+.obcc-tts-floating-icon svg {
+  width: 15px;
+  height: 15px;
+}
+
+.obcc-tts-floating-rate {
+  display: grid;
+  grid-template-columns: 62px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
 .obcc-user-actions {
   position: static;
   justify-self: end;
@@ -3839,6 +3988,27 @@ input.obcc-review-correction-input {
 
   .obcc-mention-popover {
     max-height: 164px;
+  }
+
+  .obcc-tts-floating {
+    gap: 6px;
+    width: calc(100vw - 16px);
+    max-height: min(46vh, 300px);
+    padding: 8px;
+  }
+
+  .obcc-tts-floating-text {
+    max-height: 4.6em;
+    font-size: 12.5px;
+  }
+
+  .obcc-tts-floating-controls {
+    grid-template-columns: 30px 30px 30px minmax(0, 1fr);
+    gap: 5px;
+  }
+
+  .obcc-tts-floating-rate {
+    grid-template-columns: 48px minmax(0, 1fr);
   }
 
   .obcc-messages {
