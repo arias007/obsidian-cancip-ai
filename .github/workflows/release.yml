@@ -30,21 +30,6 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Attest main.js
-        uses: actions/attest-build-provenance@v2
-        with:
-          subject-path: outputs/cancip/main.js
-
-      - name: Attest manifest.json
-        uses: actions/attest-build-provenance@v2
-        with:
-          subject-path: outputs/cancip/manifest.json
-
-      - name: Attest styles.css
-        uses: actions/attest-build-provenance@v2
-        with:
-          subject-path: outputs/cancip/styles.css
-
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -56,3 +41,11 @@ jobs:
             outputs/cancip/manifest.json \
             outputs/cancip/styles.css \
             --clobber
+
+      - name: Attest release assets
+        uses: actions/attest-build-provenance@v4.1.1
+        with:
+          subject-path: |
+            outputs/cancip/main.js
+            outputs/cancip/manifest.json
+            outputs/cancip/styles.css
