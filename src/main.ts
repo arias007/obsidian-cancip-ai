@@ -21,6 +21,7 @@ import {
   TFolder,
   WorkspaceLeaf
 } from "obsidian";
+import { pinyin } from "pinyin-pro";
 import { DEFAULT_SYSTEM_PROMPT, LEGACY_SYSTEM_PROMPT, PLUGIN_NAME, VIEW_TYPE } from "./constants";
 import {
   buildObReviewGatePackage,
@@ -61,10 +62,17 @@ type ChatMessage = {
 
 type ComposerMode = "ask" | "search" | "plan" | "edit";
 type ApiMode = "auto" | "compatible" | "responses";
-type TtsProvider = "auto" | "android-system" | "web-speech" | "custom-url";
+type TtsProvider = "auto" | "builtin-prime-tts" | "android-system" | "web-speech" | "custom-url";
 type TtsQualityMode = "quality-first";
 type TtsPlaybackMode = "idle" | "starting" | "playing" | "paused" | "stopped" | "failed";
 const CANCIP_REVIEW_VIEW_TYPE = "cancip-review-view";
+const BUILTIN_PRIME_TTS_BASE = ".obsidian/plugins/cancip/tts/prime-tts";
+const BUILTIN_PRIME_TTS_ENCODER = `${BUILTIN_PRIME_TTS_BASE}/acoustic_encoder.onnx`;
+const BUILTIN_PRIME_TTS_DECODER = `${BUILTIN_PRIME_TTS_BASE}/acoustic_decoder.onnx`;
+const BUILTIN_PRIME_TTS_VOCODER = `${BUILTIN_PRIME_TTS_BASE}/vocoder.onnx`;
+const BUILTIN_PRIME_TTS_META = `${BUILTIN_PRIME_TTS_BASE}/meta.json`;
+const BUILTIN_PRIME_TTS_SYMBOLS = `${BUILTIN_PRIME_TTS_BASE}/symbol_table.json`;
+const BUILTIN_PRIME_TTS_ORT_BASE = `${BUILTIN_PRIME_TTS_BASE}/ort`;
 const LANGUAGE_VALUES = ["zh", "zh-TW", "en", "ug", "tr", "ru", "ja", "ko", "es", "fr", "de", "ar"] as const;
 type Language = typeof LANGUAGE_VALUES[number];
 type LanguageMode = "auto" | Language;
@@ -287,6 +295,43 @@ type NativeTtsBridge = {
   stop?: () => Promise<void>;
   pause?: () => Promise<void>;
   resume?: () => Promise<void>;
+};
+
+type OrtTensorLike = {
+  dims: readonly number[];
+  data: Float32Array | BigInt64Array | boolean[] | number[] | bigint[];
+};
+
+type OrtInferenceSessionLike = {
+  run: (feeds: Record<string, OrtTensorLike>) => Promise<Record<string, OrtTensorLike | undefined>>;
+};
+
+type OrtModuleLike = {
+  env: { wasm?: { numThreads?: number; proxy?: boolean; wasmPaths?: string } };
+  InferenceSession: {
+    create: (model: ArrayBuffer | Uint8Array, options?: Record<string, unknown>) => Promise<OrtInferenceSessionLike>;
+  };
+  Tensor: new (type: string, data: Float32Array | BigInt64Array | boolean[] | number[] | bigint[], dims: readonly number[]) => OrtTensorLike;
+};
+
+type PrimeTtsMeta = {
+  sample_rate: number;
+  abs_frame_bins: number;
+  max_frames: number;
+};
+
+type PrimeTtsRuntime = {
+  ort: OrtModuleLike;
+  encoder: OrtInferenceSessionLike;
+  decoder: OrtInferenceSessionLike;
+  vocoder: OrtInferenceSessionLike;
+  meta: PrimeTtsMeta;
+};
+
+type PrimeTtsIds = {
+  phoneIds: number[];
+  toneIds: number[];
+  langIds: number[];
 };
 
 type TtsStatus = {
@@ -1439,16 +1484,18 @@ const EN = {
   ntfySent: "ntfy notification sent",
   ntfyFailed: "ntfy notification failed: {reason}",
   settingsTtsProvider: "TTS provider",
-  settingsTtsProviderDesc: "Review-clean builds use lightweight system/Web/custom URL TTS routes. High-quality offline model packages should be installed as optional assets outside the official three-file release.",
+  settingsTtsProviderDesc: "Auto first tries the optional local PrimeTTS package under the installed plugin folder, then falls back to system/Web/custom URL routes. Official releases still ship only main.js, manifest.json, and styles.css.",
   settingsTtsQualityMode: "TTS auto policy",
-  settingsTtsQualityModeDesc: "Quality-first means usable voice quality first, then smaller size and faster speed. Auto uses the bundled PrimeTTS small Chinese/English assets.",
+  settingsTtsQualityModeDesc: "Quality-first means usable voice quality first, then smaller size and faster speed. Auto uses the optional local PrimeTTS Chinese/English package when it is installed.",
   ttsQualityFirst: "High quality first",
   ttsOfflineFirst: "Quality first",
   ttsProviderAuto: "Auto",
+  ttsProviderBuiltinPrimeTts: "Local PrimeTTS package",
   ttsProviderAndroidSystem: "Android/system offline",
   ttsProviderWebSpeech: "Web Speech",
   ttsProviderCustomUrl: "Custom URL",
   ttsPresets: "TTS presets",
+  ttsPresetBuiltinPrimeTts: "Use local package",
   ttsPresetAndroidOffline: "Use Android high quality",
   ttsPresetQualityAuto: "Auto lightweight",
   settingsTtsVoice: "TTS voice",
@@ -1458,7 +1505,7 @@ const EN = {
   settingsTtsChunkChars: "TTS chunk characters",
   settingsTtsCustomUrl: "TTS custom URL",
   settingsTtsCustomUrlDesc: "Optional relay/fallback. Placeholders GET: {text}, {lang}, {voice}, {rate}, {pitch}, {provider}. Without placeholders Cancip POSTs JSON and accepts audio bytes, {url}, or {audioBase64,mimeType}.",
-  settingsTtsHighQualityHint: "Official Obsidian releases only ship main.js, manifest.json, and styles.css. Install heavy offline voice models through a separate optional package or a trusted local TTS bridge.",
+  settingsTtsHighQualityHint: "Local package route: .obsidian/plugins/cancip/tts/prime-tts/. It borrows the 0.1.207 method that generated WAV audio locally; voice quality is limited, but it can work when Android WebView exposes no system TTS bridge.",
   ttsProbe: "Probe TTS",
   settingsShowSupportCodes: "Show payment QR codes",
   settingsSupportCodesDesc: "Displays the two local payment QR images from the installed plugin extras folder. They are not sent to the model.",
@@ -1968,16 +2015,18 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     ntfySent: "ntfy 通知已发送",
     ntfyFailed: "ntfy 通知失败：{reason}",
     settingsTtsProvider: "TTS 提供方",
-    settingsTtsProviderDesc: "Review-clean 主插件使用轻量系统/Web/custom URL 朗读路线。高质量离线模型包应通过独立可选资源安装，不混入官方三文件 release。",
+    settingsTtsProviderDesc: "自动模式先尝试已安装插件目录下的可选本地 PrimeTTS 包，再回退到系统/Web/custom URL。官方 release 仍只发布 main.js、manifest.json、styles.css。",
     settingsTtsQualityMode: "TTS 自动策略",
-    settingsTtsQualityModeDesc: "质量优先：先保证声音可用自然，再在质量还可以的前提下尽量小、尽量快。",
+    settingsTtsQualityModeDesc: "质量优先：先保证声音可用自然，再在质量还可以的前提下尽量小、尽量快；已安装本地 PrimeTTS 中英文包时自动优先使用。",
     ttsQualityFirst: "高质量优先",
     ttsOfflineFirst: "质量优先",
     ttsProviderAuto: "自动",
+    ttsProviderBuiltinPrimeTts: "本地 PrimeTTS 包",
     ttsProviderAndroidSystem: "安卓/系统高质量",
     ttsProviderWebSpeech: "Web Speech",
     ttsProviderCustomUrl: "自定义 URL",
     ttsPresets: "TTS 预设",
+    ttsPresetBuiltinPrimeTts: "使用本地包",
     ttsPresetAndroidOffline: "使用安卓高质量",
     ttsPresetQualityAuto: "自动轻量",
     settingsTtsVoice: "TTS 音色",
@@ -1987,7 +2036,7 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     settingsTtsChunkChars: "TTS 分块字符数",
     settingsTtsCustomUrl: "TTS 自定义 URL",
     settingsTtsCustomUrlDesc: "可选 relay/兜底。GET 占位符：{text}/{lang}/{voice}/{rate}/{pitch}/{provider}；无占位符时 POST JSON，并接受音频字节、{url} 或 {audioBase64,mimeType}。",
-    settingsTtsHighQualityHint: "官方 Obsidian release 只发布 main.js、manifest.json、styles.css。高质量离线语音模型请通过独立可选包或可信本地 TTS 桥接安装。",
+    settingsTtsHighQualityHint: "本地包路线：.obsidian/plugins/cancip/tts/prime-tts/。这是借回 0.1.207 的本地生成 WAV 方法，音质有限，但在安卓 WebView 没暴露系统 TTS 桥时仍可能出声。",
     ttsProbe: "探测 TTS",
     settingsShowSupportCodes: "显示我的两个收款码",
     settingsSupportCodesDesc: "从插件安装目录 extras 显示支付宝和币安收款码，不会发给模型。",
@@ -3641,6 +3690,8 @@ export default class CancipPlugin extends Plugin {
   private activeNativeBridge: NativeTtsBridge | null = null;
   private activeWebAudioContext: AudioContext | null = null;
   private activeWebAudioSource: AudioBufferSourceNode | null = null;
+  private builtinPrimeTtsPromise: Promise<PrimeTtsRuntime> | null = null;
+  private builtinPrimeTtsRuntime: PrimeTtsRuntime | null = null;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -3832,6 +3883,8 @@ export default class CancipPlugin extends Plugin {
 
   onunload(): void {
     this.stopTts(false);
+    this.builtinPrimeTtsRuntime = null;
+    this.builtinPrimeTtsPromise = null;
     if (this.statusBarReviewRefreshTimer !== null) {
       window.clearTimeout(this.statusBarReviewRefreshTimer);
       this.statusBarReviewRefreshTimer = null;
@@ -4047,6 +4100,7 @@ export default class CancipPlugin extends Plugin {
     const index = this.activeTtsPartIndex;
     try {
       if (provider === "android-system") await this.startAndroidSystemTts(parts.slice(index).join("\n\n"));
+      else if (provider === "builtin-prime-tts") await this.startBuiltinPrimeTts(parts.slice(index).join("\n\n"));
       else if (provider === "web-speech") this.startWebSpeechTts(parts.slice(index).join("\n\n"));
       else if (provider === "custom-url") await this.startCustomUrlTts(parts.slice(index).join("\n\n"), "custom-url");
       this.activeTtsLabel = label;
@@ -4065,7 +4119,7 @@ export default class CancipPlugin extends Plugin {
     if (configured !== "auto") {
       return [configured];
     }
-    return Platform.isMobileApp ? ["web-speech", "android-system", "custom-url"] : ["web-speech", "android-system", "custom-url"];
+    return ["builtin-prime-tts", "web-speech", "android-system", "custom-url"];
   }
 
   private async startTtsWithProvider(provider: TtsProvider, text: string): Promise<boolean> {
@@ -4076,6 +4130,7 @@ export default class CancipPlugin extends Plugin {
       return false;
     }
     if (provider === "android-system") return await this.startAndroidSystemTts(text);
+    if (provider === "builtin-prime-tts") return await this.startBuiltinPrimeTts(text);
     if (provider === "web-speech") {
       if (!this.startWebSpeechTts(text)) return false;
       if (!Platform.isMobileApp) return true;
@@ -4095,6 +4150,163 @@ export default class CancipPlugin extends Plugin {
     }
     if (provider === "custom-url") return await this.startCustomUrlTts(text, "custom-url");
     return false;
+  }
+
+  private async startBuiltinPrimeTts(text: string): Promise<boolean> {
+    const chunks = splitTtsText(text, Math.max(80, Math.min(420, this.settings.ttsChunkChars || 240)));
+    if (!chunks.length) return false;
+    const runId = this.activeTtsRunId;
+    this.activeTtsProvider = "builtin-prime-tts";
+    this.activeTtsMode = "playing";
+    this.activeTtsStartedAudio = false;
+    this.activeTtsParts = chunks;
+    this.activeTtsPartIndex = 0;
+    const runtime = await this.loadBuiltinPrimeTts();
+    for (let index = 0; index < chunks.length; index += 1) {
+      if (this.activeTtsRunId !== runId || !this.activeTtsParts.length) return true;
+      this.activeTtsPartIndex = index;
+      this.refreshOpenViews();
+      const wav = await this.synthesizeBuiltinPrimeTts(runtime, chunks[index]);
+      if (this.activeTtsRunId !== runId || !this.activeTtsParts.length) return true;
+      const audioUrl = this.audioBlobUrl(wav, "audio/wav");
+      await this.playTtsAudio(audioUrl);
+    }
+    if (this.activeTtsRunId === runId) {
+      this.activeTtsParts = [];
+      this.activeTtsPartIndex = 0;
+      this.activeTtsMode = "idle";
+      this.refreshOpenViews();
+    }
+    return true;
+  }
+
+  private async loadBuiltinPrimeTts(): Promise<PrimeTtsRuntime> {
+    if (this.builtinPrimeTtsRuntime) return this.builtinPrimeTtsRuntime;
+    if (this.builtinPrimeTtsPromise) return this.builtinPrimeTtsPromise;
+    this.builtinPrimeTtsPromise = this.createBuiltinPrimeTts();
+    try {
+      this.builtinPrimeTtsRuntime = await this.builtinPrimeTtsPromise;
+      return this.builtinPrimeTtsRuntime;
+    } catch (error) {
+      this.builtinPrimeTtsPromise = null;
+      throw error;
+    }
+  }
+
+  private async createBuiltinPrimeTts(): Promise<PrimeTtsRuntime> {
+    await this.assertBuiltinPrimeTtsAssets();
+    const ort = await import("onnxruntime-web/wasm") as unknown as OrtModuleLike;
+    this.configureBuiltinPrimeOrt(ort);
+    const [encoderBuffer, decoderBuffer, vocoderBuffer, metaText] = await Promise.all([
+      this.app.vault.adapter.readBinary(BUILTIN_PRIME_TTS_ENCODER),
+      this.app.vault.adapter.readBinary(BUILTIN_PRIME_TTS_DECODER),
+      this.app.vault.adapter.readBinary(BUILTIN_PRIME_TTS_VOCODER),
+      this.app.vault.adapter.read(BUILTIN_PRIME_TTS_META)
+    ]);
+    const meta = parsePrimeTtsMeta(metaText);
+    const options = { executionProviders: ["wasm"] };
+    const [encoder, decoder, vocoder] = await Promise.all([
+      ort.InferenceSession.create(encoderBuffer.slice(0), options),
+      ort.InferenceSession.create(decoderBuffer.slice(0), options),
+      ort.InferenceSession.create(vocoderBuffer.slice(0), options)
+    ]);
+    return { ort, encoder, decoder, vocoder, meta };
+  }
+
+  private async assertBuiltinPrimeTtsAssets(): Promise<void> {
+    const adapter = this.app.vault.adapter;
+    const missing: string[] = [];
+    for (const path of [
+      BUILTIN_PRIME_TTS_ENCODER,
+      BUILTIN_PRIME_TTS_DECODER,
+      BUILTIN_PRIME_TTS_VOCODER,
+      BUILTIN_PRIME_TTS_META,
+      BUILTIN_PRIME_TTS_SYMBOLS,
+      `${BUILTIN_PRIME_TTS_ORT_BASE}/ort-wasm-simd-threaded.wasm`,
+      `${BUILTIN_PRIME_TTS_ORT_BASE}/ort-wasm-simd-threaded.mjs`
+    ]) {
+      if (!(await adapter.exists(path))) missing.push(path);
+    }
+    if (missing.length) {
+      throw new Error(`local PrimeTTS package is incomplete: ${missing.join(", ")}`);
+    }
+  }
+
+  private configureBuiltinPrimeOrt(ort: OrtModuleLike): void {
+    const wasm = ort.env?.wasm;
+    if (!wasm) return;
+    this.installBuiltinTtsFetchShim(window.fetch.bind(window));
+    wasm.numThreads = 1;
+    wasm.proxy = false;
+    wasm.wasmPaths = this.builtinTtsVirtualResourceUrl(`${BUILTIN_PRIME_TTS_ORT_BASE}/`);
+  }
+
+  private installBuiltinTtsFetchShim(nativeFetch: typeof window.fetch): void {
+    const win = window as typeof window & { __cancipBuiltinTtsFetchShim?: boolean; __cancipBuiltinTtsNativeFetch?: typeof window.fetch };
+    if (win.__cancipBuiltinTtsFetchShim) return;
+    win.__cancipBuiltinTtsFetchShim = true;
+    win.__cancipBuiltinTtsNativeFetch = nativeFetch;
+    window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url.startsWith("https://cancip.local/tts/")) {
+        return this.fetchBuiltinTtsResource(url);
+      }
+      return nativeFetch(input, init);
+    }) as typeof window.fetch;
+  }
+
+  private async fetchBuiltinTtsResource(url: string): Promise<Response> {
+    const path = this.builtinTtsVirtualUrlToPath(url);
+    const mimeType = mimeTypeForPath(path);
+    try {
+      if (path.endsWith(".json") || path.endsWith(".mjs") || path.endsWith(".js")) {
+        const text = await this.app.vault.adapter.read(path);
+        return new Response(text, { status: 200, headers: { "Content-Type": mimeType } });
+      }
+      const buffer = await this.app.vault.adapter.readBinary(path);
+      return new Response(buffer, { status: 200, headers: { "Content-Type": mimeType, "Content-Length": String(buffer.byteLength) } });
+    } catch {
+      return new Response("Not found", { status: 404, statusText: "Not Found" });
+    }
+  }
+
+  private builtinTtsVirtualResourceUrl(path: string): string {
+    return `https://cancip.local/tts/${normalizePath(path).replace(/^\.obsidian\/plugins\/cancip\/tts\//, "")}`;
+  }
+
+  private builtinTtsVirtualUrlToPath(url: string): string {
+    const parsed = new URL(url);
+    const relative = decodeURIComponent(parsed.pathname.replace(/^\/tts\//, ""));
+    return normalizePath(`.obsidian/plugins/cancip/tts/${relative}`);
+  }
+
+  private async synthesizeBuiltinPrimeTts(runtime: PrimeTtsRuntime, text: string): Promise<ArrayBuffer> {
+    const ids = primeTtsTextToIds(text);
+    if (!ids.phoneIds.length) throw new Error("PrimeTTS frontend produced no phones");
+    const { ort, encoder, decoder, vocoder, meta } = runtime;
+    const phone = int64Tensor(ort, ids.phoneIds, [1, ids.phoneIds.length]);
+    const tone = int64Tensor(ort, ids.toneIds, [1, ids.toneIds.length]);
+    const lang = int64Tensor(ort, ids.langIds, [1, ids.langIds.length]);
+    const speaker = int64Tensor(ort, [0], [1]);
+    const encoded = await encoder.run({ phone, tone, lang, speaker });
+    const conditioned = requireOrtTensor(encoded.conditioned, "conditioned");
+    const durations = requireOrtTensor(encoded.durations, "durations");
+    const pitch = requireOrtTensor(encoded.pitch, "pitch");
+    const regulated = primeTtsHostRegulate(conditioned, durations, pitch, meta.abs_frame_bins, meta.max_frames);
+    const mel = await decoder.run({
+      frames: new ort.Tensor("float32", regulated.frames, [1, regulated.frameCount, regulated.hiddenSize]),
+      frame_meta: new ort.Tensor("float32", regulated.frameMeta, [1, regulated.frameCount, 8]),
+      local_ctx_raw: new ort.Tensor("float32", regulated.localCtxRaw, [1, regulated.frameCount, regulated.hiddenSize * 3]),
+      abs_pos: new ort.Tensor("int64", regulated.absPos, [1, regulated.frameCount]),
+      pitch_frame: new ort.Tensor("float32", regulated.pitchFrame, [1, regulated.frameCount, regulated.pitchSize]),
+      frame_mask: new ort.Tensor("bool", regulated.frameMask, [1, regulated.frameCount])
+    });
+    const melTensor = requireOrtTensor(mel.mel, "mel");
+    const wavResult = await vocoder.run({ mel: melTensor });
+    const wavTensor = requireOrtTensor(wavResult.wav, "wav");
+    if (!(wavTensor.data instanceof Float32Array)) throw new Error("PrimeTTS vocoder returned non-float audio");
+    const wav = applyPrimeTtsRate(wavTensor.data, this.settings.ttsRate);
+    return encodePcm16Wav(wav, meta.sample_rate);
   }
 
   private async startAndroidSystemTts(text: string): Promise<boolean> {
@@ -4479,12 +4691,13 @@ export default class CancipPlugin extends Plugin {
     }
   }
 
-  ttsProbe(): string {
+  async ttsProbe(): Promise<string> {
     const nativeBridge = this.nativeTtsBridge();
     const synth = typeof window.speechSynthesis !== "undefined" ? window.speechSynthesis : null;
     const voices = synth?.getVoices?.() ?? [];
     const configuredUrl = this.settings.ttsCustomUrl.trim();
     const provider = isTtsProvider(this.settings.ttsProvider) ? this.settings.ttsProvider : DEFAULT_SETTINGS.ttsProvider;
+    const localPrimeStatus = await this.localPrimeTtsAssetStatus();
     const lines = [
       "TTS probe:",
       `- platform: mobile=${Platform.isMobileApp ? "yes" : "no"}, android=${Platform.isAndroidApp ? "yes" : "no"}, desktop=${Platform.isDesktopApp ? "yes" : "no"}`,
@@ -4493,26 +4706,27 @@ export default class CancipPlugin extends Plugin {
       `- auto chain: ${this.ttsProviderChain().join(" -> ")}`,
       `- Chinese quality chain: ${this.ttsProviderChain(undefined, "你好，Cancip 中文朗读测试。").join(" -> ")}`,
       `- playback: ${this.formatTtsStatus().replace(/\n/g, " | ")}`,
+      `- local PrimeTTS package: ${localPrimeStatus}`,
       `- native bridge: ${nativeBridge ? nativeBridge.name : "not detected"}`,
       `- Web Speech: ${synth && typeof SpeechSynthesisUtterance !== "undefined" ? `available, voices=${voices.length}` : "not available"}`,
       `- custom-url: ${configuredUrl ? `configured (${configuredUrl.replace(/\?.*$/, "?...")})` : "not configured"}`,
-      "- Official review-clean builds do not bundle heavy offline model runtimes.",
-      "- Android/system, Web Speech, and custom-url are the supported lightweight routes.",
+      "- Official review-clean releases do not include model assets in the three release files; local PrimeTTS is loaded only when the optional tts/prime-tts folder exists in the installed plugin.",
+      "- builtin-prime-tts borrows the 0.1.207 local WAV synthesis route. It may sound rough, but it can output audio without an Android native TTS bridge.",
       "- web-speech: must start from the tap/click gesture on mobile. If it does not really start, Cancip falls through to the next provider.",
-      `- installed tts folder: ${this.pluginInstallDir()}/tts may contain optional assets, but official review-clean main.js does not load ONNX/WASM runtimes.`,
       `- language: ${this.ttsLanguageCode() || "auto"}, voice: ${this.settings.ttsVoice.trim() || defaultTtsVoiceForLanguage(this.ttsLanguageCode())}, rate: ${this.settings.ttsRate}, pitch: ${this.settings.ttsPitch}`,
       "",
       "Executable routes:",
-      "- Preferred: provider auto. Verify available bridges with cancip.tts.probe, then use cancip.tts.speak/readActive.",
-      "- For reliable mobile high-quality voices, configure custom-url to a trusted local/private TTS bridge, or use a mobile Obsidian build that exposes a native TTS bridge."
+      "- Preferred on this build: provider auto or builtin-prime-tts if local PrimeTTS package is complete.",
+      "- Better quality route: configure custom-url to a trusted local/private neural TTS bridge, or use a mobile Obsidian build that exposes a native TTS bridge."
     ];
     return lines.join("\n");
   }
 
-  ttsVoicesSummary(): string {
+  async ttsVoicesSummary(): Promise<string> {
     const nativeBridge = this.nativeTtsBridge();
     const synth = typeof window.speechSynthesis !== "undefined" ? window.speechSynthesis : null;
     const voices = synth?.getVoices?.() ?? [];
+    const localPrimeStatus = await this.localPrimeTtsAssetStatus();
     const webVoices = voices.length
       ? voices
           .slice(0, 80)
@@ -4522,13 +4736,34 @@ export default class CancipPlugin extends Plugin {
     return [
       "TTS voices:",
       `- native bridge: ${nativeBridge ? nativeBridge.name : "not detected"}`,
+      `- local PrimeTTS package: ${localPrimeStatus}`,
       "- Providers:",
+      "  - builtin-prime-tts uses the optional installed tts/prime-tts ONNX package",
       "  - android-system only if Obsidian exposes a native bridge",
       "  - custom-url for a trusted local/private neural bridge",
       "  - web-speech when the WebView can really start speech from a tap/click gesture",
       "- Web Speech voices:",
       webVoices
     ].join("\n");
+  }
+
+  private async localPrimeTtsAssetStatus(): Promise<string> {
+    const paths = [
+      BUILTIN_PRIME_TTS_ENCODER,
+      BUILTIN_PRIME_TTS_DECODER,
+      BUILTIN_PRIME_TTS_VOCODER,
+      BUILTIN_PRIME_TTS_META,
+      BUILTIN_PRIME_TTS_SYMBOLS,
+      `${BUILTIN_PRIME_TTS_ORT_BASE}/ort-wasm-simd-threaded.wasm`,
+      `${BUILTIN_PRIME_TTS_ORT_BASE}/ort-wasm-simd-threaded.mjs`
+    ];
+    const missing: string[] = [];
+    for (const path of paths) {
+      if (!(await this.app.vault.adapter.exists(path))) missing.push(path);
+    }
+    if (!missing.length) return `complete (${BUILTIN_PRIME_TTS_BASE})`;
+    if (missing.length === paths.length) return `not installed (${BUILTIN_PRIME_TTS_BASE})`;
+    return `incomplete, missing ${missing.slice(0, 3).join(", ")}${missing.length > 3 ? ` +${missing.length - 3}` : ""}`;
   }
 
   async speakFile(file: TFile): Promise<void> {
@@ -13423,11 +13658,11 @@ class CancipView extends ItemView {
     }
 
     if (normalized === "cancip.tts.probe") {
-      return this.t("commandExecuted", { command: normalized, result: this.plugin.ttsProbe() });
+      return this.t("commandExecuted", { command: normalized, result: await this.plugin.ttsProbe() });
     }
 
     if (normalized === "cancip.tts.voices") {
-      return this.t("commandExecuted", { command: normalized, result: this.plugin.ttsVoicesSummary() });
+      return this.t("commandExecuted", { command: normalized, result: await this.plugin.ttsVoicesSummary() });
     }
 
     if (normalized === "cancip.tts.status") {
@@ -13654,14 +13889,15 @@ class CancipView extends ItemView {
     return [
       "TTS capability:",
       "- Cancip has message/session/note read-aloud buttons.",
-      "- Providers: auto, android-system/native bridge, custom-url local neural bridge, web-speech probe.",
-      "- Command bus: cancip.tts.probe, cancip.tts.voices, cancip.tts.status, cancip.tts.speak {text,label,provider}, cancip.tts.readActive, cancip.tts.pause/resume/stop, cancip.tts.seek {part}. provider can be auto, android-system, web-speech, or custom-url.",
-      "- Review-clean releases do not bundle heavy offline model assets. Use Android/system TTS, Web Speech, or a trusted local/custom neural bridge.",
+      "- Providers: auto, builtin-prime-tts optional local package, android-system/native bridge, custom-url local neural bridge, web-speech probe.",
+      "- Command bus: cancip.tts.probe, cancip.tts.voices, cancip.tts.status, cancip.tts.speak {text,label,provider}, cancip.tts.readActive, cancip.tts.pause/resume/stop, cancip.tts.seek {part}. provider can be auto, builtin-prime-tts, android-system, web-speech, or custom-url.",
+      "- builtin-prime-tts borrows the old 0.1.207 route: read .obsidian/plugins/cancip/tts/prime-tts, run ONNX locally, generate WAV, play with audio/WebAudio. It is optional and may sound rough.",
+      "- Review-clean releases do not bundle model assets in release files. Optional installed assets are detected at runtime.",
       "- custom-url contract: use URL placeholders {text}/{lang}/{voice}/{rate}/{pitch}, or POST JSON {text,lang,voice,rate,pitch,provider}. Return audio bytes, {url}, or {audioBase64,mimeType}.",
       "- Android/system uses a native TTS bridge only when Obsidian exposes one; Web Speech is separate. On Android, an empty voice list does not block a real speak attempt.",
       "- PDF/selection: cancip.tts.readActive reads selected text first, then active Markdown/text note, then best-effort text from an active Vault PDF. Scanned/OCR-only PDFs need OCR/parser Skill or external bridge.",
       "- Executable route: first run cancip.tts.probe, try cancip.tts.speak with provider auto, then inspect errors.",
-      "- Do not say TTS is impossible without checking native bridge status, Web Speech, configured custom-url, installed plugin commands, and available system TTS engine."
+      "- Do not say TTS is impossible without checking local PrimeTTS assets, native bridge status, Web Speech, configured custom-url, installed plugin commands, and available system TTS engine."
     ].join("\n");
   }
 
@@ -15405,6 +15641,7 @@ class CancipSettingTab extends PluginSettingTab {
         dropdown
           .addOptions({
             auto: this.plugin.t("ttsProviderAuto"),
+            "builtin-prime-tts": this.plugin.t("ttsProviderBuiltinPrimeTts"),
             "android-system": this.plugin.t("ttsProviderAndroidSystem"),
             "web-speech": this.plugin.t("ttsProviderWebSpeech"),
             "custom-url": this.plugin.t("ttsProviderCustomUrl")
@@ -15434,6 +15671,17 @@ class CancipSettingTab extends PluginSettingTab {
       .setDesc(this.plugin.t("settingsTtsProviderDesc"))
       .addButton((button) => {
         button
+          .setButtonText(this.plugin.t("ttsPresetBuiltinPrimeTts"))
+          .onClick(async () => {
+            this.plugin.settings.ttsProvider = "builtin-prime-tts";
+            this.plugin.settings.ttsQualityMode = "quality-first";
+            await this.plugin.saveSettings();
+            this.display();
+            new Notice(await this.plugin.ttsProbe(), 10000);
+          });
+      })
+      .addButton((button) => {
+        button
           .setButtonText(this.plugin.t("ttsPresetQualityAuto"))
           .onClick(async () => {
             this.plugin.settings.ttsProvider = "auto";
@@ -15441,7 +15689,7 @@ class CancipSettingTab extends PluginSettingTab {
             if (!this.plugin.settings.ttsVoice.trim()) this.plugin.settings.ttsVoice = DEFAULT_SETTINGS.ttsVoice;
             await this.plugin.saveSettings();
             this.display();
-            new Notice(this.plugin.ttsProbe(), 10000);
+            new Notice(await this.plugin.ttsProbe(), 10000);
           });
       })
       .addButton((button) => {
@@ -15452,7 +15700,7 @@ class CancipSettingTab extends PluginSettingTab {
             this.plugin.settings.ttsQualityMode = "quality-first";
             await this.plugin.saveSettings();
             this.display();
-            new Notice(this.plugin.ttsProbe(), 10000);
+            new Notice(await this.plugin.ttsProbe(), 10000);
           });
       });
     this.addTextSetting(parent, "settingsTtsVoice", this.plugin.settings.ttsVoice, DEFAULT_SETTINGS.ttsVoice, async (value) => {
@@ -15483,8 +15731,8 @@ class CancipSettingTab extends PluginSettingTab {
       .addButton((button) => {
         button
           .setButtonText(this.plugin.t("ttsProbe"))
-          .onClick(() => {
-            new Notice(this.plugin.ttsProbe(), 12000);
+          .onClick(async () => {
+            new Notice(await this.plugin.ttsProbe(), 12000);
           });
       })
       .addButton((button) => {
@@ -17623,6 +17871,7 @@ function isChineseLanguage(language: Language): boolean {
 
 function isTtsProvider(value: unknown): value is TtsProvider {
   return value === "auto"
+    || value === "builtin-prime-tts"
     || value === "android-system"
     || value === "web-speech"
     || value === "custom-url";
@@ -17671,6 +17920,386 @@ function base64ToArrayBuffer(input: string): ArrayBuffer {
     bytes[index] = binary.charCodeAt(index);
   }
   return bytes.buffer;
+}
+
+function parsePrimeTtsMeta(text: string): PrimeTtsMeta {
+  const raw = JSON.parse(text) as unknown;
+  if (!isRecord(raw)) throw new Error("PrimeTTS meta.json is not an object");
+  const sampleRate = Number(raw.sample_rate);
+  const absFrameBins = Number(raw.abs_frame_bins);
+  const maxFrames = Number(raw.max_frames);
+  if (!Number.isFinite(sampleRate) || !Number.isFinite(absFrameBins) || !Number.isFinite(maxFrames)) {
+    throw new Error("PrimeTTS meta.json is missing numeric sample_rate/abs_frame_bins/max_frames");
+  }
+  return { sample_rate: sampleRate, abs_frame_bins: absFrameBins, max_frames: maxFrames };
+}
+
+function requireOrtTensor(value: OrtTensorLike | undefined, name: string): OrtTensorLike {
+  if (!value || !Array.isArray(value.dims) || !("data" in value)) {
+    throw new Error(`PrimeTTS missing ONNX tensor: ${name}`);
+  }
+  return value;
+}
+
+function int64Tensor(ort: OrtModuleLike, values: number[], dims: readonly number[]): OrtTensorLike {
+  return new ort.Tensor("int64", BigInt64Array.from(values.map((value) => BigInt(value))), dims);
+}
+
+function primeTtsHostRegulate(
+  conditioned: OrtTensorLike,
+  durations: OrtTensorLike,
+  pitch: OrtTensorLike,
+  absBins: number,
+  maxFrames: number
+): {
+  frameCount: number;
+  hiddenSize: number;
+  pitchSize: number;
+  frames: Float32Array;
+  frameMeta: Float32Array;
+  localCtxRaw: Float32Array;
+  absPos: BigInt64Array;
+  pitchFrame: Float32Array;
+  frameMask: boolean[];
+} {
+  if (!(conditioned.data instanceof Float32Array)) throw new Error("PrimeTTS conditioned tensor is not float32");
+  if (!(pitch.data instanceof Float32Array)) throw new Error("PrimeTTS pitch tensor is not float32");
+  const condDims = conditioned.dims;
+  const pitchDims = pitch.dims;
+  if (condDims.length !== 3 || pitchDims.length !== 3) throw new Error("PrimeTTS encoder returned unexpected tensor rank");
+  const tokenCount = condDims[1];
+  const hiddenSize = condDims[2];
+  const pitchSize = pitchDims[2];
+  const durationValues = ortTensorDataToNumbers(durations.data).map((value) => Math.max(0, value));
+  const boundedDurations = durationValues.slice(0, tokenCount);
+  let frameCount = boundedDurations.reduce((sum, value) => sum + value, 0);
+  if (frameCount <= 0) throw new Error("PrimeTTS encoder produced no audio frames");
+  if (frameCount > maxFrames) {
+    let used = 0;
+    for (let index = 0; index < boundedDurations.length; index += 1) {
+      const remaining = Math.max(0, maxFrames - used);
+      boundedDurations[index] = Math.min(boundedDurations[index], remaining);
+      used += boundedDurations[index];
+    }
+    frameCount = Math.max(1, used);
+  }
+  const cond = conditioned.data;
+  const pitchData = pitch.data;
+  const frames = new Float32Array(frameCount * hiddenSize);
+  const frameMeta = new Float32Array(frameCount * 8);
+  const localCtxRaw = new Float32Array(frameCount * hiddenSize * 3);
+  const absPos = new BigInt64Array(frameCount);
+  const pitchFrame = new Float32Array(frameCount * pitchSize);
+  const frameMask = Array.from({ length: frameCount }, () => true);
+  const voicedTokenCount = Math.max(1, boundedDurations.filter((value) => value > 0).length);
+  let frameIndex = 0;
+  for (let tokenIndex = 0; tokenIndex < tokenCount; tokenIndex += 1) {
+    const duration = boundedDurations[tokenIndex] ?? 0;
+    for (let within = 0; within < duration; within += 1) {
+      const condOffset = tokenIndex * hiddenSize;
+      const frameOffset = frameIndex * hiddenSize;
+      frames.set(cond.subarray(condOffset, condOffset + hiddenSize), frameOffset);
+      const rel = within / Math.max(duration - 1, 1);
+      const tokenPos = tokenIndex / Math.max(voicedTokenCount - 1, 1);
+      const logDuration = Math.log1p(duration) / 6;
+      const center = 1 - Math.abs(rel * 2 - 1);
+      frameMeta.set([
+        rel,
+        1 - rel,
+        center,
+        Math.sin(rel * Math.PI),
+        Math.cos(rel * Math.PI),
+        tokenPos,
+        logDuration,
+        duration / 40
+      ], frameIndex * 8);
+      const prevIndex = Math.max(0, tokenIndex - 1);
+      const nextIndex = Math.min(tokenCount - 1, tokenIndex + 1);
+      const localOffset = frameIndex * hiddenSize * 3;
+      localCtxRaw.set(cond.subarray(prevIndex * hiddenSize, prevIndex * hiddenSize + hiddenSize), localOffset);
+      localCtxRaw.set(cond.subarray(condOffset, condOffset + hiddenSize), localOffset + hiddenSize);
+      localCtxRaw.set(cond.subarray(nextIndex * hiddenSize, nextIndex * hiddenSize + hiddenSize), localOffset + hiddenSize * 2);
+      absPos[frameIndex] = BigInt(Math.min(Math.floor(frameIndex * absBins / Math.max(1, maxFrames)), absBins - 1));
+      pitchFrame.set(pitchData.subarray(tokenIndex * pitchSize, tokenIndex * pitchSize + pitchSize), frameIndex * pitchSize);
+      frameIndex += 1;
+      if (frameIndex >= frameCount) break;
+    }
+    if (frameIndex >= frameCount) break;
+  }
+  return { frameCount, hiddenSize, pitchSize, frames, frameMeta, localCtxRaw, absPos, pitchFrame, frameMask };
+}
+
+function applyPrimeTtsRate(samples: Float32Array, rate: number): Float32Array {
+  const safeRate = Math.max(0.5, Math.min(1.8, Number(rate) || 1));
+  if (Math.abs(safeRate - 1) < 0.03) return samples;
+  const outputLength = Math.max(1, Math.floor(samples.length / safeRate));
+  const output = new Float32Array(outputLength);
+  for (let index = 0; index < outputLength; index += 1) {
+    const source = index * safeRate;
+    const left = Math.floor(source);
+    const right = Math.min(samples.length - 1, left + 1);
+    const frac = source - left;
+    output[index] = samples[left] * (1 - frac) + samples[right] * frac;
+  }
+  return output;
+}
+
+function ortTensorDataToNumbers(data: OrtTensorLike["data"]): number[] {
+  if (data instanceof Float32Array) {
+    return Array.from(data);
+  }
+  if (data instanceof BigInt64Array) {
+    return Array.from(data, (value) => Number(value));
+  }
+  return data.map((value) => Number(value));
+}
+
+function encodePcm16Wav(samples: Float32Array, sampleRate: number): ArrayBuffer {
+  const dataBytes = samples.length * 2;
+  const buffer = new ArrayBuffer(44 + dataBytes);
+  const view = new DataView(buffer);
+  writeAscii(view, 0, "RIFF");
+  view.setUint32(4, 36 + dataBytes, true);
+  writeAscii(view, 8, "WAVE");
+  writeAscii(view, 12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeAscii(view, 36, "data");
+  view.setUint32(40, dataBytes, true);
+  let offset = 44;
+  for (const sample of samples) {
+    const clamped = Math.max(-1, Math.min(1, sample));
+    view.setInt16(offset, clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff, true);
+    offset += 2;
+  }
+  return buffer;
+}
+
+function writeAscii(view: DataView, offset: number, text: string): void {
+  for (let index = 0; index < text.length; index += 1) {
+    view.setUint8(offset + index, text.charCodeAt(index));
+  }
+}
+
+const PRIME_TTS_SYMBOL_IDS: Record<string, number> = {
+  _blank: 0, _pad: 1, UNK: 2, SP: 3,
+  "ㄅ": 4, "ㄆ": 5, "ㄇ": 6, "ㄈ": 7, "ㄉ": 8, "ㄊ": 9, "ㄋ": 10, "ㄌ": 11, "ㄍ": 12, "ㄎ": 13, "ㄏ": 14,
+  "ㄐ": 15, "ㄑ": 16, "ㄒ": 17, "ㄓ": 18, "ㄔ": 19, "ㄕ": 20, "ㄖ": 21, "ㄗ": 22, "ㄘ": 23, "ㄙ": 24,
+  "ㄚ": 25, "ㄛ": 26, "ㄜ": 27, "ㄝ": 28, "ㄞ": 29, "ㄟ": 30, "ㄠ": 31, "ㄡ": 32, "ㄢ": 33, "ㄣ": 34,
+  "ㄤ": 35, "ㄥ": 36, "ㄦ": 37, "ㄧ": 38, "ㄨ": 39, "ㄩ": 40,
+  AA: 41, AE: 42, AH: 43, AO: 44, AW: 45, AY: 46, B: 47, CH: 48, D: 49, DH: 50, EH: 51, ER: 52,
+  EY: 53, F: 54, G: 55, HH: 56, IH: 57, IY: 58, JH: 59, K: 60, L: 61, M: 62, N: 63, NG: 64,
+  OW: 65, OY: 66, P: 67, R: 68, S: 69, SH: 70, T: 71, TH: 72, UH: 73, UW: 74, V: 75, W: 76,
+  Y: 77, Z: 78, ZH: 79,
+  ",": 80, ".": 81, "?": 82, "!": 83, "...": 84, "-": 85, "'": 86, "ㄭ": 87
+};
+
+const PRIME_TTS_PUNCT = new Set([",", ".", "?", "!", "...", "-", "'"]);
+const PRIME_TTS_PINYIN_INITIALS = ["zh", "ch", "sh", "b", "p", "m", "f", "d", "t", "n", "l", "g", "k", "h", "j", "q", "x", "r", "z", "c", "s", "y", "w"] as const;
+const PRIME_TTS_INITIAL_TO_ZHUYIN: Record<string, string> = {
+  b: "ㄅ", p: "ㄆ", m: "ㄇ", f: "ㄈ", d: "ㄉ", t: "ㄊ", n: "ㄋ", l: "ㄌ", g: "ㄍ", k: "ㄎ", h: "ㄏ",
+  j: "ㄐ", q: "ㄑ", x: "ㄒ", zh: "ㄓ", ch: "ㄔ", sh: "ㄕ", r: "ㄖ", z: "ㄗ", c: "ㄘ", s: "ㄙ"
+};
+const PRIME_TTS_FINAL_TO_ZHUYIN: Record<string, string[]> = {
+  a: ["ㄚ"], o: ["ㄛ"], e: ["ㄜ"], ai: ["ㄞ"], ei: ["ㄟ"], ao: ["ㄠ"], ou: ["ㄡ"], an: ["ㄢ"], en: ["ㄣ"], ang: ["ㄤ"], eng: ["ㄥ"], er: ["ㄦ"],
+  i: ["ㄧ"], ia: ["ㄧ", "ㄚ"], ie: ["ㄧ", "ㄝ"], iao: ["ㄧ", "ㄠ"], iu: ["ㄧ", "ㄡ"], ian: ["ㄧ", "ㄢ"], in: ["ㄧ", "ㄣ"], iang: ["ㄧ", "ㄤ"], ing: ["ㄧ", "ㄥ"], iong: ["ㄩ", "ㄥ"],
+  u: ["ㄨ"], ua: ["ㄨ", "ㄚ"], uo: ["ㄨ", "ㄛ"], uai: ["ㄨ", "ㄞ"], ui: ["ㄨ", "ㄟ"], uan: ["ㄨ", "ㄢ"], un: ["ㄨ", "ㄣ"], uang: ["ㄨ", "ㄤ"], ueng: ["ㄨ", "ㄥ"], ong: ["ㄨ", "ㄥ"],
+  v: ["ㄩ"], ve: ["ㄩ", "ㄝ"], van: ["ㄩ", "ㄢ"], vn: ["ㄩ", "ㄣ"], ue: ["ㄩ", "ㄝ"], yuan: ["ㄩ", "ㄢ"], yun: ["ㄩ", "ㄣ"], yue: ["ㄩ", "ㄝ"], yu: ["ㄩ"],
+  yi: ["ㄧ"], ya: ["ㄧ", "ㄚ"], ye: ["ㄧ", "ㄝ"], yao: ["ㄧ", "ㄠ"], you: ["ㄧ", "ㄡ"], yan: ["ㄧ", "ㄢ"], yin: ["ㄧ", "ㄣ"], yang: ["ㄧ", "ㄤ"], ying: ["ㄧ", "ㄥ"], yong: ["ㄩ", "ㄥ"],
+  wu: ["ㄨ"], wa: ["ㄨ", "ㄚ"], wo: ["ㄨ", "ㄛ"], wai: ["ㄨ", "ㄞ"], wei: ["ㄨ", "ㄟ"], wan: ["ㄨ", "ㄢ"], wen: ["ㄨ", "ㄣ"], wang: ["ㄨ", "ㄤ"], weng: ["ㄨ", "ㄥ"]
+};
+
+const PRIME_TTS_WORD_PHONES: Record<string, string[]> = {
+  a: ["AH"], ai: ["EY", "AY"], api: ["EY", "P", "IY", "AY"], and: ["AE", "N", "D"], are: ["AA", "R"], as: ["AE", "Z"], at: ["AE", "T"],
+  be: ["B", "IY"], cancip: ["K", "AE", "N", "S", "IH", "P"], chat: ["CH", "AE", "T"], code: ["K", "OW", "D"], codex: ["K", "OW", "D", "EH", "K", "S"],
+  file: ["F", "AY", "L"], for: ["F", "AO", "R"], from: ["F", "R", "AH", "M"], hello: ["HH", "AH", "L", "OW"], hi: ["HH", "AY"],
+  is: ["IH", "Z"], key: ["K", "IY"], markdown: ["M", "AA", "R", "K", "D", "AW", "N"], model: ["M", "AA", "D", "AH", "L"],
+  note: ["N", "OW", "T"], obsidian: ["AH", "B", "S", "IH", "D", "IY", "AH", "N"], of: ["AH", "V"], ok: ["OW", "K", "EY"], open: ["OW", "P", "AH", "N"],
+  plugin: ["P", "L", "AH", "G", "IH", "N"], read: ["R", "IY", "D"], search: ["S", "ER", "CH"], session: ["S", "EH", "SH", "AH", "N"],
+  skill: ["S", "K", "IH", "L"], system: ["S", "IH", "S", "T", "AH", "M"], thank: ["TH", "AE", "NG", "K"], thanks: ["TH", "AE", "NG", "K", "S"],
+  the: ["DH", "AH"], this: ["DH", "IH", "S"], to: ["T", "UW"], tts: ["T", "IY", "T", "IY", "EH", "S"], url: ["Y", "UW", "AA", "R", "EH", "L"],
+  user: ["Y", "UW", "Z", "ER"], vault: ["V", "AO", "L", "T"], with: ["W", "IH", "DH"], yes: ["Y", "EH", "S"], you: ["Y", "UW"]
+};
+
+const PRIME_TTS_LETTER_PHONES: Record<string, string[]> = {
+  a: ["EY"], b: ["B", "IY"], c: ["S", "IY"], d: ["D", "IY"], e: ["IY"], f: ["EH", "F"], g: ["JH", "IY"], h: ["EY", "CH"],
+  i: ["AY"], j: ["JH", "EY"], k: ["K", "EY"], l: ["EH", "L"], m: ["EH", "M"], n: ["EH", "N"], o: ["OW"], p: ["P", "IY"],
+  q: ["K", "Y", "UW"], r: ["AA", "R"], s: ["EH", "S"], t: ["T", "IY"], u: ["Y", "UW"], v: ["V", "IY"], w: ["D", "AH", "B", "AH", "L", "Y", "UW"],
+  x: ["EH", "K", "S"], y: ["W", "AY"], z: ["Z", "IY"]
+};
+
+const PRIME_TTS_DIGIT_PHONES: Record<string, string[]> = {
+  "0": ["Z", "IY", "R", "OW"], "1": ["W", "AH", "N"], "2": ["T", "UW"], "3": ["TH", "R", "IY"], "4": ["F", "AO", "R"],
+  "5": ["F", "AY", "V"], "6": ["S", "IH", "K", "S"], "7": ["S", "EH", "V", "AH", "N"], "8": ["EY", "T"], "9": ["N", "AY", "N"]
+};
+
+function primeTtsTextToIds(input: string): PrimeTtsIds {
+  const normalized = primeTtsNormalizeText(input);
+  const phoneIds: number[] = [];
+  const toneIds: number[] = [];
+  const langIds: number[] = [];
+  const push = (symbol: string, tone = 0, lang = 0): void => {
+    phoneIds.push(PRIME_TTS_SYMBOL_IDS[symbol] ?? PRIME_TTS_SYMBOL_IDS.UNK);
+    toneIds.push(Math.max(0, Math.min(5, tone)));
+    langIds.push(lang);
+  };
+  let index = 0;
+  while (index < normalized.length) {
+    const char = normalized[index];
+    if (isCjkChar(char)) {
+      const syllable = pinyin(char, { toneType: "num", type: "array" })[0] ?? "";
+      const units = pinyinSyllableToZhuyin(syllable);
+      for (const unit of units.symbols) push(unit, units.tone, 0);
+      index += 1;
+      continue;
+    }
+    if (/[A-Za-z]/.test(char)) {
+      let end = index + 1;
+      while (end < normalized.length && /[A-Za-z']/.test(normalized[end])) end += 1;
+      const word = normalized.slice(index, end).replace(/^'+|'+$/g, "");
+      const phones = englishWordToPrimePhones(word);
+      for (const phone of phones) push(phone, 0, 1);
+      push("SP", 0, 1);
+      index = end;
+      continue;
+    }
+    if (/\d/.test(char)) {
+      for (const phone of PRIME_TTS_DIGIT_PHONES[char] ?? []) push(phone, 0, 1);
+      index += 1;
+      continue;
+    }
+    const punct = normalizePrimeTtsPunctuation(char);
+    if (punct && PRIME_TTS_PUNCT.has(punct)) push(punct, 0, isCjkNeighbor(normalized, index) ? 0 : 1);
+    else if (/\s/.test(char) && phoneIds.length && phoneIds[phoneIds.length - 1] !== PRIME_TTS_SYMBOL_IDS.SP) push("SP", 0, 0);
+    index += 1;
+  }
+  return { phoneIds, toneIds, langIds };
+}
+
+function primeTtsNormalizeText(input: string): string {
+  return input
+    .replace(/[，、；]/g, ",")
+    .replace(/[。]/g, ".")
+    .replace(/[？]/g, "?")
+    .replace(/[！]/g, "!")
+    .replace(/[“”]/g, "\"")
+    .replace(/[‘’]/g, "'")
+    .replace(/[\u2014\u2013]/g, "-")
+    .replace(/\u2026/g, "...")
+    .replace(/https?:\/\/\S+/gi, " URL ")
+    .replace(/\bAPI\b/g, "api")
+    .replace(/\bTTS\b/g, "tts")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function pinyinSyllableToZhuyin(raw: string): { symbols: string[]; tone: number } {
+  const match = raw.toLowerCase().replace(/ü/g, "v").match(/^([a-zv]+)([1-5])?$/);
+  if (!match) return { symbols: ["UNK"], tone: 0 };
+  let body = match[1];
+  const tone = Number(match[2] ?? "5");
+  let initial = "";
+  for (const candidate of PRIME_TTS_PINYIN_INITIALS) {
+    if (body.startsWith(candidate)) {
+      initial = candidate;
+      body = body.slice(candidate.length);
+      break;
+    }
+  }
+  if (initial === "y" || initial === "w") {
+    body = `${initial}${body}`;
+    initial = "";
+  }
+  if ((initial === "j" || initial === "q" || initial === "x") && body.startsWith("u")) {
+    body = `v${body.slice(1)}`;
+  }
+  if (!body && ["zh", "ch", "sh", "r", "z", "c", "s"].includes(initial)) {
+    const syllabic = PRIME_TTS_INITIAL_TO_ZHUYIN[initial];
+    return { symbols: syllabic ? [syllabic, "ㄭ"] : ["UNK"], tone };
+  }
+  const symbols = [
+    ...(initial && PRIME_TTS_INITIAL_TO_ZHUYIN[initial] ? [PRIME_TTS_INITIAL_TO_ZHUYIN[initial]] : []),
+    ...(PRIME_TTS_FINAL_TO_ZHUYIN[body] ?? [])
+  ];
+  return { symbols: symbols.length ? symbols : ["UNK"], tone };
+}
+
+function englishWordToPrimePhones(word: string): string[] {
+  const lower = word.toLowerCase();
+  if (!lower) return [];
+  const known = PRIME_TTS_WORD_PHONES[lower];
+  if (known) return known;
+  if (lower.length <= 2 || /^[bcdfghjklmnpqrstvwxyz]{2,}$/i.test(lower)) {
+    return lower.split("").flatMap((char) => PRIME_TTS_LETTER_PHONES[char] ?? []);
+  }
+  const phones: string[] = [];
+  let index = 0;
+  while (index < lower.length) {
+    const rest = lower.slice(index);
+    const two = rest.slice(0, 2);
+    const four = rest.slice(0, 4);
+    if (four === "tion") {
+      phones.push("SH", "AH", "N");
+      index += 4;
+    } else if (two === "th") {
+      phones.push("TH");
+      index += 2;
+    } else if (two === "sh") {
+      phones.push("SH");
+      index += 2;
+    } else if (two === "ch") {
+      phones.push("CH");
+      index += 2;
+    } else if (two === "ph") {
+      phones.push("F");
+      index += 2;
+    } else if (two === "ng") {
+      phones.push("NG");
+      index += 2;
+    } else if (two === "oo") {
+      phones.push("UW");
+      index += 2;
+    } else if (two === "ee" || two === "ea") {
+      phones.push("IY");
+      index += 2;
+    } else if (two === "ai" || two === "ay") {
+      phones.push("EY");
+      index += 2;
+    } else if (two === "ow" || two === "ou") {
+      phones.push("AW");
+      index += 2;
+    } else {
+      phones.push(...englishLetterSound(lower[index]));
+      index += 1;
+    }
+  }
+  return phones.filter((phone) => phone in PRIME_TTS_SYMBOL_IDS);
+}
+
+function englishLetterSound(char: string): string[] {
+  const map: Record<string, string[]> = {
+    a: ["AE"], b: ["B"], c: ["K"], d: ["D"], e: ["EH"], f: ["F"], g: ["G"], h: ["HH"], i: ["IH"], j: ["JH"], k: ["K"], l: ["L"], m: ["M"],
+    n: ["N"], o: ["AA"], p: ["P"], q: ["K"], r: ["R"], s: ["S"], t: ["T"], u: ["AH"], v: ["V"], w: ["W"], x: ["K", "S"], y: ["Y"], z: ["Z"]
+  };
+  return map[char] ?? [];
+}
+
+function normalizePrimeTtsPunctuation(char: string): string {
+  if (char === "," || char === "." || char === "?" || char === "!" || char === "-" || char === "'") return char;
+  return "";
+}
+
+function isCjkChar(char: string): boolean {
+  return /[\u3400-\u9fff]/.test(char);
+}
+
+function isCjkNeighbor(text: string, index: number): boolean {
+  return isCjkChar(text[index - 1] ?? "") || isCjkChar(text[index + 1] ?? "");
 }
 
 function formatI18n(template: string, vars: Record<string, string | number> = {}): string {

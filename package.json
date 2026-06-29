@@ -1,10 +1,10 @@
 {
   "name": "cancip",
-  "version": "0.1.211",
+  "version": "0.1.212",
   "private": true,
   "main": "main.js",
   "scripts": {
-    "build": "tsc --noEmit --skipLibCheck && node esbuild.config.mjs production",
+    "build": "tsc --noEmit --skipLibCheck && node scripts/prepare-release-output.mjs && node esbuild.config.mjs production",
     "check": "tsc --noEmit --skipLibCheck"
   },
   "devDependencies": {
@@ -14,5 +14,7 @@
     "typescript": "^5.5.4"
   },
   "dependencies": {
+    "onnxruntime-web": "^1.27.0",
+    "pinyin-pro": "^3.28.1"
   }
 }
