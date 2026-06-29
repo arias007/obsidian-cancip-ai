@@ -2,6 +2,7 @@ node_modules/
 work/
 outputs/*.zip
 releases/*.zip
+reports/
 outputs/plugin-backups/
 outputs/ob-codex-composer/
 reports/install-backups/
@@ -9,7 +10,7 @@ reports/release-verify-*/
 reports/tts-prime-investigation/
 skill-observations/
 .cancip/
-.obsidian/
+[.]obsidian/
 *.log
 *.tmp
 *.bak

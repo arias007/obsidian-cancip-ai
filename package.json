@@ -1,23 +1,18 @@
 {
   "name": "cancip",
-  "version": "0.1.207",
+  "version": "0.1.208",
   "private": true,
   "main": "main.js",
   "scripts": {
-    "postinstall": "node scripts/patch-piper-plus.mjs",
-    "prepare:prime-tts": "node scripts/prepare-prime-tts.mjs",
-    "build": "npm run prepare:prime-tts && tsc --noEmit --skipLibCheck && node esbuild.config.mjs production",
+    "build": "tsc --noEmit --skipLibCheck && node esbuild.config.mjs production",
     "check": "tsc --noEmit --skipLibCheck"
   },
   "devDependencies": {
     "@types/node": "^20.14.10",
-    "builtin-modules": "^3.3.0",
     "esbuild": "^0.21.5",
-    "obsidian": "^1.5.12",
+    "obsidian": "^1.13.1",
     "typescript": "^5.5.4"
   },
   "dependencies": {
-    "pinyin-pro": "^3.28.1",
-    "piper-plus": "^0.6.0"
   }
 }

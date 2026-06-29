@@ -86,7 +86,7 @@ cheap:
 - No per-edit history watcher.
 - Text-first: Markdown, JSON, YAML, Canvas, source files.
 - Default exclusions: `.cancip/config.json`, `.cancip/versions/**`,
-  `.obsidian/**`, large binaries, cache folders.
+  Obsidian config folders, large binaries, cache folders.
 
 Suggested layout:
 
