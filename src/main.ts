@@ -94,6 +94,7 @@ const BUILTIN_PRIME_TTS_INSTALL_STALE_MS = 120000;
 const BUILTIN_PRIME_TTS_PREFETCH_AHEAD = 3;
 const BUILTIN_PRIME_TTS_CACHE_KEEP_BEHIND = 1;
 const BUILTIN_PRIME_TTS_WARMUP_TEXT = "好。";
+const BUILTIN_PRIME_TTS_WARMUP_SYNTH_DELAY_MS = 900;
 const LANGUAGE_VALUES = ["zh", "zh-TW", "en", "ug", "tr", "ru", "ja", "ko", "es", "fr", "de", "ar"] as const;
 type Language = typeof LANGUAGE_VALUES[number];
 type LanguageMode = "auto" | Language;
@@ -3775,7 +3776,7 @@ export default class CancipPlugin extends Plugin {
   private activeNativeBridge: NativeTtsBridge | null = null;
   private activeWebAudioContext: AudioContext | null = null;
   private activeWebAudioSource: AudioBufferSourceNode | null = null;
-  private activeTtsPrimeCache = new Map<number, Promise<string>>();
+  private activeTtsPrimeCache = new Map<number, Promise<ArrayBuffer>>();
   private activeTtsPrimeCacheRunId = 0;
   private builtinPrimeTtsPromise: Promise<PrimeTtsRuntime> | null = null;
   private builtinPrimeTtsRuntime: PrimeTtsRuntime | null = null;
@@ -4234,18 +4235,18 @@ export default class CancipPlugin extends Plugin {
     this.builtinPrimeTtsWarmupTimer = window.setTimeout(() => {
       this.builtinPrimeTtsWarmupTimer = null;
       void this.prewarmBuiltinPrimeTts();
-    }, Platform.isMobileApp ? 120 : 500);
+    }, Platform.isMobileApp ? 20 : 120);
   }
 
   private async prewarmBuiltinPrimeTts(): Promise<void> {
-    if (this.builtinPrimeTtsRuntime || this.builtinPrimeTtsPromise) return;
     try {
+      if (this.builtinPrimeTtsWarmupSynthDone) return;
       if ((await this.missingBuiltinPrimeTtsAssets()).length) return;
       const runtime = await this.loadBuiltinPrimeTts();
-      if (!this.builtinPrimeTtsWarmupSynthDone) {
-        await this.synthesizeBuiltinPrimeTts(runtime, BUILTIN_PRIME_TTS_WARMUP_TEXT);
-        this.builtinPrimeTtsWarmupSynthDone = true;
-      }
+      await sleep(BUILTIN_PRIME_TTS_WARMUP_SYNTH_DELAY_MS);
+      if (this.activeTtsParts.length || this.activeTtsMode !== "idle") return;
+      await this.synthesizeBuiltinPrimeTts(runtime, BUILTIN_PRIME_TTS_WARMUP_TEXT);
+      this.builtinPrimeTtsWarmupSynthDone = true;
     } catch (error) {
       console.debug("Cancip PrimeTTS warmup skipped", error);
     }
@@ -4613,6 +4614,7 @@ export default class CancipPlugin extends Plugin {
     this.activeTtsParts = chunks;
     this.activeTtsPartIndex = Math.max(0, Math.min(chunks.length - 1, startIndex));
     this.syncTtsOverlay();
+    void this.prepareTtsAudioOutput();
     const runtime = await this.loadBuiltinPrimeTts();
     this.activeTtsPrimeCache.clear();
     this.activeTtsPrimeCacheRunId = runId;
@@ -4623,10 +4625,10 @@ export default class CancipPlugin extends Plugin {
       this.syncTtsOverlay();
       this.refreshOpenViews();
       this.prefetchPrimeTtsWindow(runtime, chunks, index, runId);
-      const wavUrl = await this.getPrimeTtsCachedAudioUrl(runtime, chunks, index, runId);
+      const wav = await this.getPrimeTtsCachedAudio(runtime, chunks, index, runId);
       if (this.activeTtsRunId !== runId || !this.activeTtsParts.length) return true;
       this.prefetchPrimeTtsWindow(runtime, chunks, index + 1, runId);
-      await this.playTtsAudio(wavUrl, runId);
+      await this.playTtsGeneratedWav(wav, runId);
       this.prunePrimeTtsCache(index);
     }
     if (this.activeTtsRunId === runId) {
@@ -4635,6 +4637,7 @@ export default class CancipPlugin extends Plugin {
       this.activeTtsMode = "idle";
       this.activeTtsPrimeCache.clear();
       this.activeTtsPrimeCacheRunId = 0;
+      this.stopWebAudioTts();
       this.syncTtsOverlay();
       this.refreshOpenViews();
     }
@@ -4656,19 +4659,16 @@ export default class CancipPlugin extends Plugin {
     }
     if (this.activeTtsPrimeCache.has(index)) return;
     const promise = this.queueBuiltinPrimeTtsSynthesis(runtime, chunks[index], runId)
-      .then((wav) => {
-        if (this.activeTtsRunId !== runId || this.activeTtsPrimeCacheRunId !== runId || !this.activeTtsParts.length) return "";
-        return this.audioBlobUrl(wav, "audio/wav", false);
-      })
+      .then((wav) => wav)
       .catch((error) => {
         this.activeTtsPrimeCache.delete(index);
-        if (this.activeTtsRunId !== runId || !this.activeTtsParts.length) return "";
+        if (this.activeTtsRunId !== runId || !this.activeTtsParts.length) return new ArrayBuffer(0);
         throw error;
-      });
+      }) as Promise<ArrayBuffer>;
     this.activeTtsPrimeCache.set(index, promise);
   }
 
-  private async getPrimeTtsCachedAudioUrl(runtime: PrimeTtsRuntime, chunks: string[], index: number, runId: number): Promise<string> {
+  private async getPrimeTtsCachedAudio(runtime: PrimeTtsRuntime, chunks: string[], index: number, runId: number): Promise<ArrayBuffer> {
     if (this.activeTtsPrimeCacheRunId !== runId) {
       this.activeTtsPrimeCache.clear();
       this.activeTtsPrimeCacheRunId = runId;
@@ -4676,8 +4676,7 @@ export default class CancipPlugin extends Plugin {
     this.prefetchPrimeTtsAudioUrl(runtime, chunks, index, runId);
     const promise = this.activeTtsPrimeCache.get(index);
     if (!promise) {
-      const wav = await this.queueBuiltinPrimeTtsSynthesis(runtime, chunks[index], runId);
-      return this.audioBlobUrl(wav, "audio/wav", false);
+      return await this.queueBuiltinPrimeTtsSynthesis(runtime, chunks[index], runId);
     }
     return await promise;
   }
@@ -5210,6 +5209,65 @@ export default class CancipPlugin extends Plugin {
       }
     } finally {
       if (this.activeTtsAudio === audio) this.activeTtsAudio = null;
+    }
+  }
+
+  private async prepareTtsAudioOutput(): Promise<void> {
+    const context = this.ensureReusableAudioContext();
+    if (!context) return;
+    try {
+      if (context.state === "suspended") await context.resume();
+    } catch {
+      // Mobile WebViews may refuse resume until playback starts from a tap.
+    }
+  }
+
+  private ensureReusableAudioContext(): AudioContext | null {
+    if (this.activeWebAudioContext && this.activeWebAudioContext.state !== "closed") return this.activeWebAudioContext;
+    const audioWindow = window as Window & typeof window & { webkitAudioContext?: typeof AudioContext };
+    const AudioContextCtor = audioWindow.AudioContext ?? audioWindow.webkitAudioContext;
+    if (!AudioContextCtor) return null;
+    try {
+      this.activeWebAudioContext = new AudioContextCtor();
+      return this.activeWebAudioContext;
+    } catch {
+      return null;
+    }
+  }
+
+  private async playTtsGeneratedWav(buffer: ArrayBuffer, runId?: number): Promise<void> {
+    const context = this.ensureReusableAudioContext();
+    if (!context) {
+      await this.playTtsAudio(this.audioBlobUrl(buffer, "audio/wav"), runId);
+      return;
+    }
+    try {
+      if (context.state === "suspended") await context.resume();
+      const audioBuffer = await context.decodeAudioData(buffer.slice(0));
+      if (typeof runId === "number" && this.activeTtsRunId !== runId) return;
+      this.activeTtsMode = "playing";
+      this.activeTtsStartedAudio = true;
+      this.syncTtsOverlay();
+      await new Promise<void>((resolve, reject) => {
+        const source = context.createBufferSource();
+        this.activeWebAudioSource = source;
+        source.buffer = audioBuffer;
+        source.connect(context.destination);
+        source.onended = () => {
+          if (this.activeWebAudioSource === source) this.activeWebAudioSource = null;
+          resolve();
+        };
+        try {
+          source.start(0);
+        } catch (error) {
+          if (this.activeWebAudioSource === source) this.activeWebAudioSource = null;
+          if (typeof runId === "number" && this.activeTtsRunId !== runId) resolve();
+          else reject(error instanceof Error ? error : new Error(String(error)));
+        }
+      });
+    } catch {
+      this.stopWebAudioTts();
+      await this.playTtsAudio(this.audioBlobUrl(buffer, "audio/wav"), runId);
     }
   }
 
@@ -18990,15 +19048,61 @@ function primeTtsTextToIds(input: string): PrimeTtsIds {
 
 function normalizeChineseNumbersForPrimeTts(input: string): string {
   if (!/\d/.test(input) || !hasCjkText(input)) return input;
-  return input.replace(/\d+(?:\.\d+)?[%％]?/g, (match, offset: number, full: string) => {
-    if (!isChineseNumberContext(full, offset, match.length)) return match;
-    if (match.endsWith("%") || match.endsWith("％")) return `百分之${numberTokenToChinese(match.slice(0, -1))}`;
-    return numberTokenToChinese(match);
+  const mode = chineseNumberReadingMode(input);
+  if (mode === "none") return input;
+  const normalizedPatterns = normalizeChineseDateTimeNumbers(input, mode);
+  return normalizedPatterns.replace(/\d+(?:\.\d+)?[%％]?/g, (match, offset: number, full: string) => {
+    if (isProtectedNumberToken(full, offset, match.length)) return match;
+    if (mode !== "full" && !isChineseNumberContext(full, offset, match.length)) return match;
+    const before = full.slice(Math.max(0, offset - 6), offset);
+    const after = full.slice(offset + match.length, offset + match.length + 6);
+    if (match.endsWith("%") || match.endsWith("％")) return `百分之${numberTokenToChinese(match.slice(0, -1), "value")}`;
+    if (/年/.test(after.slice(0, 1)) && /^\d{2,4}$/.test(match)) return digitsToChinese(match);
+    if (/[月日号时点分秒]/.test(after.slice(0, 1))) return numberTokenToChinese(match, "value");
+    if (/[第]/.test(before.slice(-1)) || /[章节页条项次个]/.test(after.slice(0, 1))) return numberTokenToChinese(match, "value");
+    if (/[:：]\s*$/.test(before) || /^\s*[、，,.。)]/.test(after)) return numberTokenToChinese(match, "value");
+    return numberTokenToChinese(match, mode === "full" ? "auto" : "value");
   });
+}
+
+function normalizeChineseDateTimeNumbers(input: string, mode: "context" | "full"): string {
+  let output = input;
+  const shouldConvert = (full: string, offset: number, length: number): boolean => {
+    return mode === "full" || isChineseNumberContext(full, offset, length);
+  };
+  output = output.replace(/(^|[^\w./\\-])(\d{4})[\/.-](\d{1,2})[\/.-](\d{1,2})(?=$|[^\w./\\-])/g, (match, prefix: string, year: string, month: string, day: string, offset: number, full: string) => {
+    if (!shouldConvert(full, offset + prefix.length, match.length - prefix.length)) return match;
+    return `${prefix}${digitsToChinese(year)}年${numberTokenToChinese(month, "value")}月${numberTokenToChinese(day, "value")}日`;
+  });
+  output = output.replace(/(^|[^\w./\\-])(\d{1,2})[:：](\d{2})(?:[:：](\d{2}))?(?=$|[^\w./\\-])/g, (match, prefix: string, hour: string, minute: string, second: string | undefined, offset: number, full: string) => {
+    if (!shouldConvert(full, offset + prefix.length, match.length - prefix.length)) return match;
+    const secondText = second ? `${numberTokenToChinese(second, "value")}秒` : "";
+    return `${prefix}${numberTokenToChinese(hour, "value")}点${numberTokenToChinese(minute, "value")}分${secondText}`;
+  });
+  return output;
 }
 
 function hasCjkText(input: string): boolean {
   return /[\u3400-\u9fff]/.test(input);
+}
+
+function chineseNumberReadingMode(input: string): "none" | "context" | "full" {
+  const compact = input.replace(/\s+/g, "");
+  const cjkCount = (compact.match(/[\u3400-\u9fff]/g) ?? []).length;
+  const digitCount = (compact.match(/\d/g) ?? []).length;
+  const latinCount = (compact.match(/[A-Za-z]/g) ?? []).length;
+  if (!cjkCount || !digitCount) return "none";
+  if (cjkCount >= 4 && cjkCount >= latinCount * 2) return "full";
+  return "context";
+}
+
+function isProtectedNumberToken(text: string, offset: number, length: number): boolean {
+  const before = text.slice(Math.max(0, offset - 16), offset);
+  const after = text.slice(offset + length, offset + length + 16);
+  if (/https?:\/\/\S*$/i.test(before) || /(?:^|[\s([{<])(?:[A-Za-z]:)?(?:[./\\]|[A-Za-z0-9_-]+[./\\])[\w./\\-]*$/i.test(before)) return true;
+  if (/^[A-Za-z_./\\-]/.test(after) || /[A-Za-z_./\\-]$/.test(before)) return true;
+  if (/\bv(?:ersion)?\.?$/i.test(before) || /^[.\-]\d/.test(after)) return true;
+  return false;
 }
 
 function isChineseNumberContext(text: string, offset: number, length: number): boolean {
@@ -19008,15 +19112,20 @@ function isChineseNumberContext(text: string, offset: number, length: number): b
   return /[\u3400-\u9fff年月日号点第个条项次章节页岁分秒小时分钟%％：:，,。！？、；;（）()]/.test(before + after);
 }
 
-function numberTokenToChinese(token: string): string {
+function numberTokenToChinese(token: string, mode: "auto" | "value" | "digits" = "auto"): string {
   if (!token) return "";
+  if (mode === "digits") return digitsToChinese(token);
   if (token.includes(".")) {
     const [integer, fraction = ""] = token.split(".");
-    return `${integerNumberToChinese(integer)}点${fraction.split("").map((char) => CHINESE_DIGITS[Number(char)] ?? char).join("")}`;
+    return `${integerNumberToChinese(integer)}点${digitsToChinese(fraction)}`;
   }
-  if (/^0\d+/.test(token)) return token.split("").map((char) => CHINESE_DIGITS[Number(char)] ?? char).join("");
-  if (token.length === 4 && /^[12]\d{3}$/.test(token)) return token.split("").map((char) => CHINESE_DIGITS[Number(char)] ?? char).join("");
+  if (/^0\d+/.test(token)) return digitsToChinese(token);
+  if (mode === "auto" && token.length === 4 && /^[12]\d{3}$/.test(token)) return digitsToChinese(token);
   return integerNumberToChinese(token);
+}
+
+function digitsToChinese(input: string): string {
+  return input.split("").map((char) => CHINESE_DIGITS[Number(char)] ?? char).join("");
 }
 
 function integerNumberToChinese(input: string): string {
@@ -20337,11 +20446,12 @@ function splitPrimeTtsProgressiveText(input: string): string[] {
 }
 
 function primeTtsProgressiveBudget(index: number): number {
-  if (index <= 0) return 8;
-  if (index === 1) return 16;
-  if (index === 2) return 32;
-  if (index === 3) return 64;
-  return 112;
+  if (index <= 0) return 4;
+  if (index === 1) return 10;
+  if (index === 2) return 22;
+  if (index === 3) return 48;
+  if (index === 4) return 88;
+  return 128;
 }
 
 function primeTtsProgressiveTakeLength(text: string, budget: number): number {
@@ -20352,12 +20462,37 @@ function primeTtsProgressiveTakeLength(text: string, budget: number): number {
   const punctuation = "，,、：:；;。！？!?）)]】》」』”’\"'";
   for (let index = Math.min(hard, text.length) - 1; index >= min; index -= 1) {
     const char = text[index] ?? "";
-    if (punctuation.includes(char)) return index + 1;
+    if (punctuation.includes(char)) return adjustPrimeTtsTakeBoundary(text, index + 1, min, hard);
   }
   for (let index = Math.min(hard, text.length) - 1; index >= min; index -= 1) {
-    if (/\s/.test(text[index] ?? "")) return index + 1;
+    if (/\s/.test(text[index] ?? "")) return adjustPrimeTtsTakeBoundary(text, index + 1, min, hard);
   }
-  return Math.max(1, soft);
+  return adjustPrimeTtsTakeBoundary(text, Math.max(1, soft), min, hard);
+}
+
+function adjustPrimeTtsTakeBoundary(text: string, candidate: number, min: number, hard: number): number {
+  const cut = Math.max(1, Math.min(text.length, candidate));
+  if (cut >= text.length) return text.length;
+  const before = text[cut - 1] ?? "";
+  const after = text[cut] ?? "";
+  if (/\d/.test(before) && /[年月日号时点分秒%％]/.test(after)) {
+    let end = cut + 1;
+    while (end < text.length && /[年月日号时点分秒%％]/.test(text[end] ?? "")) end += 1;
+    if (end <= hard) return end;
+  }
+  if (!isPrimeTtsInlineTokenChar(before) || !isPrimeTtsInlineTokenChar(after)) return cut;
+  let start = cut - 1;
+  while (start > 0 && isPrimeTtsInlineTokenChar(text[start - 1] ?? "")) start -= 1;
+  let end = cut;
+  while (end < text.length && isPrimeTtsInlineTokenChar(text[end] ?? "")) end += 1;
+  while (end < text.length && /[年月日号时点分秒%％]/.test(text[end] ?? "")) end += 1;
+  if (start >= min) return start;
+  if (end <= hard) return end;
+  return cut;
+}
+
+function isPrimeTtsInlineTokenChar(char: string): boolean {
+  return /[A-Za-z0-9_.:%％]/.test(char);
 }
 
 function splitTtsTextSegments(input: string): string[] {
