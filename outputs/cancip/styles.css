@@ -2382,6 +2382,11 @@
   color: var(--text-on-accent);
 }
 
+.obcc-send.is-resumable {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
 .obcc-icon-button svg,
 .obcc-mode svg,
 .obcc-chip svg,
