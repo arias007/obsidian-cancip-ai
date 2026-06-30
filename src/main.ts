@@ -23,6 +23,7 @@ import {
 } from "obsidian";
 import { pinyin } from "pinyin-pro";
 import { DEFAULT_SYSTEM_PROMPT, LEGACY_SYSTEM_PROMPT, PLUGIN_NAME, VIEW_TYPE } from "./constants";
+import { PRIME_TTS_WORKER_SOURCE } from "./generated/primeTtsWorkerSource";
 import {
   buildObReviewGatePackage,
   formatReviewGateResult,
@@ -92,6 +93,7 @@ const BUILTIN_PRIME_TTS_OPTIONAL_ASSETS = [
 const BUILTIN_PRIME_TTS_INSTALL_STALE_MS = 120000;
 const BUILTIN_PRIME_TTS_PREFETCH_AHEAD = 3;
 const BUILTIN_PRIME_TTS_CACHE_KEEP_BEHIND = 1;
+const BUILTIN_PRIME_TTS_WARMUP_TEXT = "好。";
 const LANGUAGE_VALUES = ["zh", "zh-TW", "en", "ug", "tr", "ru", "ja", "ko", "es", "fr", "de", "ar"] as const;
 type Language = typeof LANGUAGE_VALUES[number];
 type LanguageMode = "auto" | Language;
@@ -339,13 +341,28 @@ type PrimeTtsMeta = {
   max_frames: number;
 };
 
-type PrimeTtsRuntime = {
+type PrimeTtsWorkerClient = {
+  worker: Worker;
+  requestId: number;
+  pending: Map<number, { resolve: (value: ArrayBuffer) => void; reject: (reason?: unknown) => void }>;
+};
+
+type PrimeTtsMainRuntime = {
+  kind: "main";
   ort: OrtModuleLike;
   encoder: OrtInferenceSessionLike;
   decoder: OrtInferenceSessionLike;
   vocoder: OrtInferenceSessionLike;
   meta: PrimeTtsMeta;
 };
+
+type PrimeTtsWorkerRuntime = {
+  kind: "worker";
+  client: PrimeTtsWorkerClient;
+  meta: PrimeTtsMeta;
+};
+
+type PrimeTtsRuntime = PrimeTtsMainRuntime | PrimeTtsWorkerRuntime;
 
 type PrimeTtsIds = {
   phoneIds: number[];
@@ -3768,6 +3785,8 @@ export default class CancipPlugin extends Plugin {
   private builtinPrimeTtsInstallStartedAt = 0;
   private builtinPrimeTtsInstallStatus = "";
   private builtinPrimeTtsInstallLastError = "";
+  private builtinPrimeTtsRuntimeLastError = "";
+  private builtinPrimeTtsWarmupSynthDone = false;
   private ttsOverlay: TtsOverlayElements | null = null;
   private ttsOverlayHideTimer: number | null = null;
   private ttsOverlayDragging = false;
@@ -3963,6 +3982,7 @@ export default class CancipPlugin extends Plugin {
 
   onunload(): void {
     this.stopTts(false);
+    this.disposeBuiltinPrimeTtsRuntime();
     this.builtinPrimeTtsRuntime = null;
     this.builtinPrimeTtsPromise = null;
     this.builtinPrimeTtsInstallPromise = null;
@@ -4221,7 +4241,11 @@ export default class CancipPlugin extends Plugin {
     if (this.builtinPrimeTtsRuntime || this.builtinPrimeTtsPromise) return;
     try {
       if ((await this.missingBuiltinPrimeTtsAssets()).length) return;
-      await this.loadBuiltinPrimeTts();
+      const runtime = await this.loadBuiltinPrimeTts();
+      if (!this.builtinPrimeTtsWarmupSynthDone) {
+        await this.synthesizeBuiltinPrimeTts(runtime, BUILTIN_PRIME_TTS_WARMUP_TEXT);
+        this.builtinPrimeTtsWarmupSynthDone = true;
+      }
     } catch (error) {
       console.debug("Cancip PrimeTTS warmup skipped", error);
     }
@@ -4690,6 +4714,23 @@ export default class CancipPlugin extends Plugin {
 
   private async createBuiltinPrimeTts(): Promise<PrimeTtsRuntime> {
     await this.assertBuiltinPrimeTtsAssets();
+    this.builtinPrimeTtsRuntimeLastError = "";
+    if (typeof Worker !== "undefined") {
+      try {
+        const runtime = await this.createBuiltinPrimeTtsWorkerRuntime();
+        this.builtinPrimeTtsRuntimeLastError = "";
+        return runtime;
+      } catch (error) {
+        this.builtinPrimeTtsRuntimeLastError = error instanceof Error ? error.message : String(error);
+        console.debug("Cancip PrimeTTS worker runtime unavailable; falling back to main thread", error);
+      }
+    } else {
+      this.builtinPrimeTtsRuntimeLastError = "Worker is not available";
+    }
+    return await this.createBuiltinPrimeTtsMainRuntime();
+  }
+
+  private async createBuiltinPrimeTtsMainRuntime(): Promise<PrimeTtsMainRuntime> {
     const ort = await import("onnxruntime-web/wasm") as unknown as OrtModuleLike;
     const [encoderBuffer, decoderBuffer, vocoderBuffer, metaText, wasmBuffer] = await Promise.all([
       this.app.vault.adapter.readBinary(BUILTIN_PRIME_TTS_ENCODER),
@@ -4706,7 +4747,81 @@ export default class CancipPlugin extends Plugin {
       ort.InferenceSession.create(decoderBuffer.slice(0), options),
       ort.InferenceSession.create(vocoderBuffer.slice(0), options)
     ]);
-    return { ort, encoder, decoder, vocoder, meta };
+    return { kind: "main", ort, encoder, decoder, vocoder, meta };
+  }
+
+  private async createBuiltinPrimeTtsWorkerRuntime(): Promise<PrimeTtsWorkerRuntime> {
+    const [encoderBuffer, decoderBuffer, vocoderBuffer, metaText, wasmBuffer] = await Promise.all([
+      this.app.vault.adapter.readBinary(BUILTIN_PRIME_TTS_ENCODER),
+      this.app.vault.adapter.readBinary(BUILTIN_PRIME_TTS_DECODER),
+      this.app.vault.adapter.readBinary(BUILTIN_PRIME_TTS_VOCODER),
+      this.app.vault.adapter.read(BUILTIN_PRIME_TTS_META),
+      this.app.vault.adapter.readBinary(`${BUILTIN_PRIME_TTS_ORT_BASE}/ort-wasm-simd-threaded.wasm`)
+    ]);
+    const meta = parsePrimeTtsMeta(metaText);
+    const workerUrl = createPrimeTtsWorkerUrl();
+    const worker = new Worker(workerUrl, { name: "cancip-prime-tts" });
+    window.setTimeout(() => URL.revokeObjectURL(workerUrl), 1000);
+    const client: PrimeTtsWorkerClient = { worker, requestId: 0, pending: new Map() };
+    worker.onmessage = (event: MessageEvent) => {
+      const message = event.data as { id?: number; type?: string; buffer?: ArrayBuffer; error?: string };
+      if (typeof message.id !== "number") return;
+      const pending = client.pending.get(message.id);
+      if (!pending) return;
+      client.pending.delete(message.id);
+      if (message.type === "result" && message.buffer) pending.resolve(message.buffer);
+      else pending.reject(new Error(message.error || "PrimeTTS worker failed"));
+    };
+    worker.onerror = (event) => {
+      const error = new Error(event.message || "PrimeTTS worker error");
+      for (const pending of client.pending.values()) pending.reject(error);
+      client.pending.clear();
+    };
+    const encoderTransfer = encoderBuffer.slice(0);
+    const decoderTransfer = decoderBuffer.slice(0);
+    const vocoderTransfer = vocoderBuffer.slice(0);
+    const wasmTransfer = wasmBuffer.slice(0);
+    await this.primeTtsWorkerRequest(client, "init", {
+      encoder: encoderTransfer,
+      decoder: decoderTransfer,
+      vocoder: vocoderTransfer,
+      meta,
+      wasm: wasmTransfer
+    }, [
+      encoderTransfer,
+      decoderTransfer,
+      vocoderTransfer,
+      wasmTransfer
+    ]);
+    return { kind: "worker", client, meta };
+  }
+
+  private primeTtsWorkerRequest(
+    client: PrimeTtsWorkerClient,
+    type: "init" | "synthesize",
+    payload: Record<string, unknown>,
+    transfer: Transferable[] = []
+  ): Promise<ArrayBuffer> {
+    const id = ++client.requestId;
+    return new Promise<ArrayBuffer>((resolve, reject) => {
+      client.pending.set(id, { resolve, reject });
+      try {
+        client.worker.postMessage({ id, type, ...payload }, transfer);
+      } catch (error) {
+        client.pending.delete(id);
+        reject(error);
+      }
+    });
+  }
+
+  private disposeBuiltinPrimeTtsRuntime(): void {
+    const runtime = this.builtinPrimeTtsRuntime;
+    if (runtime?.kind === "worker") {
+      for (const pending of runtime.client.pending.values()) pending.reject(new Error("PrimeTTS worker disposed"));
+      runtime.client.pending.clear();
+      runtime.client.worker.terminate();
+    }
+    this.builtinPrimeTtsWarmupSynthDone = false;
   }
 
   private async assertBuiltinPrimeTtsAssets(): Promise<void> {
@@ -4861,6 +4976,14 @@ export default class CancipPlugin extends Plugin {
   private async synthesizeBuiltinPrimeTts(runtime: PrimeTtsRuntime, text: string): Promise<ArrayBuffer> {
     const ids = primeTtsTextToIds(text);
     if (!ids.phoneIds.length) throw new Error("PrimeTTS frontend produced no phones");
+    if (runtime.kind === "worker") {
+      return await this.primeTtsWorkerRequest(runtime.client, "synthesize", {
+        phoneIds: ids.phoneIds,
+        toneIds: ids.toneIds,
+        langIds: ids.langIds,
+        rate: this.settings.ttsRate
+      });
+    }
     const { ort, encoder, decoder, vocoder, meta } = runtime;
     const phone = int64Tensor(ort, ids.phoneIds, [1, ids.phoneIds.length]);
     const tone = int64Tensor(ort, ids.toneIds, [1, ids.toneIds.length]);
@@ -5337,6 +5460,9 @@ export default class CancipPlugin extends Plugin {
       `- playback: ${this.formatTtsStatus().replace(/\n/g, " | ")}`,
       `- local PrimeTTS package: ${localPrimeStatus}`,
       `- PrimeTTS installer: ${this.builtinPrimeTtsInstallStatus || (this.builtinPrimeTtsInstallPromise ? this.t("ttsInstallingLocalPackage") : "idle")}`,
+      `- PrimeTTS runtime: ${this.builtinPrimeTtsRuntime?.kind ?? (this.builtinPrimeTtsPromise ? "loading" : "not loaded")}`,
+      `- PrimeTTS worker fallback reason: ${this.builtinPrimeTtsRuntimeLastError || "none"}`,
+      `- PrimeTTS warmup synth: ${this.builtinPrimeTtsWarmupSynthDone ? "done" : "not done"}`,
       `- PrimeTTS package URL: ${this.accelerateGithubDownloadUrl(BUILTIN_PRIME_TTS_PACKAGE_URL)}`,
       `- native bridge: ${nativeBridge ? nativeBridge.name : "not detected"}`,
       `- Web Speech: ${synth && typeof SpeechSynthesisUtterance !== "undefined" ? `available, voices=${voices.length}` : "not available"}`,
@@ -18817,9 +18943,10 @@ const PRIME_TTS_DIGIT_PHONES: Record<string, string[]> = {
   "0": ["Z", "IY", "R", "OW"], "1": ["W", "AH", "N"], "2": ["T", "UW"], "3": ["TH", "R", "IY"], "4": ["F", "AO", "R"],
   "5": ["F", "AY", "V"], "6": ["S", "IH", "K", "S"], "7": ["S", "EH", "V", "AH", "N"], "8": ["EY", "T"], "9": ["N", "AY", "N"]
 };
+const CHINESE_DIGITS = ["零", "一", "二", "三", "四", "五", "六", "七", "八", "九"] as const;
 
 function primeTtsTextToIds(input: string): PrimeTtsIds {
-  const normalized = primeTtsNormalizeText(input);
+  const normalized = primeTtsNormalizeText(normalizeChineseNumbersForPrimeTts(input));
   const phoneIds: number[] = [];
   const toneIds: number[] = [];
   const langIds: number[] = [];
@@ -18859,6 +18986,84 @@ function primeTtsTextToIds(input: string): PrimeTtsIds {
     index += 1;
   }
   return { phoneIds, toneIds, langIds };
+}
+
+function normalizeChineseNumbersForPrimeTts(input: string): string {
+  if (!/\d/.test(input) || !hasCjkText(input)) return input;
+  return input.replace(/\d+(?:\.\d+)?[%％]?/g, (match, offset: number, full: string) => {
+    if (!isChineseNumberContext(full, offset, match.length)) return match;
+    if (match.endsWith("%") || match.endsWith("％")) return `百分之${numberTokenToChinese(match.slice(0, -1))}`;
+    return numberTokenToChinese(match);
+  });
+}
+
+function hasCjkText(input: string): boolean {
+  return /[\u3400-\u9fff]/.test(input);
+}
+
+function isChineseNumberContext(text: string, offset: number, length: number): boolean {
+  const before = text.slice(Math.max(0, offset - 8), offset);
+  const after = text.slice(offset + length, offset + length + 8);
+  if (/https?:\/\/|[A-Za-z_./\\-]$/.test(before) || /^[A-Za-z_./\\-]/.test(after)) return false;
+  return /[\u3400-\u9fff年月日号点第个条项次章节页岁分秒小时分钟%％：:，,。！？、；;（）()]/.test(before + after);
+}
+
+function numberTokenToChinese(token: string): string {
+  if (!token) return "";
+  if (token.includes(".")) {
+    const [integer, fraction = ""] = token.split(".");
+    return `${integerNumberToChinese(integer)}点${fraction.split("").map((char) => CHINESE_DIGITS[Number(char)] ?? char).join("")}`;
+  }
+  if (/^0\d+/.test(token)) return token.split("").map((char) => CHINESE_DIGITS[Number(char)] ?? char).join("");
+  if (token.length === 4 && /^[12]\d{3}$/.test(token)) return token.split("").map((char) => CHINESE_DIGITS[Number(char)] ?? char).join("");
+  return integerNumberToChinese(token);
+}
+
+function integerNumberToChinese(input: string): string {
+  const value = Number.parseInt(input, 10);
+  if (!Number.isFinite(value)) return input;
+  if (value === 0) return "零";
+  if (value < 0 || value > 99999999) return input.split("").map((char) => CHINESE_DIGITS[Number(char)] ?? char).join("");
+  const units = ["", "十", "百", "千"];
+  const sectionUnits = ["", "万"];
+  const sections: number[] = [];
+  let rest = value;
+  while (rest > 0) {
+    sections.push(rest % 10000);
+    rest = Math.floor(rest / 10000);
+  }
+  let output = "";
+  let needZero = false;
+  for (let index = sections.length - 1; index >= 0; index -= 1) {
+    const section = sections[index];
+    if (section === 0) {
+      needZero = output.length > 0;
+      continue;
+    }
+    if (needZero || (output && section < 1000)) output += "零";
+    output += sectionToChinese(section, units) + sectionUnits[index];
+    needZero = section % 10 === 0;
+  }
+  return output.replace(/^一十/, "十").replace(/零+/g, "零").replace(/零$/g, "");
+}
+
+function sectionToChinese(section: number, units: string[]): string {
+  let output = "";
+  let zero = false;
+  for (let index = 3; index >= 0; index -= 1) {
+    const unitValue = 10 ** index;
+    const digit = Math.floor(section / unitValue) % 10;
+    if (digit === 0) {
+      if (output) zero = true;
+      continue;
+    }
+    if (zero) {
+      output += "零";
+      zero = false;
+    }
+    output += `${CHINESE_DIGITS[digit]}${units[index]}`;
+  }
+  return output;
 }
 
 function primeTtsNormalizeText(input: string): string {
@@ -20054,6 +20259,10 @@ function responseHeaderValue(headers: Record<string, string>, name: string): str
 async function blobUrlToArrayBuffer(url: string): Promise<ArrayBuffer> {
   const response = await XMLHttpRequestArrayBuffer(url);
   return response;
+}
+
+function createPrimeTtsWorkerUrl(): string {
+  return URL.createObjectURL(new Blob([PRIME_TTS_WORKER_SOURCE], { type: "text/javascript" }));
 }
 
 function XMLHttpRequestArrayBuffer(url: string): Promise<ArrayBuffer> {

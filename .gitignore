@@ -1,6 +1,7 @@
 node_modules/
 work/
 outputs/*.zip
+outputs/build/
 outputs/cancip/*.zip
 releases/*.zip
 reports/
