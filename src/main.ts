@@ -392,6 +392,8 @@ type TtsStatus = {
 
 type TtsOverlayElements = {
   root: HTMLElement;
+  bubble: HTMLButtonElement;
+  panel: HTMLElement;
   handle: HTMLElement;
   title: HTMLElement;
   meta: HTMLElement;
@@ -3777,6 +3779,9 @@ export default class CancipPlugin extends Plugin {
   private activeTtsLastError = "";
   private activeTtsStartedAudio = false;
   private activeTtsRunId = 0;
+  private activeTtsSourcePath = "";
+  private activeTtsSourceText = "";
+  private activeTtsSourceHighlightNodes: HTMLElement[] = [];
   private activeNativeBridge: NativeTtsBridge | null = null;
   private activeWebAudioContext: AudioContext | null = null;
   private activeWebAudioSource: AudioBufferSourceNode | null = null;
@@ -3795,6 +3800,8 @@ export default class CancipPlugin extends Plugin {
   private ttsOverlay: TtsOverlayElements | null = null;
   private ttsOverlayHideTimer: number | null = null;
   private ttsOverlayDragging = false;
+  private ttsOverlayDragMoved = false;
+  private ttsOverlayCollapsed = true;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -3902,7 +3909,7 @@ export default class CancipPlugin extends Plugin {
     });
 
     this.registerEvent(this.app.workspace.on("file-menu", (menu: Menu, file: TAbstractFile) => {
-      if (!(file instanceof TFile) || !isContextTextFile(file)) return;
+      if (!(file instanceof TFile) || (!isContextTextFile(file) && !isPdfFile(file))) return;
       menu.addItem((item) => {
         item
           .setTitle(this.t("speakNote"))
@@ -3912,6 +3919,10 @@ export default class CancipPlugin extends Plugin {
           });
       });
     }));
+    this.app.workspace.onLayoutReady(() => this.refreshTtsViewActions());
+    this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.refreshTtsViewActions()));
+    this.registerEvent(this.app.workspace.on("file-open", () => this.refreshTtsViewActions()));
+    this.registerEvent(this.app.workspace.on("layout-change", () => this.refreshTtsViewActions()));
 
     this.registerEvent(this.app.workspace.on("editor-menu", (menu: Menu, editor: Editor, view: MarkdownView) => {
       menu.addItem((item) => {
@@ -4010,22 +4021,22 @@ export default class CancipPlugin extends Plugin {
     this.statusBarBadgeEl = null;
   }
 
-  speakText(input: string, label?: string): void {
+  speakText(input: string, label?: string, sourcePath = "", sourceText = ""): void {
     const text = cleanTtsText(input);
     if (!text) {
       new Notice(this.t("ttsNoText"));
       return;
     }
-    void this.startTts(text, label);
+    void this.startTts(text, label, undefined, sourcePath, sourceText || text);
   }
 
-  speakTextWithProvider(input: string, provider: TtsProvider, label?: string): void {
+  speakTextWithProvider(input: string, provider: TtsProvider, label?: string, sourcePath = "", sourceText = ""): void {
     const text = cleanTtsText(input);
     if (!text) {
       new Notice(this.t("ttsNoText"));
       return;
     }
-    void this.startTts(text, label, provider);
+    void this.startTts(text, label, provider, sourcePath, sourceText || text);
   }
 
   obsidianConfigDir(): string {
@@ -4050,7 +4061,7 @@ export default class CancipPlugin extends Plugin {
     return `${this.obsidianConfigDir()}/community-plugins.json`;
   }
 
-  private async startTts(text: string, label?: string, forcedProvider?: TtsProvider): Promise<void> {
+  private async startTts(text: string, label?: string, forcedProvider?: TtsProvider, sourcePath = "", sourceText = ""): Promise<void> {
     try {
       this.stopTts(false);
       this.activeTtsLabel = label || "";
@@ -4061,6 +4072,8 @@ export default class CancipPlugin extends Plugin {
       this.activeTtsRunId += 1;
       this.activeTtsParts = splitTtsText(text, Math.max(120, Math.min(360, this.settings.ttsChunkChars || 240)), true);
       this.activeTtsPartIndex = 0;
+      this.activeTtsSourcePath = sourcePath;
+      this.activeTtsSourceText = sourceText || text;
       this.syncTtsOverlay();
       const providers = this.ttsProviderChain(forcedProvider, text);
       const errors: string[] = [];
@@ -4120,6 +4133,9 @@ export default class CancipPlugin extends Plugin {
     this.activeNativeBridge = null;
     this.activeTtsMode = showNotice ? "stopped" : "idle";
     this.activeTtsStartedAudio = false;
+    this.activeTtsSourcePath = "";
+    this.activeTtsSourceText = "";
+    this.clearTtsSourceHighlight();
     this.activeTtsPrimeCache.clear();
     this.activeTtsPrimeCacheRunId = 0;
     this.stopAudioTts();
@@ -4178,6 +4194,11 @@ export default class CancipPlugin extends Plugin {
       return;
     }
     const index = Math.max(0, Math.min(this.activeTtsParts.length - 1, Math.floor(part) - 1));
+    const parts = this.activeTtsParts.slice();
+    const label = this.activeTtsLabel;
+    const sourcePath = this.activeTtsSourcePath;
+    const sourceText = this.activeTtsSourceText;
+    const provider = this.activeTtsProvider || (isTtsProvider(this.settings.ttsProvider) ? this.settings.ttsProvider : "auto");
     this.stopAudioTts(false);
     this.stopWebAudioTts();
     try {
@@ -4185,16 +4206,23 @@ export default class CancipPlugin extends Plugin {
     } catch {
       // Best effort.
     }
+    void this.activeNativeBridge?.stop?.();
     this.activeTtsPartIndex = index;
+    this.activeTtsParts = parts;
+    this.activeTtsLabel = label;
+    this.activeTtsSourcePath = sourcePath;
+    this.activeTtsSourceText = sourceText;
     this.activeTtsPaused = false;
     this.activeTtsMode = "playing";
+    this.activeTtsStartedAudio = false;
     this.activeTtsRunId += 1;
     this.activeTtsPrimeCache.clear();
     this.activeTtsPrimeCacheRunId = 0;
     this.syncTtsOverlay();
-    const provider = this.activeTtsProvider || (isTtsProvider(this.settings.ttsProvider) ? this.settings.ttsProvider : "auto");
     const resumeProvider = provider === "auto" ? this.ttsProviderChain(undefined, this.activeTtsParts.join("\n\n")).find((item) => item !== "auto") ?? "web-speech" : provider;
-    void this.resumeTtsFromActivePart(resumeProvider);
+    window.setTimeout(() => {
+      void this.resumeTtsFromActivePart(resumeProvider);
+    }, 0);
     new Notice(this.t("ttsSeeked", { part: index + 1, total: this.activeTtsParts.length }));
     this.refreshOpenViews();
   }
@@ -4258,10 +4286,16 @@ export default class CancipPlugin extends Plugin {
 
   private createTtsOverlay(): TtsOverlayElements {
     if (this.ttsOverlay) return this.ttsOverlay;
-    const root = document.body.createDiv({ cls: "obcc-tts-floating is-hidden" });
+    const root = document.body.createDiv({ cls: "obcc-tts-floating is-hidden is-collapsed" });
     root.setAttribute("role", "region");
     root.setAttribute("aria-label", this.t("ttsFloatingTitle"));
-    const handle = root.createDiv({ cls: "obcc-tts-floating-handle" });
+    const bubble = root.createEl("button", {
+      cls: "obcc-tts-floating-bubble",
+      attr: { type: "button", title: this.t("ttsFloatingTitle"), "aria-label": this.t("ttsFloatingTitle"), "aria-expanded": "false" }
+    });
+    setIcon(bubble, "volume-2");
+    const panel = root.createDiv({ cls: "obcc-tts-floating-panel" });
+    const handle = panel.createDiv({ cls: "obcc-tts-floating-handle" });
     const titleWrap = handle.createDiv({ cls: "obcc-tts-floating-title-wrap" });
     const title = titleWrap.createDiv({ cls: "obcc-tts-floating-title", text: this.t("ttsFloatingTitle") });
     const meta = titleWrap.createDiv({ cls: "obcc-tts-floating-meta" });
@@ -4270,19 +4304,24 @@ export default class CancipPlugin extends Plugin {
       attr: { type: "button", title: this.t("ttsSettings"), "aria-label": this.t("ttsSettings"), "aria-expanded": "false" }
     });
     setIcon(settingsButton, "settings");
+    const collapseButton = handle.createEl("button", {
+      cls: "obcc-tts-floating-icon",
+      attr: { type: "button", title: this.t("ttsFloatingTitle"), "aria-label": this.t("ttsFloatingTitle") }
+    });
+    setIcon(collapseButton, "minimize-2");
     const stopButton = handle.createEl("button", {
       cls: "obcc-tts-floating-icon",
       attr: { type: "button", title: this.t("stopSpeaking"), "aria-label": this.t("stopSpeaking") }
     });
     setIcon(stopButton, "x");
-    const text = root.createDiv({ cls: "obcc-tts-floating-text" });
-    const progressRow = root.createDiv({ cls: "obcc-tts-floating-row" });
+    const text = panel.createDiv({ cls: "obcc-tts-floating-text" });
+    const progressRow = panel.createDiv({ cls: "obcc-tts-floating-row" });
     const progressLabel = progressRow.createDiv({ cls: "obcc-tts-floating-label" });
     const progress = progressRow.createEl("input", {
       cls: "obcc-tts-floating-range",
       attr: { type: "range", min: "1", max: "1", value: "1", step: "1", "aria-label": this.t("ttsPosition") }
     });
-    const settingsPanel = root.createDiv({ cls: "obcc-tts-floating-settings is-hidden" });
+    const settingsPanel = panel.createDiv({ cls: "obcc-tts-floating-settings is-hidden" });
     const providerSelect = settingsPanel.createEl("select", { cls: "obcc-tts-floating-select", attr: { "aria-label": this.t("settingsTtsProvider") } });
     for (const [value, label] of [
       ["auto", this.t("ttsProviderAuto")],
@@ -4308,7 +4347,7 @@ export default class CancipPlugin extends Plugin {
       cls: "obcc-tts-floating-rate-input",
       attr: { type: "range", min: "0.5", max: "1.5", value: "1", step: "0.05", "aria-label": this.t("settingsTtsPitch") }
     });
-    const controls = root.createDiv({ cls: "obcc-tts-floating-controls" });
+    const controls = panel.createDiv({ cls: "obcc-tts-floating-controls" });
     const previousButton = this.createTtsOverlayButton(controls, "skip-back", this.t("ttsPrevious"));
     const playPauseButton = this.createTtsOverlayButton(controls, "pause", this.t("pauseSpeaking"));
     const nextButton = this.createTtsOverlayButton(controls, "skip-forward", this.t("ttsNext"));
@@ -4322,6 +4361,14 @@ export default class CancipPlugin extends Plugin {
     stopButton.addEventListener("click", (event) => {
       event.stopPropagation();
       this.stopTts();
+    });
+    collapseButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      this.setTtsOverlayCollapsed(true);
+    });
+    bubble.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (!this.ttsOverlayDragMoved) this.setTtsOverlayCollapsed(false);
     });
     settingsButton.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -4387,6 +4434,7 @@ export default class CancipPlugin extends Plugin {
       void this.installBuiltinPrimeTtsPackage(true);
     });
     handle.addEventListener("pointerdown", (event) => this.startTtsOverlayDrag(event));
+    bubble.addEventListener("pointerdown", (event) => this.startTtsOverlayDrag(event));
     const keepInView = () => this.placeTtsOverlay(root, root.getBoundingClientRect().left, root.getBoundingClientRect().top);
     window.addEventListener("resize", keepInView);
     window.visualViewport?.addEventListener("resize", keepInView);
@@ -4397,8 +4445,19 @@ export default class CancipPlugin extends Plugin {
       window.visualViewport?.removeEventListener("scroll", keepInView);
     });
 
+    try {
+      const savedCollapsed = window.localStorage.getItem("cancip.ttsOverlayCollapsed");
+      if (savedCollapsed === "false") this.ttsOverlayCollapsed = false;
+    } catch {
+      // Storage can be disabled in constrained mobile WebViews.
+    }
+    root.toggleClass("is-collapsed", this.ttsOverlayCollapsed);
+    bubble.setAttr("aria-expanded", this.ttsOverlayCollapsed ? "false" : "true");
+
     this.ttsOverlay = {
       root,
+      bubble,
+      panel,
       handle,
       title,
       meta,
@@ -4423,6 +4482,20 @@ export default class CancipPlugin extends Plugin {
     return this.ttsOverlay;
   }
 
+  private setTtsOverlayCollapsed(collapsed: boolean): void {
+    this.ttsOverlayCollapsed = collapsed;
+    if (this.ttsOverlay) {
+      this.ttsOverlay.root.toggleClass("is-collapsed", collapsed);
+      this.ttsOverlay.bubble.setAttr("aria-expanded", collapsed ? "false" : "true");
+      this.placeTtsOverlay(this.ttsOverlay.root, this.ttsOverlay.root.getBoundingClientRect().left, this.ttsOverlay.root.getBoundingClientRect().top);
+    }
+    try {
+      window.localStorage.setItem("cancip.ttsOverlayCollapsed", collapsed ? "true" : "false");
+    } catch {
+      // Storage can be disabled in constrained mobile WebViews.
+    }
+  }
+
   private createTtsOverlayButton(parent: HTMLElement, icon: string, label: string): HTMLButtonElement {
     const button = parent.createEl("button", {
       cls: "obcc-tts-floating-icon",
@@ -4441,6 +4514,7 @@ export default class CancipPlugin extends Plugin {
     const status = this.ttsStatus();
     const shouldShow = status.mode !== "idle" || status.partCount > 0 || Boolean(status.lastError);
     overlay.root.toggleClass("is-hidden", !shouldShow);
+    overlay.root.toggleClass("is-collapsed", this.ttsOverlayCollapsed);
     overlay.root.toggleClass("is-paused", status.mode === "paused");
     overlay.root.toggleClass("is-starting", status.mode === "starting" || !status.startedAudio);
     overlay.root.toggleClass("is-failed", status.mode === "failed");
@@ -4451,6 +4525,8 @@ export default class CancipPlugin extends Plugin {
     const providerLabel = status.provider || this.t("ttsPreparing");
     overlay.meta.setText(status.partCount ? `${providerLabel} · ${current}/${status.partCount}` : providerLabel);
     overlay.text.setText(status.partText || (status.lastError ? status.lastError : this.t("ttsPreparing")));
+    overlay.bubble.setAttr("aria-label", status.partText ? `${this.t("ttsFloatingTitle")}: ${status.partText}` : this.t("ttsFloatingTitle"));
+    overlay.bubble.setAttr("aria-expanded", this.ttsOverlayCollapsed ? "false" : "true");
     overlay.progress.min = "1";
     overlay.progress.max = String(Math.max(1, status.partCount || 1));
     overlay.progress.value = String(Math.max(1, current || 1));
@@ -4478,22 +4554,29 @@ export default class CancipPlugin extends Plugin {
         overlay.root.addClass("is-hidden");
       }, status.mode === "failed" ? 8000 : 1800);
     }
+    this.updateTtsSourceHighlight();
   }
 
   private startTtsOverlayDrag(event: PointerEvent): void {
     if (event.button !== 0 && event.pointerType !== "touch" && event.pointerType !== "pen") return;
     const overlay = this.ttsOverlay;
     if (!overlay) return;
-    if ((event.target as HTMLElement | null)?.closest("button,input")) return;
+    const target = event.target as HTMLElement | null;
+    const isBubbleDrag = target === overlay.bubble || Boolean(target?.closest(".obcc-tts-floating-bubble"));
+    if (!isBubbleDrag && target?.closest("button,input")) return;
     event.preventDefault();
     const rect = overlay.root.getBoundingClientRect();
     const offsetX = event.clientX - rect.left;
     const offsetY = event.clientY - rect.top;
+    const startX = event.clientX;
+    const startY = event.clientY;
     this.ttsOverlayDragging = true;
+    this.ttsOverlayDragMoved = false;
     overlay.root.addClass("is-dragging");
     const move = (moveEvent: PointerEvent) => {
       if (!this.ttsOverlayDragging) return;
       moveEvent.preventDefault();
+      if (Math.abs(moveEvent.clientX - startX) > 3 || Math.abs(moveEvent.clientY - startY) > 3) this.ttsOverlayDragMoved = true;
       this.placeTtsOverlay(overlay.root, moveEvent.clientX - offsetX, moveEvent.clientY - offsetY);
     };
     const up = () => {
@@ -4544,6 +4627,135 @@ export default class CancipPlugin extends Plugin {
       window.localStorage.setItem("cancip.ttsOverlayPosition", JSON.stringify({ left: Math.round(rect.left), top: Math.round(rect.top) }));
     } catch {
       // Storage can be disabled in constrained mobile WebViews.
+    }
+  }
+
+  private refreshTtsViewActions(): void {
+    const leaves: WorkspaceLeaf[] = [];
+    this.app.workspace.iterateAllLeaves((leaf) => leaves.push(leaf));
+    for (const leaf of leaves) {
+      const view = leaf.view as unknown as { file?: TFile; containerEl?: HTMLElement };
+      const file = view.file instanceof TFile ? view.file : null;
+      const container = view.containerEl;
+      if (!container) continue;
+      const existing = container.querySelector(".obcc-view-tts-action") as HTMLButtonElement | null;
+      const canRead = Boolean(file && (isContextTextFile(file) || isPdfFile(file)));
+      if (!canRead) {
+        existing?.remove();
+        continue;
+      }
+      if (existing) continue;
+      const actions = container.querySelector(".view-actions") as HTMLElement | null;
+      if (!actions) continue;
+      const button = actions.createEl("button", {
+        cls: "clickable-icon view-action obcc-view-tts-action",
+        attr: { type: "button", title: this.t("speakNote"), "aria-label": this.t("speakNote") }
+      });
+      setIcon(button, "volume-2");
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const latestFile = (leaf.view as unknown as { file?: TFile }).file;
+        if (latestFile instanceof TFile && (isContextTextFile(latestFile) || isPdfFile(latestFile))) {
+          void this.speakFile(latestFile);
+        }
+      });
+    }
+  }
+
+  private clearTtsSourceHighlight(): void {
+    for (const node of this.activeTtsSourceHighlightNodes) {
+      if (!node.isConnected) continue;
+      const text = document.createTextNode(node.textContent ?? "");
+      node.replaceWith(text);
+      text.parentElement?.normalize();
+    }
+    this.activeTtsSourceHighlightNodes = [];
+    document.querySelectorAll(".obcc-tts-source-highlight").forEach((node) => {
+      if (!(node instanceof HTMLElement)) return;
+      const text = document.createTextNode(node.textContent ?? "");
+      node.replaceWith(text);
+      text.parentElement?.normalize();
+    });
+  }
+
+  private updateTtsSourceHighlight(): void {
+    const current = this.activeTtsParts[this.activeTtsPartIndex]?.trim();
+    if (!current || !this.activeTtsSourcePath) {
+      this.clearTtsSourceHighlight();
+      return;
+    }
+    const activeFile = this.app.workspace.getActiveFile();
+    if (activeFile?.path !== this.activeTtsSourcePath) return;
+    this.highlightActiveEditorTtsPart(current);
+    this.highlightActiveRenderedTtsPart(current);
+  }
+
+  private highlightActiveEditorTtsPart(current: string): void {
+    const editor = this.app.workspace.activeEditor?.editor;
+    const file = this.app.workspace.activeEditor?.file;
+    if (!editor || file?.path !== this.activeTtsSourcePath) return;
+    const value = editor.getValue();
+    const range = this.findTtsPartRange(value, current);
+    if (!range) return;
+    editor.scrollIntoView(range, true);
+  }
+
+  private highlightActiveRenderedTtsPart(current: string): void {
+    this.clearTtsSourceHighlight();
+    const leaf = this.app.workspace.activeLeaf;
+    const container = (leaf?.view as unknown as { containerEl?: HTMLElement } | null)?.containerEl;
+    if (!container) return;
+    const roots = Array.from(container.querySelectorAll(".markdown-preview-view, .pdf-viewer, .pdf-container, .pdfViewer, .textLayer"));
+    for (const root of roots) {
+      if (!(root instanceof HTMLElement)) continue;
+      if (this.wrapFirstTextMatch(root, current)) return;
+    }
+  }
+
+  private findTtsPartRange(source: string, current: string): { from: { line: number; ch: number }; to: { line: number; ch: number } } | null {
+    const needle = this.ttsHighlightNeedle(current);
+    if (!needle) return null;
+    const index = source.indexOf(needle);
+    if (index < 0) return null;
+    return {
+      from: offsetToEditorPosition(source, index),
+      to: offsetToEditorPosition(source, index + needle.length)
+    };
+  }
+
+  private ttsHighlightNeedle(current: string): string {
+    const compact = current.replace(/\s+/g, " ").trim();
+    if (!compact) return "";
+    return compact.length > 80 ? compact.slice(0, 80).trim() : compact;
+  }
+
+  private wrapFirstTextMatch(root: HTMLElement, current: string): boolean {
+    const needle = this.ttsHighlightNeedle(current);
+    if (!needle) return false;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode: (node) => {
+        const parent = node.parentElement;
+        if (!parent || parent.closest(".obcc-tts-floating, .obcc-view-tts-action, script, style, textarea, input, button")) return NodeFilter.FILTER_REJECT;
+        return node.textContent?.includes(needle) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
+      }
+    });
+    const node = walker.nextNode();
+    if (!node || !node.textContent) return false;
+    const index = node.textContent.indexOf(needle);
+    if (index < 0) return false;
+    const range = document.createRange();
+    range.setStart(node, index);
+    range.setEnd(node, index + needle.length);
+    const mark = document.createElement("span");
+    mark.addClass("obcc-tts-source-highlight");
+    try {
+      range.surroundContents(mark);
+      this.activeTtsSourceHighlightNodes = [mark];
+      mark.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
+      return true;
+    } catch {
+      return false;
     }
   }
 
@@ -4608,6 +4820,10 @@ export default class CancipPlugin extends Plugin {
     return false;
   }
 
+  private ttsPlaybackRate(): number {
+    return Math.max(0.5, Math.min(2, Number(this.settings.ttsRate) || 1));
+  }
+
   private async startBuiltinPrimeTts(text: string, existingParts?: string[], startIndex = 0): Promise<boolean> {
     const chunks = existingParts?.length ? existingParts.slice() : splitPrimeTtsProgressiveText(text);
     if (!chunks.length) return false;
@@ -4642,6 +4858,7 @@ export default class CancipPlugin extends Plugin {
       this.activeTtsPrimeCache.clear();
       this.activeTtsPrimeCacheRunId = 0;
       this.stopWebAudioTts();
+      this.clearTtsSourceHighlight();
       this.syncTtsOverlay();
       this.refreshOpenViews();
     }
@@ -4984,7 +5201,7 @@ export default class CancipPlugin extends Plugin {
         phoneIds: ids.phoneIds,
         toneIds: ids.toneIds,
         langIds: ids.langIds,
-        rate: this.settings.ttsRate
+        rate: 1
       });
     }
     const { ort, encoder, decoder, vocoder, meta } = runtime;
@@ -5009,7 +5226,7 @@ export default class CancipPlugin extends Plugin {
     const wavResult = await vocoder.run({ mel: melTensor });
     const wavTensor = requireOrtTensor(wavResult.wav, "wav");
     if (!(wavTensor.data instanceof Float32Array)) throw new Error("PrimeTTS vocoder returned non-float audio");
-    const wav = finalizePrimeTtsSamples(applyPrimeTtsRate(wavTensor.data, this.settings.ttsRate), meta.sample_rate);
+    const wav = finalizePrimeTtsSamples(wavTensor.data, meta.sample_rate);
     return encodePcm16Wav(wav, meta.sample_rate);
   }
 
@@ -5023,6 +5240,7 @@ export default class CancipPlugin extends Plugin {
     if (!nativeBridge) {
       return false;
     }
+    const runId = this.activeTtsRunId;
     this.activeTtsProvider = "android-system";
     this.activeTtsMode = "playing";
     this.activeTtsStartedAudio = true;
@@ -5030,7 +5248,7 @@ export default class CancipPlugin extends Plugin {
     this.activeTtsParts = existingParts?.length ? existingParts.slice() : splitTtsText(text, Math.max(200, Math.min(2000, this.settings.ttsChunkChars || 1800)), true);
     this.activeTtsPartIndex = Math.max(0, Math.min(Math.max(0, this.activeTtsParts.length - 1), startIndex));
     this.syncTtsOverlay();
-    await this.speakNativeTtsParts(nativeBridge);
+    await this.speakNativeTtsParts(nativeBridge, runId);
     return true;
   }
 
@@ -5079,6 +5297,7 @@ export default class CancipPlugin extends Plugin {
   private async startCustomUrlTts(text: string, provider: TtsProvider, existingParts?: string[], startIndex = 0): Promise<boolean> {
     const url = this.settings.ttsCustomUrl.trim();
     if (!url) return false;
+    const runId = this.activeTtsRunId;
     const chunks = existingParts?.length ? existingParts.slice() : splitTtsText(text, Math.max(120, Math.min(2400, this.settings.ttsChunkChars || 900)), true);
     this.activeTtsProvider = "custom-url";
     this.activeTtsMode = "playing";
@@ -5087,18 +5306,22 @@ export default class CancipPlugin extends Plugin {
     this.activeTtsPartIndex = Math.max(0, Math.min(Math.max(0, chunks.length - 1), startIndex));
     this.syncTtsOverlay();
     for (let index = this.activeTtsPartIndex; index < chunks.length; index += 1) {
-      if (!this.activeTtsParts.length) return true;
+      if (this.activeTtsRunId !== runId || !this.activeTtsParts.length) return true;
       this.activeTtsPartIndex = index;
       this.syncTtsOverlay();
       this.refreshOpenViews();
       const audioUrl = await this.fetchTtsAudioUrl(url, chunks[index], provider);
-      await this.playTtsAudio(audioUrl);
+      if (this.activeTtsRunId !== runId || !this.activeTtsParts.length) return true;
+      await this.playTtsAudio(audioUrl, runId);
     }
-    this.activeTtsParts = [];
-    this.activeTtsPartIndex = 0;
-    this.activeTtsMode = "idle";
-    this.syncTtsOverlay();
-    this.refreshOpenViews();
+    if (this.activeTtsRunId === runId) {
+      this.activeTtsParts = [];
+      this.activeTtsPartIndex = 0;
+      this.activeTtsMode = "idle";
+      this.clearTtsSourceHighlight();
+      this.syncTtsOverlay();
+      this.refreshOpenViews();
+    }
     return true;
   }
 
@@ -5170,6 +5393,7 @@ export default class CancipPlugin extends Plugin {
     const audio = new Audio(url);
     if (url.startsWith("blob:")) this.activeTtsAudioUrl = url;
     audio.preload = "auto";
+    audio.playbackRate = this.ttsPlaybackRate();
     this.activeTtsAudio = audio;
     this.activeTtsMode = "playing";
     this.activeTtsStartedAudio = true;
@@ -5249,6 +5473,7 @@ export default class CancipPlugin extends Plugin {
       if (context.state === "suspended") await context.resume();
       const audioBuffer = await context.decodeAudioData(buffer.slice(0));
       if (typeof runId === "number" && this.activeTtsRunId !== runId) return;
+      const playbackRate = this.ttsPlaybackRate();
       this.activeTtsMode = "playing";
       this.activeTtsStartedAudio = true;
       this.syncTtsOverlay();
@@ -5268,11 +5493,12 @@ export default class CancipPlugin extends Plugin {
         const source = context.createBufferSource();
         this.activeWebAudioSource = source;
         source.buffer = audioBuffer;
+        source.playbackRate.value = playbackRate;
         source.connect(context.destination);
         source.onended = finish;
         try {
           source.start();
-          window.setTimeout(finish, Math.ceil(audioBuffer.duration * 1000) + PRIME_TTS_PLAYBACK_DRAIN_MS + 80);
+          window.setTimeout(finish, Math.ceil(audioBuffer.duration * 1000 / playbackRate) + PRIME_TTS_PLAYBACK_DRAIN_MS + 80);
         } catch (error) {
           if (this.activeWebAudioSource === source) this.activeWebAudioSource = null;
           if (typeof runId === "number" && this.activeTtsRunId !== runId) resolve();
@@ -5303,6 +5529,7 @@ export default class CancipPlugin extends Plugin {
       void context.close().catch(() => undefined);
       return;
     }
+    const playbackRate = this.ttsPlaybackRate();
     await new Promise<void>((resolve, reject) => {
       const isCancelled = () => typeof runId === "number" && this.activeTtsRunId !== runId;
       let settled = false;
@@ -5321,11 +5548,12 @@ export default class CancipPlugin extends Plugin {
       const source = context.createBufferSource();
       this.activeWebAudioSource = source;
       source.buffer = audioBuffer;
+      source.playbackRate.value = playbackRate;
       source.connect(context.destination);
       source.onended = finish;
       try {
         source.start();
-        window.setTimeout(finish, Math.ceil(audioBuffer.duration * 1000) + PRIME_TTS_PLAYBACK_DRAIN_MS + 80);
+        window.setTimeout(finish, Math.ceil(audioBuffer.duration * 1000 / playbackRate) + PRIME_TTS_PLAYBACK_DRAIN_MS + 80);
       } catch (error) {
         if (this.activeWebAudioSource === source) this.activeWebAudioSource = null;
         if (this.activeWebAudioContext === context) this.activeWebAudioContext = null;
@@ -5367,23 +5595,26 @@ export default class CancipPlugin extends Plugin {
     this.activeWebAudioContext = null;
   }
 
-  private async speakNativeTtsParts(bridge: NativeTtsBridge): Promise<void> {
+  private async speakNativeTtsParts(bridge: NativeTtsBridge, runId: number): Promise<void> {
     const lang = this.ttsLanguageCode();
     try {
       for (let index = this.activeTtsPartIndex; index < this.activeTtsParts.length; index += 1) {
-        if (!this.activeTtsParts.length) return;
+        if (this.activeTtsRunId !== runId || !this.activeTtsParts.length) return;
         this.activeTtsPartIndex = index;
         this.syncTtsOverlay();
         this.refreshOpenViews();
         await bridge.speak(this.activeTtsParts[index], lang);
       }
     } finally {
-      this.activeTtsParts = [];
-      this.activeTtsPartIndex = 0;
-      this.activeUtterance = null;
-      this.activeTtsMode = "idle";
-      this.syncTtsOverlay();
-      this.refreshOpenViews();
+      if (this.activeTtsRunId === runId) {
+        this.activeTtsParts = [];
+        this.activeTtsPartIndex = 0;
+        this.activeUtterance = null;
+        this.activeTtsMode = "idle";
+        this.clearTtsSourceHighlight();
+        this.syncTtsOverlay();
+        this.refreshOpenViews();
+      }
     }
   }
 
@@ -5443,6 +5674,7 @@ export default class CancipPlugin extends Plugin {
         this.ttsKeepAliveTimer = null;
       }
       this.activeTtsMode = "idle";
+      this.clearTtsSourceHighlight();
       this.syncTtsOverlay();
       this.refreshOpenViews();
       return;
@@ -5614,13 +5846,13 @@ export default class CancipPlugin extends Plugin {
           new Notice(this.t("ttsPdfNoText"));
           return;
         }
-        this.speakText(content, file.basename);
+        this.speakText(content, file.basename, file.path, content);
         return;
       }
       const content = isMarkdownFile(file)
         ? await this.readMarkdownRenderedText(file, 30000)
         : await this.app.vault.cachedRead(file);
-      this.speakText(content, file.basename);
+      this.speakText(content, file.basename, file.path, content);
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       new Notice(this.t("actionFailed", { reason }));
@@ -18916,21 +19148,6 @@ function primeTtsHostRegulate(
   return { frameCount, hiddenSize, pitchSize, frames, frameMeta, localCtxRaw, absPos, pitchFrame, frameMask };
 }
 
-function applyPrimeTtsRate(samples: Float32Array, rate: number): Float32Array {
-  const safeRate = Math.max(0.5, Math.min(1.8, Number(rate) || 1));
-  if (Math.abs(safeRate - 1) < 0.03) return samples;
-  const outputLength = Math.max(1, Math.floor(samples.length / safeRate));
-  const output = new Float32Array(outputLength);
-  for (let index = 0; index < outputLength; index += 1) {
-    const source = index * safeRate;
-    const left = Math.floor(source);
-    const right = Math.min(samples.length - 1, left + 1);
-    const frac = source - left;
-    output[index] = samples[left] * (1 - frac) + samples[right] * frac;
-  }
-  return output;
-}
-
 function finalizePrimeTtsSamples(samples: Float32Array, sampleRate: number): Float32Array {
   if (!samples.length || !Number.isFinite(sampleRate) || sampleRate <= 0) return samples;
   let sum = 0;
@@ -20408,6 +20625,19 @@ function getWindowSelectionText(): string {
   } catch {
     return "";
   }
+}
+
+function offsetToEditorPosition(source: string, offset: number): { line: number; ch: number } {
+  const safeOffset = Math.max(0, Math.min(source.length, offset));
+  let line = 0;
+  let lineStart = 0;
+  for (let index = 0; index < safeOffset; index += 1) {
+    if (source.charCodeAt(index) === 10) {
+      line += 1;
+      lineStart = index + 1;
+    }
+  }
+  return { line, ch: safeOffset - lineStart };
 }
 
 function responseHeaderValue(headers: Record<string, string>, name: string): string {

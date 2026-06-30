@@ -95,7 +95,7 @@ function requireTensor(value: ort.Tensor | undefined, name: string): OrtTensorLi
   return value as unknown as OrtTensorLike;
 }
 
-async function synthesize(phoneIds: number[], toneIds: number[], langIds: number[], rate: number): Promise<ArrayBuffer> {
+async function synthesize(phoneIds: number[], toneIds: number[], langIds: number[], _rate: number): Promise<ArrayBuffer> {
   if (!runtime) throw new Error("PrimeTTS worker is not initialized");
   const { encoder, decoder, vocoder, meta } = runtime;
   const phone = int64Tensor(phoneIds, [1, phoneIds.length]);
@@ -118,7 +118,7 @@ async function synthesize(phoneIds: number[], toneIds: number[], langIds: number
   const wavResult = await vocoder.run({ mel: requireTensor(mel.mel, "mel") as unknown as ort.Tensor });
   const wavTensor = requireTensor(wavResult.wav, "wav");
   if (!(wavTensor.data instanceof Float32Array)) throw new Error("PrimeTTS vocoder returned non-float audio");
-  return encodePcm16Wav(finalizePrimeTtsSamples(applyPrimeTtsRate(wavTensor.data, rate), meta.sample_rate), meta.sample_rate);
+  return encodePcm16Wav(finalizePrimeTtsSamples(wavTensor.data, meta.sample_rate), meta.sample_rate);
 }
 
 function primeTtsHostRegulate(
@@ -194,21 +194,6 @@ function primeTtsHostRegulate(
     if (frameIndex >= frameCount) break;
   }
   return { frameCount, hiddenSize, pitchSize, frames, frameMeta, localCtxRaw, absPos, pitchFrame, frameMask };
-}
-
-function applyPrimeTtsRate(samples: Float32Array, rate: number): Float32Array {
-  const safeRate = Math.max(0.5, Math.min(1.8, Number(rate) || 1));
-  if (Math.abs(safeRate - 1) < 0.03) return samples;
-  const outputLength = Math.max(1, Math.floor(samples.length / safeRate));
-  const output = new Float32Array(outputLength);
-  for (let index = 0; index < outputLength; index += 1) {
-    const source = index * safeRate;
-    const left = Math.floor(source);
-    const right = Math.min(samples.length - 1, left + 1);
-    const frac = source - left;
-    output[index] = samples[left] * (1 - frac) + samples[right] * frac;
-  }
-  return output;
 }
 
 function finalizePrimeTtsSamples(samples: Float32Array, sampleRate: number): Float32Array {
