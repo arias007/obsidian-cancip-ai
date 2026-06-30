@@ -90,6 +90,8 @@ const BUILTIN_PRIME_TTS_OPTIONAL_ASSETS = [
   { relative: "README.md", path: `${BUILTIN_PRIME_TTS_BASE}/README.md` }
 ] as const;
 const BUILTIN_PRIME_TTS_INSTALL_STALE_MS = 120000;
+const BUILTIN_PRIME_TTS_PREFETCH_AHEAD = 3;
+const BUILTIN_PRIME_TTS_CACHE_KEEP_BEHIND = 1;
 const LANGUAGE_VALUES = ["zh", "zh-TW", "en", "ug", "tr", "ru", "ja", "ko", "es", "fr", "de", "ar"] as const;
 type Language = typeof LANGUAGE_VALUES[number];
 type LanguageMode = "auto" | Language;
@@ -3760,6 +3762,7 @@ export default class CancipPlugin extends Plugin {
   private activeTtsPrimeCacheRunId = 0;
   private builtinPrimeTtsPromise: Promise<PrimeTtsRuntime> | null = null;
   private builtinPrimeTtsRuntime: PrimeTtsRuntime | null = null;
+  private builtinPrimeTtsSynthesisQueue: Promise<void> = Promise.resolve();
   private builtinPrimeTtsWarmupTimer: number | null = null;
   private builtinPrimeTtsInstallPromise: Promise<string> | null = null;
   private builtinPrimeTtsInstallStartedAt = 0;
@@ -4075,6 +4078,8 @@ export default class CancipPlugin extends Plugin {
   }
 
   stopTts(showNotice = true): void {
+    this.activeTtsRunId += 1;
+    this.activeTtsLastError = "";
     if (this.ttsKeepAliveTimer !== null) {
       window.clearInterval(this.ttsKeepAliveTimer);
       this.ttsKeepAliveTimer = null;
@@ -4209,7 +4214,7 @@ export default class CancipPlugin extends Plugin {
     this.builtinPrimeTtsWarmupTimer = window.setTimeout(() => {
       this.builtinPrimeTtsWarmupTimer = null;
       void this.prewarmBuiltinPrimeTts();
-    }, Platform.isMobileApp ? 600 : 1200);
+    }, Platform.isMobileApp ? 120 : 500);
   }
 
   private async prewarmBuiltinPrimeTts(): Promise<void> {
@@ -4575,7 +4580,7 @@ export default class CancipPlugin extends Plugin {
   }
 
   private async startBuiltinPrimeTts(text: string, existingParts?: string[], startIndex = 0): Promise<boolean> {
-    const chunks = existingParts?.length ? existingParts.slice() : splitTtsText(text, Math.max(80, Math.min(260, this.settings.ttsChunkChars || 220)), true);
+    const chunks = existingParts?.length ? existingParts.slice() : splitPrimeTtsProgressiveText(text);
     if (!chunks.length) return false;
     const runId = this.activeTtsRunId;
     this.activeTtsProvider = "builtin-prime-tts";
@@ -4587,16 +4592,18 @@ export default class CancipPlugin extends Plugin {
     const runtime = await this.loadBuiltinPrimeTts();
     this.activeTtsPrimeCache.clear();
     this.activeTtsPrimeCacheRunId = runId;
+    this.prefetchPrimeTtsWindow(runtime, chunks, this.activeTtsPartIndex, runId);
     for (let index = this.activeTtsPartIndex; index < chunks.length; index += 1) {
       if (this.activeTtsRunId !== runId || !this.activeTtsParts.length) return true;
       this.activeTtsPartIndex = index;
       this.syncTtsOverlay();
       this.refreshOpenViews();
+      this.prefetchPrimeTtsWindow(runtime, chunks, index, runId);
       const wavUrl = await this.getPrimeTtsCachedAudioUrl(runtime, chunks, index, runId);
       if (this.activeTtsRunId !== runId || !this.activeTtsParts.length) return true;
-      this.prefetchPrimeTtsAudioUrl(runtime, chunks, index + 1, runId);
-      await this.playTtsAudio(wavUrl);
-      this.activeTtsPrimeCache.delete(index - 1);
+      this.prefetchPrimeTtsWindow(runtime, chunks, index + 1, runId);
+      await this.playTtsAudio(wavUrl, runId);
+      this.prunePrimeTtsCache(index);
     }
     if (this.activeTtsRunId === runId) {
       this.activeTtsParts = [];
@@ -4610,6 +4617,13 @@ export default class CancipPlugin extends Plugin {
     return true;
   }
 
+  private prefetchPrimeTtsWindow(runtime: PrimeTtsRuntime, chunks: string[], startIndex: number, runId: number): void {
+    const end = Math.min(chunks.length, Math.max(0, startIndex) + BUILTIN_PRIME_TTS_PREFETCH_AHEAD);
+    for (let index = Math.max(0, startIndex); index < end; index += 1) {
+      this.prefetchPrimeTtsAudioUrl(runtime, chunks, index, runId);
+    }
+  }
+
   private prefetchPrimeTtsAudioUrl(runtime: PrimeTtsRuntime, chunks: string[], index: number, runId: number): void {
     if (index < 0 || index >= chunks.length) return;
     if (this.activeTtsPrimeCacheRunId !== runId) {
@@ -4617,10 +4631,14 @@ export default class CancipPlugin extends Plugin {
       this.activeTtsPrimeCacheRunId = runId;
     }
     if (this.activeTtsPrimeCache.has(index)) return;
-    const promise = this.synthesizeBuiltinPrimeTts(runtime, chunks[index])
-      .then((wav) => this.audioBlobUrl(wav, "audio/wav", false))
+    const promise = this.queueBuiltinPrimeTtsSynthesis(runtime, chunks[index], runId)
+      .then((wav) => {
+        if (this.activeTtsRunId !== runId || this.activeTtsPrimeCacheRunId !== runId || !this.activeTtsParts.length) return "";
+        return this.audioBlobUrl(wav, "audio/wav", false);
+      })
       .catch((error) => {
         this.activeTtsPrimeCache.delete(index);
+        if (this.activeTtsRunId !== runId || !this.activeTtsParts.length) return "";
         throw error;
       });
     this.activeTtsPrimeCache.set(index, promise);
@@ -4634,10 +4652,27 @@ export default class CancipPlugin extends Plugin {
     this.prefetchPrimeTtsAudioUrl(runtime, chunks, index, runId);
     const promise = this.activeTtsPrimeCache.get(index);
     if (!promise) {
-      const wav = await this.synthesizeBuiltinPrimeTts(runtime, chunks[index]);
+      const wav = await this.queueBuiltinPrimeTtsSynthesis(runtime, chunks[index], runId);
       return this.audioBlobUrl(wav, "audio/wav", false);
     }
     return await promise;
+  }
+
+  private queueBuiltinPrimeTtsSynthesis(runtime: PrimeTtsRuntime, text: string, runId: number): Promise<ArrayBuffer> {
+    const task = this.builtinPrimeTtsSynthesisQueue.then(async () => {
+      if (this.activeTtsRunId !== runId || !this.activeTtsParts.length) throw new Error("tts cancelled");
+      const wav = await this.synthesizeBuiltinPrimeTts(runtime, text);
+      if (this.activeTtsRunId !== runId || !this.activeTtsParts.length) throw new Error("tts cancelled");
+      return wav;
+    });
+    this.builtinPrimeTtsSynthesisQueue = task.then(() => undefined, () => undefined);
+    return task;
+  }
+
+  private prunePrimeTtsCache(currentIndex: number): void {
+    for (const index of Array.from(this.activeTtsPrimeCache.keys())) {
+      if (index < currentIndex - BUILTIN_PRIME_TTS_CACHE_KEEP_BEHIND) this.activeTtsPrimeCache.delete(index);
+    }
   }
 
   private async loadBuiltinPrimeTts(): Promise<PrimeTtsRuntime> {
@@ -5004,7 +5039,7 @@ export default class CancipPlugin extends Plugin {
     return url;
   }
 
-  private async playTtsAudio(url: string): Promise<void> {
+  private async playTtsAudio(url: string, runId?: number): Promise<void> {
     this.stopAudioTts(false);
     const audio = new Audio(url);
     if (url.startsWith("blob:")) this.activeTtsAudioUrl = url;
@@ -5015,13 +5050,38 @@ export default class CancipPlugin extends Plugin {
     this.syncTtsOverlay();
     try {
       await new Promise<void>((resolve, reject) => {
-        audio.onended = () => resolve();
-        audio.onerror = () => reject(new Error("audio playback failed"));
+        const isCancelled = () => typeof runId === "number" && this.activeTtsRunId !== runId;
+        const cleanup = () => {
+          audio.onended = null;
+          audio.onerror = null;
+          audio.onpause = null;
+          audio.onemptied = null;
+          audio.onabort = null;
+        };
+        const finish = () => {
+          cleanup();
+          resolve();
+        };
+        const fail = () => {
+          cleanup();
+          if (isCancelled()) resolve();
+          else reject(new Error("audio playback failed"));
+        };
+        audio.onended = finish;
+        audio.onerror = fail;
+        audio.onabort = fail;
+        audio.onemptied = () => {
+          if (isCancelled()) finish();
+        };
+        audio.onpause = () => {
+          if (isCancelled()) finish();
+        };
         audio.play().then(() => undefined, reject);
       });
     } catch (error) {
+      if (typeof runId === "number" && this.activeTtsRunId !== runId) return;
       if (url.startsWith("blob:")) {
-        await this.playTtsAudioWithWebAudio(url);
+        await this.playTtsAudioWithWebAudio(url, runId);
       } else {
         throw error;
       }
@@ -5030,7 +5090,7 @@ export default class CancipPlugin extends Plugin {
     }
   }
 
-  private async playTtsAudioWithWebAudio(url: string): Promise<void> {
+  private async playTtsAudioWithWebAudio(url: string, runId?: number): Promise<void> {
     const audioWindow = window as Window & typeof window & { webkitAudioContext?: typeof AudioContext };
     const AudioContextCtor = audioWindow.AudioContext ?? audioWindow.webkitAudioContext;
     if (!AudioContextCtor) throw new Error("audio playback failed and Web Audio is not available");
@@ -5044,7 +5104,12 @@ export default class CancipPlugin extends Plugin {
     this.activeTtsStartedAudio = true;
     this.syncTtsOverlay();
     const audioBuffer = await context.decodeAudioData(buffer.slice(0));
+    if (typeof runId === "number" && this.activeTtsRunId !== runId) {
+      void context.close().catch(() => undefined);
+      return;
+    }
     await new Promise<void>((resolve, reject) => {
+      const isCancelled = () => typeof runId === "number" && this.activeTtsRunId !== runId;
       const source = context.createBufferSource();
       this.activeWebAudioSource = source;
       source.buffer = audioBuffer;
@@ -5061,7 +5126,8 @@ export default class CancipPlugin extends Plugin {
         if (this.activeWebAudioSource === source) this.activeWebAudioSource = null;
         if (this.activeWebAudioContext === context) this.activeWebAudioContext = null;
         void context.close().catch(() => undefined);
-        reject(error instanceof Error ? error : new Error(String(error)));
+        if (isCancelled()) resolve();
+        else reject(error instanceof Error ? error : new Error(String(error)));
       }
     });
   }
@@ -20039,6 +20105,50 @@ function splitTtsText(input: string, targetLength = 420, preferSentenceParts = f
   }
   push();
   return parts.slice(0, 120);
+}
+
+function splitPrimeTtsProgressiveText(input: string): string[] {
+  const normalized = input.replace(/\s+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  if (!normalized) return [];
+  const parts: string[] = [];
+  let chunkIndex = 0;
+  for (const rawSegment of splitTtsTextSegments(normalized)) {
+    let segment = rawSegment.trim();
+    while (segment) {
+      const budget = primeTtsProgressiveBudget(chunkIndex);
+      const takeLength = primeTtsProgressiveTakeLength(segment, budget);
+      const part = segment.slice(0, takeLength).trim();
+      if (part) parts.push(part);
+      segment = segment.slice(takeLength).trimStart();
+      chunkIndex += 1;
+      if (parts.length >= 180) return parts;
+    }
+  }
+  return parts;
+}
+
+function primeTtsProgressiveBudget(index: number): number {
+  if (index <= 0) return 8;
+  if (index === 1) return 16;
+  if (index === 2) return 32;
+  if (index === 3) return 64;
+  return 112;
+}
+
+function primeTtsProgressiveTakeLength(text: string, budget: number): number {
+  if (text.length <= Math.max(budget + 8, Math.floor(budget * 1.35))) return text.length;
+  const min = Math.max(2, Math.floor(budget * 0.6));
+  const hard = Math.min(text.length, Math.max(budget + 8, Math.floor(budget * 1.45)));
+  const soft = Math.min(text.length, budget);
+  const punctuation = "，,、：:；;。！？!?）)]】》」』”’\"'";
+  for (let index = Math.min(hard, text.length) - 1; index >= min; index -= 1) {
+    const char = text[index] ?? "";
+    if (punctuation.includes(char)) return index + 1;
+  }
+  for (let index = Math.min(hard, text.length) - 1; index >= min; index -= 1) {
+    if (/\s/.test(text[index] ?? "")) return index + 1;
+  }
+  return Math.max(1, soft);
 }
 
 function splitTtsTextSegments(input: string): string[] {
