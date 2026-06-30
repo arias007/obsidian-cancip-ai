@@ -95,6 +95,10 @@ const BUILTIN_PRIME_TTS_PREFETCH_AHEAD = 3;
 const BUILTIN_PRIME_TTS_CACHE_KEEP_BEHIND = 1;
 const BUILTIN_PRIME_TTS_WARMUP_TEXT = "好。";
 const BUILTIN_PRIME_TTS_WARMUP_SYNTH_DELAY_MS = 900;
+const PRIME_TTS_FADE_IN_MS = 8;
+const PRIME_TTS_FADE_OUT_MS = 36;
+const PRIME_TTS_TAIL_SILENCE_MS = 90;
+const PRIME_TTS_PLAYBACK_DRAIN_MS = 35;
 const LANGUAGE_VALUES = ["zh", "zh-TW", "en", "ug", "tr", "ru", "ja", "ko", "es", "fr", "de", "ar"] as const;
 type Language = typeof LANGUAGE_VALUES[number];
 type LanguageMode = "auto" | Language;
@@ -5005,7 +5009,7 @@ export default class CancipPlugin extends Plugin {
     const wavResult = await vocoder.run({ mel: melTensor });
     const wavTensor = requireOrtTensor(wavResult.wav, "wav");
     if (!(wavTensor.data instanceof Float32Array)) throw new Error("PrimeTTS vocoder returned non-float audio");
-    const wav = applyPrimeTtsRate(wavTensor.data, this.settings.ttsRate);
+    const wav = finalizePrimeTtsSamples(applyPrimeTtsRate(wavTensor.data, this.settings.ttsRate), meta.sample_rate);
     return encodePcm16Wav(wav, meta.sample_rate);
   }
 
@@ -5249,16 +5253,26 @@ export default class CancipPlugin extends Plugin {
       this.activeTtsStartedAudio = true;
       this.syncTtsOverlay();
       await new Promise<void>((resolve, reject) => {
+        const isCancelled = () => typeof runId === "number" && this.activeTtsRunId !== runId;
+        let settled = false;
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          if (this.activeWebAudioSource === source) this.activeWebAudioSource = null;
+          if (isCancelled()) {
+            resolve();
+            return;
+          }
+          window.setTimeout(resolve, PRIME_TTS_PLAYBACK_DRAIN_MS);
+        };
         const source = context.createBufferSource();
         this.activeWebAudioSource = source;
         source.buffer = audioBuffer;
         source.connect(context.destination);
-        source.onended = () => {
-          if (this.activeWebAudioSource === source) this.activeWebAudioSource = null;
-          resolve();
-        };
+        source.onended = finish;
         try {
-          source.start(0);
+          source.start();
+          window.setTimeout(finish, Math.ceil(audioBuffer.duration * 1000) + PRIME_TTS_PLAYBACK_DRAIN_MS + 80);
         } catch (error) {
           if (this.activeWebAudioSource === source) this.activeWebAudioSource = null;
           if (typeof runId === "number" && this.activeTtsRunId !== runId) resolve();
@@ -5291,18 +5305,27 @@ export default class CancipPlugin extends Plugin {
     }
     await new Promise<void>((resolve, reject) => {
       const isCancelled = () => typeof runId === "number" && this.activeTtsRunId !== runId;
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        if (this.activeWebAudioSource === source) this.activeWebAudioSource = null;
+        if (this.activeWebAudioContext === context) this.activeWebAudioContext = null;
+        void context.close().catch(() => undefined);
+        if (isCancelled()) {
+          resolve();
+          return;
+        }
+        window.setTimeout(resolve, PRIME_TTS_PLAYBACK_DRAIN_MS);
+      };
       const source = context.createBufferSource();
       this.activeWebAudioSource = source;
       source.buffer = audioBuffer;
       source.connect(context.destination);
-      source.onended = () => {
-        if (this.activeWebAudioSource === source) this.activeWebAudioSource = null;
-        if (this.activeWebAudioContext === context) this.activeWebAudioContext = null;
-        void context.close().catch(() => undefined);
-        resolve();
-      };
+      source.onended = finish;
       try {
-        source.start(0);
+        source.start();
+        window.setTimeout(finish, Math.ceil(audioBuffer.duration * 1000) + PRIME_TTS_PLAYBACK_DRAIN_MS + 80);
       } catch (error) {
         if (this.activeWebAudioSource === source) this.activeWebAudioSource = null;
         if (this.activeWebAudioContext === context) this.activeWebAudioContext = null;
@@ -18908,6 +18931,32 @@ function applyPrimeTtsRate(samples: Float32Array, rate: number): Float32Array {
   return output;
 }
 
+function finalizePrimeTtsSamples(samples: Float32Array, sampleRate: number): Float32Array {
+  if (!samples.length || !Number.isFinite(sampleRate) || sampleRate <= 0) return samples;
+  let sum = 0;
+  for (const sample of samples) sum += sample;
+  const dc = sum / samples.length;
+  const tailSamples = Math.max(0, Math.round(sampleRate * PRIME_TTS_TAIL_SILENCE_MS / 1000));
+  const output = new Float32Array(samples.length + tailSamples);
+  for (let index = 0; index < samples.length; index += 1) {
+    output[index] = Math.max(-1, Math.min(1, samples[index] - dc));
+  }
+  applyPrimeTtsEdgeEnvelope(output, sampleRate, samples.length);
+  return output;
+}
+
+function applyPrimeTtsEdgeEnvelope(samples: Float32Array, sampleRate: number, voicedLength: number): void {
+  const fadeInSamples = Math.min(voicedLength, Math.max(1, Math.round(sampleRate * PRIME_TTS_FADE_IN_MS / 1000)));
+  const fadeOutSamples = Math.min(voicedLength, Math.max(1, Math.round(sampleRate * PRIME_TTS_FADE_OUT_MS / 1000)));
+  for (let index = 0; index < fadeInSamples; index += 1) {
+    samples[index] *= (index + 1) / fadeInSamples;
+  }
+  const fadeStart = Math.max(0, voicedLength - fadeOutSamples);
+  for (let index = fadeStart; index < voicedLength; index += 1) {
+    samples[index] *= Math.max(0, (voicedLength - index - 1) / fadeOutSamples);
+  }
+}
+
 function ortTensorDataToNumbers(data: OrtTensorLike["data"]): number[] {
   if (data instanceof Float32Array) {
     return Array.from(data);
@@ -20450,11 +20499,10 @@ function splitPrimeTtsProgressiveText(input: string): string[] {
 }
 
 function primeTtsProgressiveBudget(index: number): number {
-  if (index <= 0) return 4;
-  if (index === 1) return 10;
-  if (index === 2) return 22;
-  if (index === 3) return 48;
-  if (index === 4) return 88;
+  if (index <= 0) return 8;
+  if (index === 1) return 18;
+  if (index === 2) return 40;
+  if (index === 3) return 80;
   return 128;
 }
 

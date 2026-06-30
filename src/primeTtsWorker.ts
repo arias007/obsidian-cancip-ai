@@ -1,5 +1,9 @@
 import * as ort from "onnxruntime-web/wasm";
 
+const PRIME_TTS_FADE_IN_MS = 8;
+const PRIME_TTS_FADE_OUT_MS = 36;
+const PRIME_TTS_TAIL_SILENCE_MS = 90;
+
 const workerSelf = self as unknown as {
   onmessage: ((event: MessageEvent<PrimeTtsWorkerMessage>) => void) | null;
   postMessage: (message: unknown, transfer?: Transferable[]) => void;
@@ -114,7 +118,7 @@ async function synthesize(phoneIds: number[], toneIds: number[], langIds: number
   const wavResult = await vocoder.run({ mel: requireTensor(mel.mel, "mel") as unknown as ort.Tensor });
   const wavTensor = requireTensor(wavResult.wav, "wav");
   if (!(wavTensor.data instanceof Float32Array)) throw new Error("PrimeTTS vocoder returned non-float audio");
-  return encodePcm16Wav(applyPrimeTtsRate(wavTensor.data, rate), meta.sample_rate);
+  return encodePcm16Wav(finalizePrimeTtsSamples(applyPrimeTtsRate(wavTensor.data, rate), meta.sample_rate), meta.sample_rate);
 }
 
 function primeTtsHostRegulate(
@@ -205,6 +209,32 @@ function applyPrimeTtsRate(samples: Float32Array, rate: number): Float32Array {
     output[index] = samples[left] * (1 - frac) + samples[right] * frac;
   }
   return output;
+}
+
+function finalizePrimeTtsSamples(samples: Float32Array, sampleRate: number): Float32Array {
+  if (!samples.length || !Number.isFinite(sampleRate) || sampleRate <= 0) return samples;
+  let sum = 0;
+  for (const sample of samples) sum += sample;
+  const dc = sum / samples.length;
+  const tailSamples = Math.max(0, Math.round(sampleRate * PRIME_TTS_TAIL_SILENCE_MS / 1000));
+  const output = new Float32Array(samples.length + tailSamples);
+  for (let index = 0; index < samples.length; index += 1) {
+    output[index] = Math.max(-1, Math.min(1, samples[index] - dc));
+  }
+  applyPrimeTtsEdgeEnvelope(output, sampleRate, samples.length);
+  return output;
+}
+
+function applyPrimeTtsEdgeEnvelope(samples: Float32Array, sampleRate: number, voicedLength: number): void {
+  const fadeInSamples = Math.min(voicedLength, Math.max(1, Math.round(sampleRate * PRIME_TTS_FADE_IN_MS / 1000)));
+  const fadeOutSamples = Math.min(voicedLength, Math.max(1, Math.round(sampleRate * PRIME_TTS_FADE_OUT_MS / 1000)));
+  for (let index = 0; index < fadeInSamples; index += 1) {
+    samples[index] *= (index + 1) / fadeInSamples;
+  }
+  const fadeStart = Math.max(0, voicedLength - fadeOutSamples);
+  for (let index = fadeStart; index < voicedLength; index += 1) {
+    samples[index] *= Math.max(0, (voicedLength - index - 1) / fadeOutSamples);
+  }
 }
 
 function ortTensorDataToNumbers(data: OrtTensorLike["data"]): number[] {
