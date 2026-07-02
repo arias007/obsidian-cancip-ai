@@ -887,6 +887,24 @@
   min-width: 0;
 }
 
+.obcc-tts-render-scratch {
+  position: fixed;
+  left: -10000px;
+  top: 0;
+  width: 360px;
+  pointer-events: none;
+  opacity: 0;
+}
+
+.obcc-ui-rule-flex-parent {
+  display: flex;
+}
+
+[data-cancip-ui-hidden="true"],
+[data-cancip-tag-hidden] {
+  display: none !important;
+}
+
 .obcc-view-tts-action {
   display: inline-flex !important;
   flex: 0 0 auto;
