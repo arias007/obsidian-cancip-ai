@@ -900,13 +900,13 @@
   display: flex;
 }
 
-[data-cancip-ui-hidden="true"],
-[data-cancip-tag-hidden] {
-  display: none !important;
+body [data-cancip-ui-hidden="true"],
+body [data-cancip-tag-hidden] {
+  display: none;
 }
 
-.obcc-view-tts-action {
-  display: inline-flex !important;
+body .obcc-view-tts-action {
+  display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
@@ -919,16 +919,16 @@
 
 .obcc-tts-source-highlight {
   border-radius: 3px;
-  background: color-mix(in srgb, var(--interactive-accent) 56%, transparent) !important;
+  background: color-mix(in srgb, var(--interactive-accent) 56%, transparent);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--interactive-accent) 86%, transparent) inset;
-  color: var(--text-normal) !important;
+  color: var(--text-normal);
 }
 
 .textLayer .obcc-tts-source-highlight,
 .pdfViewer .obcc-tts-source-highlight,
 .pdf-viewer .obcc-tts-source-highlight,
 .pdf-container .obcc-tts-source-highlight {
-  background: rgba(0, 24, 210, 1) !important;
+  background: rgba(0, 24, 210, 1);
   box-shadow: 0 0 0 2px rgba(255, 255, 255, 1) inset, 0 0 0 5px rgba(0, 12, 150, 1), 0 0 10px rgba(0, 0, 0, 0.42);
   outline: 4px solid rgba(0, 12, 150, 1);
   border-radius: 2px;
@@ -936,8 +936,8 @@
 }
 
 .textLayer span.obcc-tts-source-highlight {
-  color: transparent !important;
-  opacity: 1 !important;
+  color: transparent;
+  opacity: 1;
 }
 
 .obcc-user-actions {

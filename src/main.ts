@@ -109,9 +109,6 @@ const BUILTIN_PRIME_TTS_DECODE_AHEAD = 1;
 const BUILTIN_PRIME_TTS_WARMUP_TEXT = "好。";
 const BUILTIN_PRIME_TTS_WARMUP_SYNTH_DELAY_MS = 80;
 const PRIME_TTS_FAST_DEFAULT_CHARS = 96;
-const PRIME_TTS_FAST_FIRST_CHARS = 72;
-const PRIME_TTS_FAST_HARD_CHARS = 170;
-const PRIME_TTS_STARTER_CHARS = 10;
 const PRIME_TTS_STALL_MS = 1000;
 const PRIME_TTS_STALL_SKIP_MS = 2600;
 const PRIME_TTS_RUNTIME_STALL_MS = 1000;
@@ -120,7 +117,6 @@ const PRIME_TTS_MICRO_TARGET_CHARS = 4;
 const PRIME_TTS_MICRO_MAX_CHARS = 10;
 const PRIME_TTS_DISPLAY_TARGET_CHARS = 18;
 const PRIME_TTS_DISPLAY_MAX_CHARS = 34;
-const PRIME_TTS_LATIN_MICRO_MAX_CHARS = 4;
 const PRIME_TTS_LATIN_WORD_MAX_CHARS = 18;
 const PRIME_TTS_PROGRESSIVE_FALLBACK_CHARS = [2, 5, 10] as const;
 const PRIME_TTS_FADE_IN_MS = 4;
@@ -1180,10 +1176,8 @@ const PROCESS_DETAIL_MAX_CHARS = 120000;
 const TOOL_RESULT_DETAIL_MAX_CHARS = 120000;
 const REVIEW_GATE_DIR = `${CANCIP_AI_DIR}/Review`;
 const REVIEW_GATE_HIDDEN_DIR = `${CANCIP_CONFIG_DIR}/review-gates`;
-const REVIEW_GATE_SCHEMA_VERSION = 1;
 const REVIEW_GATE_MAX_FILES = 80;
 const REVIEW_GATE_MAX_FILE_CHARS = 120000;
-const RUNTIME_STATE_PATH = `${CANCIP_CONFIG_DIR}/runtime.json`;
 const CONTEXT_STEP_TIMEOUT_MS = 3500;
 const VAULT_SEARCH_TIME_BUDGET_MS = 2200;
 const VAULT_SEARCH_MAX_SCAN_FILES = 160;
@@ -4985,14 +4979,14 @@ export default class CancipPlugin extends Plugin {
       const container = view.containerEl;
       if (!container) continue;
       const leafContainer = (leaf as unknown as { containerEl?: HTMLElement }).containerEl ?? container.closest<HTMLElement>(".workspace-leaf") ?? container;
-      const actionRoots = Array.from(new Set([container, leafContainer].filter((root): root is HTMLElement => root instanceof activeDocument.defaultView!.HTMLElement)));
+      const actionRoots = Array.from(new Set([container, leafContainer].filter((root): root is HTMLElement => root.instanceOf(activeDocument.defaultView!.HTMLElement))));
       const actions = actionRoots
         .map((root) => root.querySelector(".view-header .view-actions, .view-actions"))
-        .find((el): el is HTMLElement => el instanceof activeDocument.defaultView!.HTMLElement) ?? null;
+        .find((el): el is HTMLElement => Boolean(el?.instanceOf(activeDocument.defaultView!.HTMLElement))) ?? null;
       const removalRoots = actions ? [actions] : actionRoots;
       const existing = removalRoots
         .map((root) => root.querySelector(".obcc-view-tts-action"))
-        .find((button): button is HTMLButtonElement => button instanceof activeDocument.defaultView!.HTMLButtonElement) ?? null;
+        .find((button): button is HTMLButtonElement => Boolean(button?.instanceOf(activeDocument.defaultView!.HTMLButtonElement))) ?? null;
       if (!this.settings.ttsShowViewActions) {
         for (const root of removalRoots) root.querySelectorAll(".obcc-view-tts-action").forEach((button) => button.remove());
         continue;
@@ -5100,7 +5094,7 @@ export default class CancipPlugin extends Plugin {
     }
     this.activeTtsSourceClassNodes = [];
     activeDocument.querySelectorAll(".obcc-tts-source-highlight").forEach((node) => {
-      if (!(node instanceof activeDocument.defaultView!.HTMLElement)) return;
+      if (!node.instanceOf(activeDocument.defaultView!.HTMLElement)) return;
       if (!node.hasClass("obcc-tts-source-wrap")) {
         node.removeClass("obcc-tts-source-highlight");
         return;
@@ -5199,7 +5193,7 @@ export default class CancipPlugin extends Plugin {
       if (this.highlightPdfTextLayerPart(container, current)) return true;
       const roots = Array.from(container.querySelectorAll(".markdown-preview-view, .markdown-rendered, .cm-content, .pdf-viewer, .pdf-container, .pdfViewer, .textLayer, .pdf-embed"));
       for (const root of roots) {
-        if (!(root instanceof activeDocument.defaultView!.HTMLElement)) continue;
+        if (!root.instanceOf(activeDocument.defaultView!.HTMLElement)) continue;
         if (this.highlightRenderedPart(root, current)) return true;
         if (this.wrapFirstTextMatch(root, current)) return true;
       }
@@ -5457,7 +5451,7 @@ export default class CancipPlugin extends Plugin {
     for (const root of roots) {
       const elements = Array.from(root.querySelectorAll(selector));
       for (const element of elements) {
-        if (!(element instanceof activeDocument.defaultView!.HTMLElement)) continue;
+        if (!element.instanceOf(activeDocument.defaultView!.HTMLElement)) continue;
         if (element.closest(".obcc-tts-floating, .obcc-view-tts-action, script, style, textarea, input, button")) continue;
         const rawText = element.tagName === "BR" ? "\n" : (element.innerText || element.textContent || "");
         const text = normalizeTtsHighlightText(rawText);
@@ -5493,7 +5487,7 @@ export default class CancipPlugin extends Plugin {
     let haystack = "";
     const elements = markdownViewportReadableItems(root, { top: Number.NEGATIVE_INFINITY, bottom: Number.POSITIVE_INFINITY });
     for (const { element } of elements) {
-      if (!(element instanceof activeDocument.defaultView!.HTMLElement)) continue;
+      if (!element.instanceOf(activeDocument.defaultView!.HTMLElement)) continue;
       if (element.closest(".obcc-tts-floating, .obcc-view-tts-action, script, style, textarea, input, button")) continue;
       const text = normalizeTtsHighlightText(renderedElementReadableText(element));
       if (!text) continue;
@@ -5765,12 +5759,11 @@ export default class CancipPlugin extends Plugin {
     if (this.activeTtsPrimeCache.has(index)) return;
     const sessionId = this.activeTtsPrimeCacheSessionId;
     const promise = this.queueBuiltinPrimeTtsSynthesis(runtime, chunks[index], sessionId)
-      .then((wav) => wav)
       .catch((error) => {
         this.activeTtsPrimeCache.delete(index);
         if (this.activeTtsPrimeCacheSessionId !== sessionId || !this.activeTtsParts.length) return new ArrayBuffer(0);
         throw error;
-      }) as Promise<ArrayBuffer>;
+      });
     this.activeTtsPrimeCache.set(index, promise);
   }
 
@@ -7068,7 +7061,7 @@ export default class CancipPlugin extends Plugin {
     const chunks: string[] = [];
     const seen = new Set<string>();
     for (const root of roots) {
-      if (!(root instanceof activeDocument.defaultView!.HTMLElement)) continue;
+      if (!root.instanceOf(activeDocument.defaultView!.HTMLElement)) continue;
       const text = extractVisiblePdfViewportText(root, maxChars);
       const key = normalizeTtsHighlightText(text);
       if (!key || seen.has(key)) continue;
@@ -8730,8 +8723,8 @@ class CancipReviewLeafView extends ItemView {
   private renderReviewDetail(parent: HTMLElement, data: ReviewGatePackageData, item: ReviewGateManifestItem, index: number, total: number): void {
     const root = this.containerEl.children[1] as HTMLElement;
     root.addClass("has-review-detail");
-    const body = parent.closest(".obcc-review-leaf-body") as HTMLElement | null;
-    const shell = parent.closest(".obcc-review-leaf-shell") as HTMLElement | null;
+    const body = parent.closest<HTMLElement>(".obcc-review-leaf-body");
+    const shell = parent.closest<HTMLElement>(".obcc-review-leaf-shell");
     const detail = parent.createDiv({ cls: "obcc-review-detail-view" });
     const toolbar = detail.createDiv({ cls: "obcc-review-detail-rail" });
     const content = detail.createDiv({ cls: "obcc-review-detail-content" });
@@ -9216,7 +9209,7 @@ class CancipView extends ItemView {
     this.render();
     this.registerEvent(this.app.workspace.on("file-open", () => this.renderContextChips()));
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.renderContextChips()));
-    this.registerDomEvent(document, "pointerdown", (event) => this.handleDocumentPointerDown(event));
+    this.registerDomEvent(activeDocument, "pointerdown", (event) => this.handleDocumentPointerDown(event));
     await this.ensureCurrentSessionRecord();
     await this.refreshVaultIndex(false);
   }
@@ -10264,7 +10257,7 @@ class CancipView extends ItemView {
     if (!(target instanceof Node)) return;
     if (this.activeMenu) {
       if (
-        target instanceof activeDocument.defaultView!.Element &&
+        target.instanceOf(activeDocument.defaultView!.Element) &&
         target.closest(".obcc-command-popover, .obcc-tool-button, .obcc-access-button, .obcc-model-button")
       ) {
         return;
@@ -10273,7 +10266,7 @@ class CancipView extends ItemView {
     }
     if (this.activeHeaderMenu) {
       if (
-      target instanceof activeDocument.defaultView!.Element &&
+        target.instanceOf(activeDocument.defaultView!.Element) &&
         target.closest(".obcc-history-popover, .obcc-icon-button, .obcc-plan-button")
       ) {
         return;
@@ -10578,7 +10571,7 @@ class CancipView extends ItemView {
 
   private scrollToMessage(messageId: string): void {
     const target = this.messagesEl.querySelector(`[data-message-id="${CSS.escape(messageId)}"]`);
-    if (target instanceof activeDocument.defaultView!.HTMLElement) {
+    if (target?.instanceOf(activeDocument.defaultView!.HTMLElement)) {
       target.scrollIntoView({ block: "center", behavior: "smooth" });
       target.addClass("is-outline-target");
       window.setTimeout(() => target.removeClass("is-outline-target"), 1200);
@@ -11254,7 +11247,8 @@ class CancipView extends ItemView {
       this.syncRequestControls();
       this.syncSessionChrome();
       this.renderMessages();
-      this.renderSources(this.messages.at(-1)?.sources ?? []);
+      const lastMessage = this.messages.length ? this.messages[this.messages.length - 1] : undefined;
+      this.renderSources(lastMessage?.sources ?? []);
       this.syncModeButtons();
       this.setStatus(this.t("sessionLoaded"));
       await this.updateSessionHistoryEntry(entry.id, { unread: false, completedNotice: false });
@@ -12741,7 +12735,8 @@ class CancipView extends ItemView {
     const recovered: SessionHistoryEntry[] = [];
     for (const [sessionId, sessionEvents] of bySession) {
       const first = sessionEvents[0];
-      const last = sessionEvents.at(-1) ?? first;
+      if (!first) continue;
+      const last = sessionEvents[sessionEvents.length - 1] ?? first;
       const path = `${SESSION_HISTORY_DIR}/${sessionId}.json`;
       recovered.push({
         id: sessionId,
@@ -13109,7 +13104,6 @@ class CancipView extends ItemView {
     const images: ImageAttachmentContext[] = [];
     const settings = this.plugin.settings;
     const policy = this.promptPayloadPolicy(prompt);
-    const lightContext = policy.intent === "trivial";
     const implementationContext = policy.intent === "implementation";
     if (!this.taskControl && prompt.trim()) {
       this.ensureTaskControl(rawPrompt, prompt);
@@ -14482,7 +14476,6 @@ class CancipView extends ItemView {
 
     const runs = actions.map((action) => this.createToolRun(action));
     if (message) message.toolRuns = runs;
-    const summary = runs.map((run) => run.summary).join("\n");
     if (options.readOnlyOnly) {
       const executable = runs.filter((run) => isReadOnlyAction(run.action));
       const blocked = runs.filter((run) => !isReadOnlyAction(run.action));
@@ -16707,7 +16700,7 @@ class CancipView extends ItemView {
     const result = this.domTarget(args);
     const el = result.element;
     const win = el.ownerDocument.defaultView ?? activeDocument.defaultView;
-    if (win && (el instanceof win.HTMLInputElement || el instanceof win.HTMLTextAreaElement)) {
+    if (win && (el.instanceOf(win.HTMLInputElement) || el.instanceOf(win.HTMLTextAreaElement))) {
       el.focus();
       el.value = append ? `${el.value}${text}` : text;
       el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
@@ -18150,7 +18143,7 @@ class CancipView extends ItemView {
       ".obcc-composer"
     ];
     const lines = selectors.map((selector) => {
-      const el = this.containerEl.ownerDocument.querySelector(selector) as HTMLElement | null;
+      const el = this.containerEl.ownerDocument.querySelector<HTMLElement>(selector);
       if (!el) return `${selector}: missing`;
       const style = window.getComputedStyle(el);
       const rect = el.getBoundingClientRect();
@@ -19087,7 +19080,7 @@ function isLocalVersionCandidate(file: TFile, maxBytes: number, obsidianConfigDi
 function isSensitiveLocalVersionPath(path: string): boolean {
   const lower = path.toLowerCase();
   if (lower.endsWith("config.json") || lower.includes(".config.")) return true;
-  return /(^|[\/._-])(secret|secrets|password|passwd|token|tokens|credential|credentials|recovery|codes|config|apikey|api-key|api_key|private-key|private_key|ssh-key|ssh_key)([\/._-]|$)/i.test(lower);
+  return /(^|[/._-])(secret|secrets|password|passwd|token|tokens|credential|credentials|recovery|codes|config|apikey|api-key|api_key|private-key|private_key|ssh-key|ssh_key)([/._-]|$)/i.test(lower);
 }
 
 function localDateKey(date: Date): string {
@@ -19104,15 +19097,6 @@ function safeVaultFileName(name: string): string {
 function isImportedCodexMemoryFile(path: string): boolean {
   const name = path.split("/").pop() ?? "";
   return (CODEX_CORE_MEMORY_FILES as readonly string[]).includes(name) || name === "README.md";
-}
-
-function sanitizeImportedMemory(content: string): string {
-  return content
-    .replace(/\0/g, "")
-    .replace(/sk-[A-Za-z0-9_-]{20,}/g, "[REDACTED_OPENAI_KEY]")
-    .replace(/ghp_[A-Za-z0-9_]{20,}/g, "[REDACTED_GITHUB_TOKEN]")
-    .replace(/github_pat_[A-Za-z0-9_]{20,}/g, "[REDACTED_GITHUB_TOKEN]")
-    .replace(/AKIA[0-9A-Z]{16}/g, "[REDACTED_AWS_KEY]");
 }
 
 function makeMemorySnippet(content: string, tokens: string[], maxChars: number): string {
@@ -19756,10 +19740,6 @@ function makeReviewDiffLines(oldText: string, newText: string): ReviewDiffLine[]
   return rows;
 }
 
-function changedReviewDiffLines(oldText: string, newText: string): ReviewDiffLine[] {
-  return makeReviewDiffLines(oldText, newText).filter((line) => line.kind === "added" || line.kind === "removed");
-}
-
 function reviewDiffHunks(oldText: string, newText: string, contextRadius = 2): ReviewDiffHunk[] {
   const lines = makeReviewDiffLines(oldText, newText);
   const changedIndexes = lines
@@ -19883,7 +19863,7 @@ function makeReviewDiffLinesByLcs(oldLines: string[], newLines: string[]): Revie
   const rows: ReviewDiffLine[] = [];
   const oldCount = oldLines.length;
   const newCount = newLines.length;
-  const table: number[][] = Array.from({ length: oldCount + 1 }, () => Array(newCount + 1).fill(0));
+  const table: number[][] = Array.from({ length: oldCount + 1 }, (): number[] => Array.from({ length: newCount + 1 }, () => 0));
   for (let oldIndex = oldCount - 1; oldIndex >= 0; oldIndex -= 1) {
     for (let newIndex = newCount - 1; newIndex >= 0; newIndex -= 1) {
       table[oldIndex][newIndex] = oldLines[oldIndex] === newLines[newIndex]
@@ -19932,7 +19912,7 @@ function mentionKindRank(kind: MentionKind): number {
 }
 
 function mentionPathKeywords(path: string, title: string): string[] {
-  const parts = path.split(/[\/\\._\-\s]+/).filter(Boolean);
+  const parts = path.split(/[/\\._\s-]+/).filter(Boolean);
   return uniqueStrings([path, title, path.replace(/\.[^.]+$/, ""), ...parts]);
 }
 
@@ -20087,8 +20067,9 @@ function firstStringValue(record: Record<string, unknown>, keys: string[]): stri
     const value = record[key];
     if (typeof value === "string" && value.trim()) return value.trim();
     if (Array.isArray(value)) {
-      const first = value.find((item) => typeof item === "string" && item.trim());
-      if (typeof first === "string") return first.trim();
+      for (const item of value) {
+        if (typeof item === "string" && item.trim()) return item.trim();
+      }
     }
   }
   return "";
@@ -20168,7 +20149,7 @@ function scoreSkillForPrompt(skill: CancipSkill, prompt: string): number {
 
 function isSkillLikeMention(path: string, title: string): boolean {
   const text = `${path}\n${title}`.toLowerCase();
-  return /(^|[\/\\._\-\s])skills?($|[\/\\._\-\s])/.test(text) || text.includes("skillob") || text.includes("skill.md") || /技能|能力/.test(text);
+  return /(^|[/\\._\s-])skills?($|[/\\._\s-])/.test(text) || text.includes("skillob") || text.includes("skill.md") || /技能|能力/.test(text);
 }
 
 function mentionQueryParts(query: string): string[] {
@@ -20617,16 +20598,6 @@ function usefulResultLines(result: string): string[] {
     .map((line) => trimContext(redactSensitiveText(line), 220));
 }
 
-function summarizeFolderListing(result: string): string {
-  const lines = usefulResultLines(result);
-  const folderLine = lines.find((line) => /^folder\s+/i.test(line));
-  const folderCount = lines.find((line) => /^folders:\s*\d+/i.test(line));
-  const fileCount = lines.find((line) => /^files:\s*\d+/i.test(line));
-  const entries = lines.filter((line) => /^\[(file|folder)\]\s+/i.test(line)).slice(0, 50);
-  if (!folderLine && !folderCount && !fileCount && !entries.length) return "";
-  return [folderLine, folderCount, fileCount, entries.length ? entries.join("\n") : ""].filter(Boolean).join("\n");
-}
-
 function describeActionPlain(action: CancipAction): string {
   if (action.type === "read") return `read ${action.path}`;
   if (action.type === "command") return `command ${action.command}`;
@@ -20840,7 +20811,7 @@ function isRepairSlashCommand(input: string): boolean {
 }
 
 function looksLikePathQuery(input: string): boolean {
-  return /(^|[\s"'`])\.?[A-Za-z0-9_\-\u4e00-\u9fff]+[\/\\][^\s"'`]+/.test(input) || /\.[A-Za-z0-9]{2,6}($|[\s"'`，。；,;])/.test(input);
+  return /(^|[\s"'`])\.?[A-Za-z0-9_\-\u4e00-\u9fff]+[/\\][^\s"'`]+/.test(input) || /\.[A-Za-z0-9]{2,6}($|[\s"'`，。；,;])/.test(input);
 }
 
 function shouldScanHiddenForQuery(query: string): boolean {
@@ -20971,22 +20942,6 @@ function defaultTtsVoiceForLanguage(lang: string): string {
   if (lower.startsWith("tr")) return "tr-TR-EmelNeural";
   if (lower.startsWith("ar")) return "ar-SA-ZariyahNeural";
   return "en-US-AvaMultilingualNeural";
-}
-
-function mimeTypeForPath(path: string): string {
-  const lower = path.toLowerCase();
-  if (lower.endsWith(".json")) return "application/json";
-  if (lower.endsWith(".wasm")) return "application/wasm";
-  if (lower.endsWith(".mjs") || lower.endsWith(".js")) return "text/javascript";
-  if (lower.endsWith(".onnx")) return "application/octet-stream";
-  if (lower.endsWith(".wav")) return "audio/wav";
-  if (lower.endsWith(".mp3")) return "audio/mpeg";
-  return "application/octet-stream";
-}
-
-function languageFromVoiceName(voice: string): string {
-  const match = voice.trim().match(/^([a-z]{2,3}(?:-[A-Z]{2})?)(?:-|$)/);
-  return match?.[1] ?? "";
 }
 
 function base64ToArrayBuffer(input: string): ArrayBuffer {
@@ -21388,7 +21343,7 @@ function normalizeChineseDateTimeNumbers(input: string, mode: "context" | "full"
   const shouldConvert = (full: string, offset: number, length: number): boolean => {
     return mode === "full" || isChineseNumberContext(full, offset, length);
   };
-  output = output.replace(/(^|[^\w./\\-])(\d{4})[\/.-](\d{1,2})[\/.-](\d{1,2})(?=$|[^\w./\\-])/g, (match, prefix: string, year: string, month: string, day: string, offset: number, full: string) => {
+  output = output.replace(/(^|[^\w./\\-])(\d{4})[/.-](\d{1,2})[/.-](\d{1,2})(?=$|[^\w./\\-])/g, (match, prefix: string, year: string, month: string, day: string, offset: number, full: string) => {
     if (!shouldConvert(full, offset + prefix.length, match.length - prefix.length)) return match;
     return `${prefix}${digitsToChinese(year)}年${numberTokenToChinese(month, "value")}月${numberTokenToChinese(day, "value")}日`;
   });
@@ -21430,7 +21385,7 @@ function isProtectedNumberToken(text: string, offset: number, length: number): b
   const after = text.slice(offset + length, offset + length + 16);
   if (/https?:\/\/\S*$/i.test(before) || /(?:^|[\s([{<])(?:[A-Za-z]:)?(?:[./\\]|[A-Za-z0-9_-]+[./\\])[\w./\\-]*$/i.test(before)) return true;
   if (/^[A-Za-z_./\\-]/.test(after) || /[A-Za-z_./\\-]$/.test(before)) return true;
-  if (/\bv(?:ersion)?\.?$/i.test(before) || /^[.\-]\d/.test(after)) return true;
+  if (/\bv(?:ersion)?\.?$/i.test(before) || /^[.-]\d/.test(after)) return true;
   return false;
 }
 
@@ -22374,7 +22329,8 @@ function deepMergeJsonObject(target: Record<string, unknown>, patch: Record<stri
     if (!key) continue;
     const keyPath = prefix ? `${prefix}.${key}` : key;
     if (isRecord(value) && isRecord(target[key])) {
-      deepMergeJsonObject(target[key] as Record<string, unknown>, value, changed, keyPath);
+      const current = target[key];
+      deepMergeJsonObject(current, value, changed, keyPath);
       continue;
     }
     target[key] = cloneJsonValue(value);
@@ -22670,7 +22626,7 @@ function messageOutlineText(content: string): string {
     .replace(/<!--[\s\S]*?-->/g, "")
     .replace(/<details>[\s\S]*?<\/details>/gi, " ")
     .replace(/```[\s\S]*?```/g, " ")
-    .replace(/[#>*_\-[\]()`]+/g, " ")
+    .replace(/[#>*_[\]()`-]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
   return trimContext(text, 180);
@@ -22717,7 +22673,7 @@ function cleanTtsText(input: string): string {
       .replace(/!\[[^\]]*]\([^)]+\)/g, " ")
       .replace(/\[([^\]]+)]\([^)]+\)/g, "$1")
       .replace(/\[\[([^\]|]+)(?:\|([^\]]+))?]]/g, (_full, path: string, alias: string | undefined) => alias || path)
-      .replace(/^[\s>*#\-+=[\]_|]+/gm, "")
+    .replace(/^[\s>*#+=[\]_|-]+/gm, "")
       .replace(/[ \t]{2,}/g, " ")
       .replace(/\n{3,}/g, "\n\n")
       .trim(),
@@ -22890,7 +22846,7 @@ function ttsReadableScrollContainer(root?: HTMLElement): HTMLElement | null {
   const preferred = root?.closest<HTMLElement>(".markdown-preview-view, .cm-scroller, .pdf-container, .pdf-viewer, .pdfViewer, .view-content, .workspace-leaf-content");
   if (preferred && preferred.getBoundingClientRect().height > 120) return preferred;
   let node: HTMLElement | null = root ?? null;
-  while (node && node !== document.body) {
+  while (node && node !== (root?.ownerDocument ?? activeDocument).body) {
     const rect = node.getBoundingClientRect();
     const style = window.getComputedStyle(node);
     const scrollable = /(auto|scroll|overlay)/.test(style.overflowY) || node.scrollHeight > node.clientHeight + 8;
@@ -23025,8 +22981,8 @@ function isPdfStandaloneLine(line: string): boolean {
 }
 
 function looksLikePdfTableLine(line: string): boolean {
-  if (/[|	]/.test(line)) return true;
-  const digitGroups = line.match(/\b\d+(?:[.,:：/\-]\d+)*\b/g)?.length ?? 0;
+  if (line.includes("|") || line.includes("\t")) return true;
+  const digitGroups = line.match(/\b\d+(?:[.,:：/-]\d+)*\b/g)?.length ?? 0;
   const asciiGroups = line.match(/[A-Za-z0-9]{1,16}/g)?.length ?? 0;
   return digitGroups >= 3 && asciiGroups >= 5;
 }
@@ -23074,12 +23030,8 @@ function getWindowSelectionText(): string {
 function normalizeTtsHighlightText(input: string): string {
   return input
     .replace(/\s+/g, "")
-    .replace(/[，。！？；：、,.!?;:"'“”‘’（）()\[\]【】{}<>《》\-—_~`|/\\]/g, "")
+    .replace(/[，。！？；：、,.!?;:"'“”‘’（）()[\]【】{}<>《》—_~`|/\\-]/g, "")
     .trim();
-}
-
-function findBestNormalizedNeedle(haystack: string, needle: string, preferShortFallback = false): string | null {
-  return findBestNormalizedNeedleMatch(haystack, needle, preferShortFallback)?.needle ?? null;
 }
 
 function findBestNormalizedNeedleMatch(haystack: string, needle: string, preferShortFallback = false, cursor = 0): { needle: string; index: number } | null {
@@ -23180,20 +23132,6 @@ function normalizedTextWithSourceOffsets(input: string): { text: string; offsets
     offsets.push(index);
   }
   return { text, offsets };
-}
-
-function textFromAnchor(fullText: string, anchorText: string, maxChars: number): string {
-  if (!fullText.trim()) return trimContext(anchorText, maxChars);
-  const normalizedFull = normalizedTextWithSourceOffsets(fullText);
-  const anchor = normalizeTtsHighlightText(anchorText).slice(0, 180);
-  if (anchor.length >= 3) {
-    const match = findBestNormalizedNeedleMatch(normalizedFull.text, anchor, true, 0);
-    if (match) {
-      const offset = normalizedFull.offsets[match.index] ?? 0;
-      return trimContext(fullText.slice(offset), maxChars);
-    }
-  }
-  return anchorText.trim() ? trimContext(anchorText, maxChars) : trimContext(fullText, maxChars);
 }
 
 function offsetToEditorPosition(source: string, offset: number): { line: number; ch: number } {
@@ -23351,37 +23289,6 @@ function primeTtsFastTargetLength(configured: number): number {
   const numeric = Number(configured) || 0;
   if (!numeric || numeric >= 500) return PRIME_TTS_FAST_DEFAULT_CHARS;
   return Math.max(64, Math.min(150, Math.floor(numeric)));
-}
-
-function splitPrimeTtsFastPlayText(input: string, targetLength = PRIME_TTS_FAST_DEFAULT_CHARS): string[] {
-  const normalized = normalizePrimeTtsPlayText(input);
-  if (!normalized) return [];
-  const target = primeTtsFastTargetLength(targetLength);
-  const parts: string[] = [];
-  for (const segment of splitTtsTextSegments(normalized)) {
-    let rest = segment.text.trim();
-    let chunkInSegment = 0;
-    while (rest) {
-      const dynamicTarget = chunkInSegment === 0
-        ? Math.min(target, PRIME_TTS_FAST_FIRST_CHARS)
-        : target;
-      const hard = Math.max(dynamicTarget + 36, Math.min(PRIME_TTS_FAST_HARD_CHARS, Math.floor(dynamicTarget * 1.55)));
-      const shouldSplit = rest.length > hard
-        || (chunkInSegment === 0 && rest.length > dynamicTarget + 20)
-        || rest.length > target + 46;
-      if (!shouldSplit) {
-        parts.push(rest.trim());
-        break;
-      }
-      const take = Math.max(1, Math.min(rest.length, primeTtsFastTakeLength(rest, dynamicTarget, hard, chunkInSegment)));
-      parts.push(rest.slice(0, take).trim());
-      rest = rest.slice(take).trimStart();
-      chunkInSegment += 1;
-      if (parts.length >= TTS_MAX_PARTS) return parts.filter(Boolean);
-    }
-    if (parts.length >= TTS_MAX_PARTS) break;
-  }
-  return parts.filter(Boolean);
 }
 
 function splitPrimeTtsDisplayText(input: string): string[] {
@@ -23640,32 +23547,8 @@ function hasPrimeTtsReadableToken(input: string): boolean {
 }
 
 function isPrimeTtsIgnorableSymbolChar(char: string): boolean {
-  return /[\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufe00-\ufe0f]/.test(char);
-}
-
-function primeTtsFastTakeLength(text: string, targetLength: number, hardLength: number, chunkIndex = 0): number {
-  if (text.length <= targetLength + 12) return text.length;
-  const min = Math.max(chunkIndex === 0 ? 34 : 46, Math.floor(targetLength * 0.55));
-  const hard = Math.min(text.length, hardLength);
-  for (let index = hard - 1; index >= min; index -= 1) {
-    const char = text[index] ?? "";
-    if ("。！？!?；;".includes(char) && isPrimeTtsStrongBreak(text, index)) {
-      return adjustPrimeTtsTakeBoundary(text, index + 1, min, hard);
-    }
-  }
-  for (let index = hard - 1; index >= min; index -= 1) {
-    if ((text[index] ?? "") === "\n") return adjustPrimeTtsTakeBoundary(text, index + 1, min, hard);
-  }
-  for (let index = hard - 1; index >= min; index -= 1) {
-    const char = text[index] ?? "";
-    if ("，,、：:".includes(char) && isPrimeTtsSoftBreak(text, index)) {
-      return adjustPrimeTtsTakeBoundary(text, index + 1, min, hard);
-    }
-  }
-  for (let index = hard - 1; index >= min; index -= 1) {
-    if (/\s/.test(text[index] ?? "")) return adjustPrimeTtsTakeBoundary(text, index + 1, min, hard);
-  }
-  return adjustPrimeTtsTakeBoundary(text, Math.min(text.length, targetLength), min, hard);
+  const code = char.codePointAt(0) ?? 0;
+  return (code >= 0x200b && code <= 0x200f) || (code >= 0x202a && code <= 0x202e) || (code >= 0x2060 && code <= 0x206f) || (code >= 0xfe00 && code <= 0xfe0f);
 }
 
 function isPrimeTtsStrongBreak(text: string, index: number): boolean {
@@ -23683,48 +23566,6 @@ function isPrimeTtsSoftBreak(text: string, index: number): boolean {
   if (char === "," && /\d/.test(before) && /\d/.test(after)) return false;
   if ((char === ":" || char === "：") && /\d/.test(before) && /\d/.test(after)) return false;
   return true;
-}
-
-function normalizePrimeTtsPlayText(input: string): string {
-  return input
-    .replace(/\r\n?/g, "\n")
-    .replace(/[ \t]+\n/g, "\n")
-    .replace(/\n[ \t]+/g, "\n")
-    .replace(/[ \t]{2,}/g, " ")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
-function primeTtsProgressiveTakeLength(text: string, budget: number, chunkIndex = 0): number {
-  if (text.length <= PRIME_TTS_STARTER_CHARS) return text.length;
-  const sentenceHard = Math.min(PRIME_TTS_MAX_PLAY_CHARS, chunkIndex <= 1 ? budget : Math.max(budget, Math.floor(budget * 1.15)));
-  if (text.length <= sentenceHard) return text.length;
-  const min = Math.max(chunkIndex <= 0 ? 6 : chunkIndex === 1 ? 12 : 16, Math.floor(budget * 0.65));
-  const hard = Math.min(text.length, sentenceHard);
-  const soft = Math.min(text.length, budget);
-  const strongPunctuation = "。！？!?；;";
-  for (let index = Math.min(hard, text.length) - 1; index >= min; index -= 1) {
-    const char = text[index] ?? "";
-    if (strongPunctuation.includes(char)) return adjustPrimeTtsTakeBoundary(text, index + 1, min, hard);
-  }
-  if (chunkIndex > 0) {
-    for (let index = Math.min(hard, text.length) - 1; index >= min; index -= 1) {
-      if ((text[index] ?? "") === "\n") return adjustPrimeTtsTakeBoundary(text, index + 1, min, hard);
-    }
-  }
-  const punctuation = "，,、：:）)]】》」』”’\"'";
-  for (let index = Math.min(hard, text.length) - 1; index >= min; index -= 1) {
-    const char = text[index] ?? "";
-    if (punctuation.includes(char)) return adjustPrimeTtsTakeBoundary(text, index + 1, min, hard);
-  }
-  for (let index = Math.min(hard, text.length) - 1; index >= min; index -= 1) {
-    if (/\s/.test(text[index] ?? "")) return adjustPrimeTtsTakeBoundary(text, index + 1, min, hard);
-  }
-  return adjustPrimeTtsTakeBoundary(text, Math.max(1, soft), min, hard);
-}
-
-function splitPrimeTtsFallbackText(input: string, maxBudget = PRIME_TTS_MAX_PLAY_CHARS): string[] {
-  return splitPrimeTtsProgressiveFallbackText(input, maxBudget);
 }
 
 function splitPrimeTtsStallFallbackText(input: string): string[] {
@@ -25182,7 +25023,7 @@ function decodeXmlEntities(input: string): string {
 
 function normalizeExtractedText(input: string): string {
   return input
-    .replace(/\u0000/g, "")
+    .split(String.fromCharCode(0)).join("")
     .replace(/[ \t]{2,}/g, " ")
     .replace(/\s+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
@@ -25192,17 +25033,22 @@ function normalizeExtractedText(input: string): string {
 function looksLikeReadableText(input: string): boolean {
   const text = input.trim();
   if (text.length < 2) return false;
-  const readable = text.replace(/[^\p{L}\p{N}\p{Script=Han}\s.,;:!?，。！？、（）()\-_/]/gu, "");
+  const readable = text.replace(/[^\p{L}\p{N}\p{Script=Han}\s.,;:!?，。！？、（）()_/-]/gu, "");
   return readable.length / Math.max(1, text.length) > 0.45;
 }
 
 function looksLikeReadableExtractedText(input: string): boolean {
   const text = input.replace(/\s+/g, "");
   if (text.length < 2) return false;
-  const controls = [...text].filter((char) => /[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFD]/u.test(char)).length;
+  const controls = [...text].filter(isUnreadableControlChar).length;
   if (controls / Math.max(1, text.length) > 0.02) return false;
-  const readable = text.replace(/[^\p{L}\p{N}\p{Script=Han}.,;:!?，。！？、（）()\-_/]/gu, "");
+  const readable = text.replace(/[^\p{L}\p{N}\p{Script=Han}.,;:!?，。！？、（）()_/-]/gu, "");
   return readable.length / Math.max(1, text.length) > 0.55;
+}
+
+function isUnreadableControlChar(char: string): boolean {
+  const code = char.codePointAt(0) ?? 0;
+  return code === 0xfffd || (code >= 0 && code <= 8) || code === 11 || code === 12 || (code >= 14 && code <= 31);
 }
 
 function utf8Decode(bytes: Uint8Array): string {
