@@ -1,8 +1,8 @@
 import * as ort from "onnxruntime-web/wasm";
 
-const PRIME_TTS_FADE_IN_MS = 8;
-const PRIME_TTS_FADE_OUT_MS = 36;
-const PRIME_TTS_TAIL_SILENCE_MS = 90;
+const PRIME_TTS_FADE_IN_MS = 4;
+const PRIME_TTS_FADE_OUT_MS = 8;
+const PRIME_TTS_TAIL_SILENCE_MS = 2;
 
 const workerSelf = self as unknown as {
   onmessage: ((event: MessageEvent<PrimeTtsWorkerMessage>) => void) | null;
@@ -201,13 +201,35 @@ function finalizePrimeTtsSamples(samples: Float32Array, sampleRate: number): Flo
   let sum = 0;
   for (const sample of samples) sum += sample;
   const dc = sum / samples.length;
-  const tailSamples = Math.max(0, Math.round(sampleRate * PRIME_TTS_TAIL_SILENCE_MS / 1000));
-  const output = new Float32Array(samples.length + tailSamples);
+  const normalized = new Float32Array(samples.length);
   for (let index = 0; index < samples.length; index += 1) {
-    output[index] = Math.max(-1, Math.min(1, samples[index] - dc));
+    normalized[index] = Math.max(-1, Math.min(1, samples[index] - dc));
   }
-  applyPrimeTtsEdgeEnvelope(output, sampleRate, samples.length);
+  const voiced = trimPrimeTtsEdgeSilence(normalized, sampleRate);
+  const tailSamples = Math.max(0, Math.round(sampleRate * PRIME_TTS_TAIL_SILENCE_MS / 1000));
+  const output = new Float32Array(voiced.length + tailSamples);
+  output.set(voiced);
+  applyPrimeTtsEdgeEnvelope(output, sampleRate, voiced.length);
   return output;
+}
+
+function trimPrimeTtsEdgeSilence(samples: Float32Array, sampleRate: number): Float32Array {
+  if (samples.length < 8 || !Number.isFinite(sampleRate) || sampleRate <= 0) return samples;
+  let peak = 0;
+  for (const sample of samples) peak = Math.max(peak, Math.abs(sample));
+  if (peak <= 0.0001) return samples;
+  const threshold = Math.max(0.0025, peak * 0.018);
+  let start = 0;
+  while (start < samples.length && Math.abs(samples[start]) < threshold) start += 1;
+  let end = samples.length - 1;
+  while (end > start && Math.abs(samples[end]) < threshold) end -= 1;
+  if (start <= 0 && end >= samples.length - 1) return samples;
+  const startPad = Math.round(sampleRate * 0.003);
+  const endPad = Math.round(sampleRate * 0.005);
+  const from = Math.max(0, start - startPad);
+  const to = Math.min(samples.length, end + endPad + 1);
+  if (to - from < Math.min(samples.length, Math.round(sampleRate * 0.025))) return samples;
+  return samples.slice(from, to);
 }
 
 function applyPrimeTtsEdgeEnvelope(samples: Float32Array, sampleRate: number, voicedLength: number): void {

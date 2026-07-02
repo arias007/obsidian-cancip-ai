@@ -155,8 +155,8 @@
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  min-height: 52px;
-  padding: 10px 12px;
+  min-height: 54px;
+  padding: max(14px, calc(env(safe-area-inset-top) + 8px)) 12px 10px;
   overflow: hidden;
   border-bottom: 1px solid var(--background-modifier-border);
 }
@@ -256,8 +256,8 @@
 }
 
 .obcc-root.is-compact-header .obcc-header {
-  min-height: 44px;
-  padding-top: 7px;
+  min-height: 52px;
+  padding-top: max(12px, calc(env(safe-area-inset-top) + 8px));
   padding-bottom: 7px;
 }
 
@@ -707,15 +707,35 @@
 
 .obcc-tts-floating-title-wrap {
   min-width: 0;
+  padding-left: 4px;
 }
 
 .obcc-tts-floating-title {
+  display: block;
   overflow: hidden;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-normal);
   font-size: 13px;
   font-weight: 700;
   line-height: 1.2;
+  text-align: left;
   text-overflow: ellipsis;
+  touch-action: none;
   white-space: nowrap;
+}
+
+.obcc-tts-floating-title.is-clickable {
+  color: var(--text-accent);
+  cursor: pointer;
+}
+
+.obcc-tts-floating-title:disabled {
+  opacity: 1;
+  cursor: default;
 }
 
 .obcc-tts-floating-meta {
@@ -866,6 +886,10 @@
 }
 
 .obcc-view-tts-action {
+  display: inline-flex !important;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
   color: var(--text-muted);
 }
 
@@ -875,9 +899,25 @@
 
 .obcc-tts-source-highlight {
   border-radius: 3px;
-  background: color-mix(in srgb, var(--interactive-accent) 24%, transparent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--interactive-accent) 30%, transparent);
-  color: var(--text-normal);
+  background: color-mix(in srgb, var(--interactive-accent) 56%, transparent) !important;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--interactive-accent) 86%, transparent) inset;
+  color: var(--text-normal) !important;
+}
+
+.textLayer .obcc-tts-source-highlight,
+.pdfViewer .obcc-tts-source-highlight,
+.pdf-viewer .obcc-tts-source-highlight,
+.pdf-container .obcc-tts-source-highlight {
+  background: rgba(0, 24, 210, 1) !important;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 1) inset, 0 0 0 5px rgba(0, 12, 150, 1), 0 0 10px rgba(0, 0, 0, 0.42);
+  outline: 4px solid rgba(0, 12, 150, 1);
+  border-radius: 2px;
+  mix-blend-mode: normal;
+}
+
+.textLayer span.obcc-tts-source-highlight {
+  color: transparent !important;
+  opacity: 1 !important;
 }
 
 .obcc-user-actions {
@@ -1407,10 +1447,10 @@
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  max-height: min(45vh, 260px);
-  padding: 0 5px 0;
+  max-height: none;
+  padding: 0 5px max(6px, calc(env(safe-area-inset-bottom) + 4px));
   overflow-x: hidden;
-  overflow-y: auto;
+  overflow-y: visible;
   background: var(--background-primary);
 }
 
@@ -3632,13 +3672,14 @@ input.obcc-review-correction-input {
   }
 
   .obcc-footer {
-    padding: 0 4px max(0px, env(safe-area-inset-bottom) - 16px);
+    padding: 0 4px max(8px, calc(env(safe-area-inset-bottom) + 5px));
+    overflow-y: visible;
   }
 
   .obcc-composer {
     border-radius: 15px;
     padding: 1px 5px 0;
-    margin-bottom: -2px;
+    margin-bottom: 0;
   }
 
   .obcc-input {

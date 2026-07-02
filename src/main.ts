@@ -21,7 +21,7 @@ import {
   TFolder,
   WorkspaceLeaf
 } from "obsidian";
-import { pinyin } from "pinyin-pro";
+import { customPinyin, OutputFormat, pinyin, segment } from "pinyin-pro";
 import { DEFAULT_SYSTEM_PROMPT, LEGACY_SYSTEM_PROMPT, PLUGIN_NAME, VIEW_TYPE } from "./constants";
 import { PRIME_TTS_WORKER_SOURCE } from "./generated/primeTtsWorkerSource";
 import {
@@ -67,7 +67,8 @@ type TtsProvider = "auto" | "builtin-prime-tts" | "android-system" | "web-speech
 type TtsQualityMode = "quality-first";
 type TtsPlaybackMode = "idle" | "starting" | "playing" | "paused" | "stopped" | "failed";
 const CANCIP_REVIEW_VIEW_TYPE = "cancip-review-view";
-const BUILTIN_PRIME_TTS_BASE = ".obsidian/plugins/cancip/tts/prime-tts";
+const PRIME_TTS_PACKAGES_ROOT = ".obsidian/plugins/cancip/tts";
+const BUILTIN_PRIME_TTS_BASE = `${PRIME_TTS_PACKAGES_ROOT}/prime-tts`;
 const BUILTIN_PRIME_TTS_ENCODER = `${BUILTIN_PRIME_TTS_BASE}/acoustic_encoder.onnx`;
 const BUILTIN_PRIME_TTS_DECODER = `${BUILTIN_PRIME_TTS_BASE}/acoustic_decoder.onnx`;
 const BUILTIN_PRIME_TTS_VOCODER = `${BUILTIN_PRIME_TTS_BASE}/vocoder.onnx`;
@@ -77,28 +78,65 @@ const BUILTIN_PRIME_TTS_ORT_BASE = `${BUILTIN_PRIME_TTS_BASE}/ort`;
 const BUILTIN_PRIME_TTS_PACKAGE_TAG = "prime-tts";
 const BUILTIN_PRIME_TTS_PACKAGE_ASSET = "prime-tts.zip";
 const BUILTIN_PRIME_TTS_PACKAGE_URL = `https://github.com/arias007/cancip/releases/download/${BUILTIN_PRIME_TTS_PACKAGE_TAG}/${BUILTIN_PRIME_TTS_PACKAGE_ASSET}`;
-const BUILTIN_PRIME_TTS_REQUIRED_ASSETS = [
-  { relative: "acoustic_encoder.onnx", path: BUILTIN_PRIME_TTS_ENCODER },
-  { relative: "acoustic_decoder.onnx", path: BUILTIN_PRIME_TTS_DECODER },
-  { relative: "vocoder.onnx", path: BUILTIN_PRIME_TTS_VOCODER },
-  { relative: "meta.json", path: BUILTIN_PRIME_TTS_META },
-  { relative: "symbol_table.json", path: BUILTIN_PRIME_TTS_SYMBOLS },
-  { relative: "ort/ort-wasm-simd-threaded.wasm", path: `${BUILTIN_PRIME_TTS_ORT_BASE}/ort-wasm-simd-threaded.wasm` },
-  { relative: "ort/ort-wasm-simd-threaded.mjs", path: `${BUILTIN_PRIME_TTS_ORT_BASE}/ort-wasm-simd-threaded.mjs` }
+const PRIME_TTS_REQUIRED_RELATIVES = [
+  "acoustic_encoder.onnx",
+  "acoustic_decoder.onnx",
+  "vocoder.onnx",
+  "meta.json",
+  "symbol_table.json",
+  "ort/ort-wasm-simd-threaded.wasm",
+  "ort/ort-wasm-simd-threaded.mjs"
 ] as const;
-const BUILTIN_PRIME_TTS_OPTIONAL_ASSETS = [
-  { relative: "manifest.json", path: `${BUILTIN_PRIME_TTS_BASE}/manifest.json` },
-  { relative: "README.md", path: `${BUILTIN_PRIME_TTS_BASE}/README.md` }
+const PRIME_TTS_OPTIONAL_RELATIVES = [
+  "manifest.json",
+  "README.md"
+] as const;
+const BUILTIN_PRIME_TTS_REQUIRED_ASSETS = PRIME_TTS_REQUIRED_RELATIVES.map((relative) => ({ relative, path: `${BUILTIN_PRIME_TTS_BASE}/${relative}` }));
+const BUILTIN_PRIME_TTS_OPTIONAL_ASSETS = PRIME_TTS_OPTIONAL_RELATIVES.map((relative) => ({ relative, path: `${BUILTIN_PRIME_TTS_BASE}/${relative}` }));
+const PRIME_TTS_PACKAGE_DEFINITIONS = [
+  {
+    id: "prime-tts-zh-en",
+    label: "PrimeTTS compact Chinese/English",
+    languages: ["zh-CN", "zh-TW", "zh", "en-US", "en"],
+    basePath: BUILTIN_PRIME_TTS_BASE,
+    releaseTag: BUILTIN_PRIME_TTS_PACKAGE_TAG,
+    assetName: BUILTIN_PRIME_TTS_PACKAGE_ASSET,
+    url: BUILTIN_PRIME_TTS_PACKAGE_URL,
+    defaultPackage: true,
+    bundled: false,
+    notes: "Default optional local package used by Cancip today. English can usually use system/Web Speech without downloading it; Chinese uses this package when local offline speech is needed."
+  }
 ] as const;
 const BUILTIN_PRIME_TTS_INSTALL_STALE_MS = 120000;
-const BUILTIN_PRIME_TTS_PREFETCH_AHEAD = 3;
+const BUILTIN_PRIME_TTS_PREFETCH_AHEAD = 12;
 const BUILTIN_PRIME_TTS_CACHE_KEEP_BEHIND = 1;
+const BUILTIN_PRIME_TTS_CACHE_KEEP_AHEAD = 24;
+const BUILTIN_PRIME_TTS_MAIN_PREFETCH_AHEAD = 1;
+const BUILTIN_PRIME_TTS_DECODE_AHEAD = 8;
 const BUILTIN_PRIME_TTS_WARMUP_TEXT = "好。";
-const BUILTIN_PRIME_TTS_WARMUP_SYNTH_DELAY_MS = 900;
-const PRIME_TTS_FADE_IN_MS = 8;
-const PRIME_TTS_FADE_OUT_MS = 36;
-const PRIME_TTS_TAIL_SILENCE_MS = 90;
-const PRIME_TTS_PLAYBACK_DRAIN_MS = 35;
+const BUILTIN_PRIME_TTS_WARMUP_SYNTH_DELAY_MS = 80;
+const PRIME_TTS_FAST_DEFAULT_CHARS = 96;
+const PRIME_TTS_FAST_FIRST_CHARS = 72;
+const PRIME_TTS_FAST_HARD_CHARS = 170;
+const PRIME_TTS_STARTER_CHARS = 10;
+const PRIME_TTS_STALL_MS = 1000;
+const PRIME_TTS_STALL_SKIP_MS = 2600;
+const PRIME_TTS_RUNTIME_STALL_MS = 1000;
+const PRIME_TTS_MAX_PLAY_CHARS = 10;
+const PRIME_TTS_MICRO_TARGET_CHARS = 4;
+const PRIME_TTS_MICRO_MAX_CHARS = 10;
+const PRIME_TTS_DISPLAY_TARGET_CHARS = 18;
+const PRIME_TTS_DISPLAY_MAX_CHARS = 34;
+const PRIME_TTS_LATIN_MICRO_MAX_CHARS = 4;
+const PRIME_TTS_LATIN_WORD_MAX_CHARS = 18;
+const PRIME_TTS_PROGRESSIVE_FALLBACK_CHARS = [2, 5, 10] as const;
+const PRIME_TTS_FADE_IN_MS = 4;
+const PRIME_TTS_FADE_OUT_MS = 8;
+const PRIME_TTS_TAIL_SILENCE_MS = 2;
+const PRIME_TTS_PLAYBACK_DRAIN_MS = 0;
+const PRIME_TTS_WEB_AUDIO_FALLBACK_GRACE_MS = 650;
+const TTS_CAPTURE_MAX_CHARS = 120000;
+const TTS_MAX_PARTS = 8000;
 const LANGUAGE_VALUES = ["zh", "zh-TW", "en", "ug", "tr", "ru", "ja", "ko", "es", "fr", "de", "ar"] as const;
 type Language = typeof LANGUAGE_VALUES[number];
 type LanguageMode = "auto" | Language;
@@ -346,6 +384,20 @@ type PrimeTtsMeta = {
   max_frames: number;
 };
 
+type PrimeTtsPackageDefinition = {
+  id: string;
+  label: string;
+  languages: readonly string[];
+  basePath: string;
+  releaseTag?: string;
+  assetName?: string;
+  url?: string;
+  defaultPackage?: boolean;
+  bundled?: boolean;
+  custom?: boolean;
+  notes?: string;
+};
+
 type PrimeTtsWorkerClient = {
   worker: Worker;
   requestId: number;
@@ -390,12 +442,22 @@ type TtsStatus = {
   lastError: string;
 };
 
+type TtsPartPlan = {
+  playParts: string[];
+  displayParts: string[];
+  displayIndexByPlayIndex: number[];
+};
+
+type PrimeTtsPlayable =
+  | { kind: "audio-buffer"; buffer: AudioBuffer }
+  | { kind: "wav"; buffer: ArrayBuffer };
+
 type TtsOverlayElements = {
   root: HTMLElement;
   bubble: HTMLButtonElement;
   panel: HTMLElement;
   handle: HTMLElement;
-  title: HTMLElement;
+  title: HTMLButtonElement;
   meta: HTMLElement;
   text: HTMLElement;
   settingsButton: HTMLButtonElement;
@@ -814,7 +876,23 @@ type UiButtonRule = {
   label: string;
   hidden: boolean;
   order: number;
+  title?: string;
+  icon?: string;
   scope: "global" | "active" | "cancip";
+};
+
+type WorkspaceTabInfo = {
+  leaf: WorkspaceLeaf;
+  title: string;
+  viewType: string;
+  path: string;
+  area: "root" | "left" | "right" | "floating" | "unknown";
+  pinned: boolean;
+};
+
+type TtsTextSegment = {
+  text: string;
+  forcedBreak: boolean;
 };
 
 type CancipAction =
@@ -916,6 +994,7 @@ type Settings = {
   ttsPitch: number;
   ttsChunkChars: number;
   ttsCustomUrl: string;
+  ttsShowViewActions: boolean;
   systemPrompt: string;
 };
 
@@ -1055,6 +1134,7 @@ const DEFAULT_SETTINGS: Settings = {
   ttsPitch: 1,
   ttsChunkChars: 900,
   ttsCustomUrl: "",
+  ttsShowViewActions: true,
   systemPrompt: DEFAULT_SYSTEM_PROMPT
 };
 
@@ -1208,6 +1288,7 @@ const EN = {
   tokenUsageEstimated: " estimated",
   processRecord: "Process record",
   finalConclusionFallback: "## Final answer\n\n{summary}",
+  finalAnswerFormatPrompt: "For implementation/change/tool tasks, the final visible answer should be human-readable and concrete, like Codex: start with what was done this turn, then list numbered points. Include sections for Action, Changed files, Verification/result, and Reminders/blockers when relevant. Keep tool details folded in process records; do not expose raw action JSON. Keep hidden choice-button metadata unchanged.",
   emptyApiReply: "The API returned an empty response.",
   emptyApiReplyWithSuppressedTools: "The API returned tool/action instructions but no visible assistant reply. For simple chat, Cancip does not execute hidden actions.",
   modelContinuationFailed: "Model follow-up failed: {reason}",
@@ -1221,7 +1302,7 @@ const EN = {
   copyMessage: "Copy",
   speakMessage: "Read aloud",
   speakSession: "Read session",
-  speakNote: "Read note",
+  speakNote: "Read",
   speakSelection: "Read selection",
   stopSpeaking: "Stop reading",
   pauseSpeaking: "Pause reading",
@@ -1595,9 +1676,9 @@ const EN = {
   ntfySent: "ntfy notification sent",
   ntfyFailed: "ntfy notification failed: {reason}",
   settingsTtsProvider: "TTS provider",
-  settingsTtsProviderDesc: "Auto first tries the optional local PrimeTTS package under the installed plugin folder, then falls back to system/Web/custom URL routes. Official releases still ship only main.js, manifest.json, and styles.css.",
+  settingsTtsProviderDesc: "Auto picks by language: English prefers Web/system TTS, Chinese can use the optional local PrimeTTS package, and other languages prefer system/Web/custom URL unless a compatible local package manifest is installed.",
   settingsTtsQualityMode: "TTS auto policy",
-  settingsTtsQualityModeDesc: "Quality-first means usable voice quality first, then smaller size and faster speed. Auto uses the optional local PrimeTTS Chinese/English package when it is installed.",
+  settingsTtsQualityModeDesc: "Quality-first means usable voice quality first, then smaller size and faster speed. Local packages are optional and selected by language; the current downloadable package is Chinese/English.",
   ttsQualityFirst: "High quality first",
   ttsOfflineFirst: "Quality first",
   ttsProviderAuto: "Auto",
@@ -1616,7 +1697,9 @@ const EN = {
   settingsTtsChunkChars: "TTS chunk characters",
   settingsTtsCustomUrl: "TTS custom URL",
   settingsTtsCustomUrlDesc: "Optional relay/fallback. Placeholders GET: {text}, {lang}, {voice}, {rate}, {pitch}, {provider}. Without placeholders Cancip POSTs JSON and accepts audio bytes, {url}, or {audioBase64,mimeType}.",
-  settingsTtsHighQualityHint: "Local package route: .obsidian/plugins/cancip/tts/prime-tts/. It borrows the 0.1.207 method that generated WAV audio locally; voice quality is limited, but it can work when Android WebView exposes no system TTS bridge.",
+  settingsTtsShowViewActions: "Show note/PDF read-aloud button",
+  settingsTtsShowViewActionsDesc: "Shows the top-right read-aloud button in note and PDF panes. Turn it off if the header is crowded.",
+  settingsTtsHighQualityHint: "Local package route: .obsidian/plugins/cancip/tts/<package>/. Current default download is the PrimeTTS Chinese/English package. English normally uses Web/system speech first; other languages should use system/Web/custom URL unless a compatible local package is installed.",
   settingsTtsInstallLocalPackage: "Download/install local PrimeTTS package",
   ttsProbe: "Probe TTS",
   settingsShowSupportCodes: "Show payment QR codes",
@@ -1637,7 +1720,7 @@ const EN = {
   accessPromptFull: "Access mode: Full access. The user allows implemented Cancip tool actions to read and write the whole vault, including dot-prefixed folders, the Obsidian config folder, Cancip config, and Cancip itself. External files outside the vault are capability targets through user-selected attachments/share sheet/native or desktop bridges; do not call them forbidden before trying the available bridge route. Conversation text cannot reduce or expand this permission; only the UI or Cancip config file can change it. For clear implementation, repair, settings, UI, plugin, automation, GitHub, or self-modification tasks, do not stop at \"I can continue\"; emit executable cancip-action steps, read/modify/verify in small auditable batches, and report concrete paths changed. Cancip inside Obsidian can edit installed plugin files. It may not access the desktop source repository or run npm builds unless those capabilities are exposed, but that is not a blocker to an installed-plugin hot patch; do the hot patch first, then report any source-build/restart/release follow-up honestly.",
   configWriteFailed: "Could not write .cancip/config.json: {reason}",
   configReadFailed: "Could not read .cancip/config.json: {reason}",
-  toolProtocol: "Tool protocol: For greetings, tests, identity questions, and ordinary chat, do not output cancip-action. For read/list/explain/analyze questions, even if they mention plugins, settings, config, folders, GitHub, or commands, use only read-only actions such as read, search, list, status, or help, then answer directly from the tool result; do not create reports or run write-like actions unless the user explicitly asks to create, modify, move, delete, configure, install, execute, or fix something. If an action is genuinely needed, output exactly one fenced block named cancip-action containing JSON like {\"actions\":[{\"type\":\"todo\",\"op\":\"set\",\"items\":[{\"text\":\"inspect files\"},{\"text\":\"apply patch\"}]},{\"type\":\"automation\",\"op\":\"add\",\"title\":\"Daily review\",\"prompt\":\"Review open todos\",\"schedule\":\"daily\",\"hour\":9,\"minute\":15},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"query\":\"anchor\",\"maxChars\":8000},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"startLine\":120,\"endLine\":180},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"aroundLine\":240,\"maxChars\":4000},{\"type\":\"write\",\"path\":\"Folder/Note.md\",\"content\":\"...\"},{\"type\":\"write\",\"path\":\"Folder/Large.md\",\"chunks\":[\"part 1\",\"part 2\"]},{\"type\":\"move\",\"path\":\"Folder/Old.md\",\"newPath\":\"Folder/New.md\"},{\"type\":\"move\",\"path\":\"Folder/Old.md\",\"newPath\":\"Archive\"},{\"type\":\"delete\",\"path\":\"Folder/Old.md\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"find\":\"old\",\"replace\":\"new\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"regex\":true,\"find\":\"old\\\\s+pattern\",\"replace\":\"new\",\"flags\":\"m\"},{\"type\":\"config\",\"set\":{\"maxToolIterations\":6},\"unset\":[\"oldSetting\"]},{\"type\":\"command\",\"command\":\"cancip.searchVault\",\"args\":{\"query\":\"keyword\",\"limit\":8}}]}. Supported action types: read, write, append, patch, config, todo, automation, mkdir, rename, move, copy, delete, command. Read supports query, occurrence, startLine, endLine, aroundLine, and maxChars for focused line-numbered snippets from large/minified files; prefer query or line ranges over whole-file reads, and reading a folder returns a direct child listing. Write and append support content or chunks:[\"part1\",\"part2\"]; for large files prefer chunks because Cancip writes/appends sequentially and verifies the result by reading it back. Move is the normal file/folder move action; rename is kept as an alias. If newPath is a folder path, Cancip keeps the original file/folder name under that folder. Delete moves to trash by default; if platform trash is unavailable, Cancip moves the target to Cancip trash; only use permanent:true when the user explicitly asks for permanent deletion. Patch supports exact find/replace or regex:true with optional flags; if patch text is not found, do not retry the same find text, read the current file with a focused query or line range and use a smaller anchored patch. Config safely deep-merges JSON into Cancip config by default, supports optional path, set, unset, replace, writes formatted JSON, and verifies by reading JSON back; use it for large config files instead of fragile string patches. Todo operations are set, add, update, remove, list, clear and update the visible Plan panel. Automation operations are add, update, remove, list, run; schedules are manual, hourly, daily and daily supports hour+minute. File actions use Vault-relative paths only. Command actions use a named command bus: obsidian.listCommands, obsidian.execute, obsidian.currentView, obsidian.dom.snapshot, obsidian.dom.click, obsidian.dom.input, obsidian.ui.buttons, obsidian.ui.buttonRules, obsidian.ui.applyButtonRules, obsidian.tags, obsidian.tags.pin, obsidian.tags.unpin, obsidian.tags.deleteUnpinned, cancip.reviewGate, cancip.reviewGate.list, cancip.reviewGate.testMarkdown, cancip.sessionEvents, cancip.sessionHistory, cancip.installedPlugins, cancip.skills.list, cancip.skills.read, cancip.skills.refresh, cancip.attachment.help, cancip.tts.help/probe/voices/status/installLocal/speak/readActive/pause/resume/seek/stop, cancip.externalFiles.help, cancip.automation.templates, cancip.automation.addTemplate, cancip.searchVault, cancip.rebuildIndex, cancip.previewVaultSearch, cancip.localVersionCommit, cancip.importCodexMemory, cancip.newsBrief, cancip.vaultDailyReport, cancip.automation.list, cancip.automation.add, cancip.automation.addNewsBrief, cancip.automation.addVaultDailyReport, cancip.automation.run, cancip.automation.remove, github.help, github.status, github.repo, github.issues, github.pulls, github.releases, github.workflowRuns, github.branches, github.file, github.createIssue, github.installObsidianPlugin. Use obsidian.ui.buttons to inspect active note/PDF/more buttons; use obsidian.ui.applyButtonRules with selector rules to hide/show/order buttons. Use obsidian.tags to inspect right-sidebar tags, obsidian.tags.pin/unpin for fixed tags, and obsidian.tags.deleteUnpinned with dryRun:false only when the user asks to remove non-pinned tags. Use cancip.skills.list/read/refresh to inspect available Skills when the task asks about capabilities or when a matching Skill is not already injected. For settings/UI/plugin/self-fix requests, first inspect the relevant source/config with read/search actions, then patch/write/config and verify. If desktop source is unavailable, use the installed plugin files as the mobile hot-patch implementation surface; do not stop merely because npm build/restart/source sync is unavailable. Installed Cancip plugin file edits require reload/restart before visible effect. Use cancip.searchVault only when long-term memory and supplied context are insufficient; then read only the necessary matched files. Keep action batches small and wait for results. If a tool fails, use the error as authoritative context and explain or correct the next step. Use cancip.reviewGate as a real programmatic OB Review Gate builder before risky vault organization or risky edits; it creates review data for the native Cancip review panel, not a prompt-only or external HTML workflow. Plan mode only adds planning/todo behavior and never changes access permission. Raw JavaScript eval is blocked.",
+  toolProtocol: "Tool protocol: For greetings, tests, identity questions, and ordinary chat, do not output cancip-action. For read/list/explain/analyze questions, even if they mention plugins, settings, config, folders, GitHub, or commands, use only read-only actions such as read, search, list, status, or help, then answer directly from the tool result; do not create reports or run write-like actions unless the user explicitly asks to create, modify, move, delete, configure, install, execute, or fix something. If an action is genuinely needed, output exactly one fenced block named cancip-action containing JSON like {\"actions\":[{\"type\":\"todo\",\"op\":\"set\",\"items\":[{\"text\":\"inspect files\"},{\"text\":\"apply patch\"}]},{\"type\":\"automation\",\"op\":\"add\",\"title\":\"Daily review\",\"prompt\":\"Review open todos\",\"schedule\":\"daily\",\"hour\":9,\"minute\":15},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"query\":\"anchor\",\"maxChars\":8000},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"startLine\":120,\"endLine\":180},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"aroundLine\":240,\"maxChars\":4000},{\"type\":\"write\",\"path\":\"Folder/Note.md\",\"content\":\"...\"},{\"type\":\"write\",\"path\":\"Folder/Large.md\",\"chunks\":[\"part 1\",\"part 2\"]},{\"type\":\"move\",\"path\":\"Folder/Old.md\",\"newPath\":\"Folder/New.md\"},{\"type\":\"move\",\"path\":\"Folder/Old.md\",\"newPath\":\"Archive\"},{\"type\":\"delete\",\"path\":\"Folder/Old.md\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"find\":\"old\",\"replace\":\"new\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"regex\":true,\"find\":\"old\\\\s+pattern\",\"replace\":\"new\",\"flags\":\"m\"},{\"type\":\"config\",\"set\":{\"maxToolIterations\":6},\"unset\":[\"oldSetting\"]},{\"type\":\"command\",\"command\":\"cancip.searchVault\",\"args\":{\"query\":\"keyword\",\"limit\":8}}]}. Supported action types: read, write, append, patch, config, todo, automation, mkdir, rename, move, copy, delete, command. Read supports query, occurrence, startLine, endLine, aroundLine, and maxChars for focused line-numbered snippets from large/minified files; prefer query or line ranges over whole-file reads, and reading a folder returns a direct child listing. Write and append support content or chunks:[\"part1\",\"part2\"]; for large files prefer chunks because Cancip writes/appends sequentially and verifies the result by reading it back. Move is the normal file/folder move action; rename is kept as an alias. If newPath is a folder path, Cancip keeps the original file/folder name under that folder. Delete moves to trash by default; if platform trash is unavailable, Cancip moves the target to Cancip trash; only use permanent:true when the user explicitly asks for permanent deletion. Patch supports exact find/replace or regex:true with optional flags; if patch text is not found, do not retry the same find text, read the current file with a focused query or line range and use a smaller anchored patch. Config safely deep-merges JSON into Cancip config by default, supports optional path, set, unset, replace, writes formatted JSON, and verifies by reading JSON back; use it for large config files instead of fragile string patches. Todo operations are set, add, update, remove, list, clear and update the visible Plan panel. Automation operations are add, update, remove, list, run; schedules are manual, hourly, daily and daily supports hour+minute. File actions use Vault-relative paths only. Command actions use a named command bus: obsidian.listCommands, obsidian.execute, obsidian.currentView, obsidian.dom.snapshot, obsidian.dom.click, obsidian.dom.input, obsidian.ui.buttons, obsidian.ui.buttonRules, obsidian.ui.applyButtonRules, obsidian.tags, obsidian.tags.pin, obsidian.tags.unpin, obsidian.tags.deleteUnpinned, obsidian.tabs, obsidian.tabs.pin, obsidian.tabs.unpin, obsidian.tabs.closeUnpinned, cancip.reviewGate, cancip.reviewGate.list, cancip.reviewGate.testMarkdown, cancip.sessionEvents, cancip.sessionHistory, cancip.installedPlugins, cancip.skills.list, cancip.skills.read, cancip.skills.refresh, cancip.attachment.help, cancip.tts.help/probe/voices/status/installLocal/speak/readActive/pause/resume/seek/stop, cancip.externalFiles.help, cancip.automation.templates, cancip.automation.addTemplate, cancip.searchVault, cancip.rebuildIndex, cancip.previewVaultSearch, cancip.localVersionCommit, cancip.importCodexMemory, cancip.newsBrief, cancip.vaultDailyReport, cancip.automation.list, cancip.automation.add, cancip.automation.addNewsBrief, cancip.automation.addVaultDailyReport, cancip.automation.run, cancip.automation.remove, github.help, github.status, github.repo, github.issues, github.pulls, github.releases, github.workflowRuns, github.branches, github.file, github.createIssue, github.installObsidianPlugin. Use obsidian.ui.buttons to inspect active note/PDF/more buttons; use obsidian.ui.applyButtonRules with selector rules to hide/show/order/rename/re-icon buttons and menu items. Use obsidian.tags to inspect right-sidebar tags, obsidian.tags.pin/unpin for fixed tags, and obsidian.tags.deleteUnpinned with dryRun:false only when the user asks to remove non-pinned tags from notes. Use obsidian.tabs to inspect workspace tabs/leaves, obsidian.tabs.pin/unpin to pin pages, and obsidian.tabs.closeUnpinned to close non-pinned pages without deleting files. Use cancip.skills.list/read/refresh to inspect available Skills when the task asks about capabilities or when a matching Skill is not already injected. For settings/UI/plugin/self-fix requests, first inspect the relevant source/config with read/search actions, then patch/write/config and verify. If desktop source is unavailable, use the installed plugin files as the mobile hot-patch implementation surface; do not stop merely because npm build/restart/source sync is unavailable. Installed Cancip plugin file edits require reload/restart before visible effect. Use cancip.searchVault only when long-term memory and supplied context are insufficient; then read only the necessary matched files. Keep action batches small and wait for results. If a tool fails, use the error as authoritative context and explain or correct the next step. Use cancip.reviewGate as a real programmatic OB Review Gate builder before risky vault organization or risky edits; it creates review data for the native Cancip review panel, not a prompt-only or external HTML workflow. Plan mode only adds planning/todo behavior and never changes access permission. Raw JavaScript eval is blocked.",
   actionsNeedApproval: "Action block queued for approval. Nothing has run yet.\n\n{summary}",
   actionsExecuted: "Tool results:\n\n{summary}",
   toolRunsQueued: "{count} tool run(s) queued. Review and tap Run when ready.",
@@ -1657,7 +1740,7 @@ const EN = {
   toolFeedbackSaved: "Tool feedback saved",
   toolContinueStatus: "Continuing from tool results...",
   toolRunResult: "Tool result",
-  toolContinuationPrompt: "Tool results from the previous action:\n\n{summary}\n\nContinue the task using these results. Tool failures are authoritative and must not be ignored: explain the failure, choose a smaller corrected next action, or give the final answer. If a patch failed because find text was not found, do not retry the same find text; read the current file with a focused query/maxChars snippet, then use a smaller anchored exact patch or regex:true patch. If the user asked for an implementation/change and only read/search/todo/list steps have run so far, you are not done: continue with the next concrete patch/write/command action unless a real blocker is shown. If a write/patch/command already succeeded, verify it by reading the changed path or checking the command result, then give a final user-readable conclusion. If more tool actions are needed, output one cancip-action block; otherwise give the final answer with status, changed paths, verification, and any blocker.",
+  toolContinuationPrompt: "Tool results from the previous action:\n\n{summary}\n\nContinue the task using these results. Tool failures are authoritative and must not be ignored: explain the failure, choose a smaller corrected next action, or give the final answer. If a patch failed because find text was not found, do not retry the same find text; read the current file with a focused query/maxChars snippet, then use a smaller anchored exact patch or regex:true patch. If the user asked for an implementation/change and only read/search/todo/list steps have run so far, you are not done: continue with the next concrete patch/write/command action unless a real blocker is shown. If a write/patch/command already succeeded, verify it by reading the changed path or checking the command result, then give a final user-readable conclusion. Final answer format for implementation/change/tool tasks: say what was done this turn, then numbered points; include Action, Changed files, Verification/result, and Reminders/blockers when relevant. Keep process/tool details folded and do not expose raw action JSON. If more tool actions are needed, output one cancip-action block; otherwise give the final answer with status, changed paths, verification, and any blocker.",
   invalidActionBlock: "Cancip found an action block, but it was not valid executable JSON. Use one fenced ```cancip-action JSON block or <cancip-action>JSON</cancip-action>.",
   actionFailed: "Action failed: {reason}",
   actionRead: "read {path}\n{content}",
@@ -1755,6 +1838,7 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     tokenUsageEstimated: " 估算",
     processRecord: "过程记录",
     finalConclusionFallback: "## 最终结论\n\n{summary}",
+    finalAnswerFormatPrompt: "实现、改动、工具类任务的最终可见回答要像 Codex 一样给普通人直接看：先说这轮干了什么，再按序号列出要点；按需包含「动作」「改动的文件」「验证/结果」「提醒/阻塞」。工具细节留在折叠过程里，不要暴露原始 action JSON。推荐按钮的隐藏元数据保持原样。",
     emptyApiReply: "API 返回了空回复。",
     emptyApiReplyWithSuppressedTools: "API 只返回了工具/动作指令，没有给普通可见回复。简单聊天不会执行隐藏动作。",
     modelContinuationFailed: "模型续答失败：{reason}",
@@ -1765,7 +1849,7 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     copyMessage: "复制",
     speakMessage: "朗读",
     speakSession: "朗读会话",
-    speakNote: "朗读笔记",
+    speakNote: "朗读",
     speakSelection: "朗读选中文本",
     stopSpeaking: "停止朗读",
     pauseSpeaking: "暂停朗读",
@@ -2142,9 +2226,9 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     ntfySent: "ntfy 通知已发送",
     ntfyFailed: "ntfy 通知失败：{reason}",
     settingsTtsProvider: "TTS 提供方",
-    settingsTtsProviderDesc: "自动模式先尝试已安装插件目录下的可选本地 PrimeTTS 包，再回退到系统/Web/custom URL。官方 release 仍只发布 main.js、manifest.json、styles.css。",
+    settingsTtsProviderDesc: "自动模式按语言选择：英语优先 Web/系统 TTS，中文可用可选本地 PrimeTTS 包，其它语言优先系统/Web/custom URL；如果安装了兼容本地包 manifest 才会走本地包。",
     settingsTtsQualityMode: "TTS 自动策略",
-    settingsTtsQualityModeDesc: "质量优先：先保证声音可用自然，再在质量还可以的前提下尽量小、尽量快；已安装本地 PrimeTTS 中英文包时自动优先使用。",
+    settingsTtsQualityModeDesc: "质量优先：先保证声音可用自然，再在质量还可以的前提下尽量小、尽量快；本地包按语言选择，目前可下载默认包是中英文 PrimeTTS。",
     ttsQualityFirst: "高质量优先",
     ttsOfflineFirst: "质量优先",
     ttsProviderAuto: "自动",
@@ -2163,7 +2247,9 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     settingsTtsChunkChars: "TTS 分块字符数",
     settingsTtsCustomUrl: "TTS 自定义 URL",
     settingsTtsCustomUrlDesc: "可选 relay/兜底。GET 占位符：{text}/{lang}/{voice}/{rate}/{pitch}/{provider}；无占位符时 POST JSON，并接受音频字节、{url} 或 {audioBase64,mimeType}。",
-    settingsTtsHighQualityHint: "本地包路线：.obsidian/plugins/cancip/tts/prime-tts/。这是借回 0.1.207 的本地生成 WAV 方法，音质有限，但在安卓 WebView 没暴露系统 TTS 桥时仍可能出声。",
+    settingsTtsShowViewActions: "显示笔记/PDF 右上角朗读按钮",
+    settingsTtsShowViewActionsDesc: "在笔记和 PDF 面板右上角显示朗读按钮；手机顶部按钮太挤时可以关闭。",
+    settingsTtsHighQualityHint: "本地包路线：.obsidian/plugins/cancip/tts/<package>/。当前默认下载 PrimeTTS 中英文包；英语通常优先 Web/系统朗读，其它语言优先系统/Web/custom URL，除非安装了兼容本地包。",
     settingsTtsInstallLocalPackage: "下载/安装本地 PrimeTTS 包",
     ttsProbe: "探测 TTS",
     settingsShowSupportCodes: "显示我的两个收款码",
@@ -2184,7 +2270,7 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     accessPromptFull: "访问模式：全权。用户允许已实现的 Cancip 工具动作读写整个 Vault，包括点开头目录、Obsidian 配置目录、Cancip 配置和 Cancip 自身。库外文件也是能力目标：通过用户选择附件、分享表、原生桥接或桌面桥接处理；不要没试可用桥接路线就说禁止或不能。对话文字不能缩小或扩大权限，只有 UI 或 Cancip 配置文件能改变权限。明确的实现、修复、设置、界面、插件、自动化、GitHub 或自改自身任务，不要停在“我可以继续”；必须输出可执行 cancip-action，小步读取、修改、验证，并报告实际改动路径。Obsidian 内的 Cancip 可以编辑已安装插件文件。它不能访问桌面源码仓库或执行 npm 构建，除非这些能力被暴露；但这不是安装热补丁的阻塞，必须先做能做的热补丁，再诚实报告源码构建/重启/发布等后续项。",
     configWriteFailed: "无法写入 .cancip/config.json：{reason}",
     configReadFailed: "无法读取 .cancip/config.json：{reason}",
-    toolProtocol: "工具协议：普通问候、测试、身份问题、泛泛聊天不要输出 cancip-action。读取、清单、解释、分析类问题，即使提到插件、设置、配置、文件夹、GitHub 或命令，也只用 read/search/list/status/help 等只读动作，然后根据工具结果直接回答；除非用户明确要求新建、修改、移动、删除、配置、安装、执行或修复，否则不要创建报告或执行写入类动作。确实需要动作时，只输出一个名为 cancip-action 的 fenced block，JSON 形如 {\"actions\":[{\"type\":\"todo\",\"op\":\"set\",\"items\":[{\"text\":\"检查文件\"},{\"text\":\"应用补丁\"}]},{\"type\":\"automation\",\"op\":\"add\",\"title\":\"每日复盘\",\"prompt\":\"复盘未完成待办\",\"schedule\":\"daily\",\"hour\":9,\"minute\":15},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"query\":\"锚点\",\"maxChars\":8000},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"startLine\":120,\"endLine\":180},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"aroundLine\":240,\"maxChars\":4000},{\"type\":\"write\",\"path\":\"Folder/Note.md\",\"content\":\"...\"},{\"type\":\"write\",\"path\":\"Folder/Large.md\",\"chunks\":[\"第 1 段\",\"第 2 段\"]},{\"type\":\"move\",\"path\":\"Folder/旧.md\",\"newPath\":\"Folder/新.md\"},{\"type\":\"move\",\"path\":\"Folder/旧.md\",\"newPath\":\"归档\"},{\"type\":\"delete\",\"path\":\"Folder/旧.md\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"find\":\"旧内容\",\"replace\":\"新内容\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"regex\":true,\"find\":\"旧内容\\\\s+模式\",\"replace\":\"新内容\",\"flags\":\"m\"},{\"type\":\"config\",\"set\":{\"maxToolIterations\":6},\"unset\":[\"oldSetting\"]},{\"type\":\"command\",\"command\":\"cancip.searchVault\",\"args\":{\"query\":\"关键词\",\"limit\":8}}]}。支持动作：read、write、append、patch、config、todo、automation、mkdir、rename、move、copy、delete、command。read 支持 query、occurrence、startLine、endLine、aroundLine、maxChars，用来精确读取带行号的大文件/压缩构建文件片段；优先用 query 或行号范围，不要轻易整文件读取；读取文件夹会返回直接子项列表。write/append 支持 content 或 chunks:[\"part1\",\"part2\"]；写大文件优先用 chunks，Cancip 会顺序写入/追加并读回校验。move 是正常移动文件/文件夹动作，rename 保留为别名；如果 newPath 是文件夹路径，工具层会保留原文件/文件夹名放进该文件夹。delete 默认进入回收站；平台回收站不可用时移入 Cancip 回收目录；只有用户明确要求永久删除时才使用 permanent:true。patch 支持精确 find/replace，也支持 regex:true 和可选 flags；如果 patch 提示 find text was not found，绝对不要重复同一个 find，必须先用 query 或行号范围读取当前文件片段，再换更小锚点或正则补丁。config 默认安全深度合并写入 Cancip 配置文件，可选 path、set、unset、replace，会格式化 JSON 并读回校验；改大型配置文件优先用 config，不要靠脆弱字符串 patch。todo 支持 set、add、update、remove、list、clear，并会更新可见 Plan 面板。automation 支持 add、update、remove、list、run；schedule 可用 manual、hourly、daily；daily 支持 hour+minute。文件动作只能使用 Vault 相对路径。命令动作走命令总线：obsidian.listCommands、obsidian.execute、obsidian.currentView、obsidian.dom.snapshot、obsidian.dom.click、obsidian.dom.input、obsidian.ui.buttons、obsidian.ui.buttonRules、obsidian.ui.applyButtonRules、obsidian.tags、obsidian.tags.pin、obsidian.tags.unpin、obsidian.tags.deleteUnpinned、cancip.reviewGate、cancip.reviewGate.list、cancip.reviewGate.testMarkdown、cancip.sessionEvents、cancip.sessionHistory、cancip.installedPlugins、cancip.skills.list、cancip.skills.read、cancip.skills.refresh、cancip.attachment.help、cancip.tts.help/probe/voices/status/installLocal/speak/readActive/pause/resume/seek/stop、cancip.externalFiles.help、cancip.automation.templates、cancip.automation.addTemplate、cancip.searchVault、cancip.rebuildIndex、cancip.previewVaultSearch、cancip.localVersionCommit、cancip.importCodexMemory、cancip.newsBrief、cancip.vaultDailyReport、cancip.automation.list、cancip.automation.add、cancip.automation.addNewsBrief、cancip.automation.addVaultDailyReport、cancip.automation.run、cancip.automation.remove、github.help、github.status、github.repo、github.issues、github.pulls、github.releases、github.workflowRuns、github.branches、github.file、github.createIssue、github.installObsidianPlugin。需要查看能力或本轮没有注入匹配 Skill 时，用 cancip.skills.list/read/refresh 程序化检查可用 Skill。设置/界面/插件/自身修复类任务，先用 read/search 检查相关源码或配置，再 patch/write/config 并验证；若桌面源码不可用，就把已安装插件文件作为手机热补丁实现面，不能仅因 npm build/重启/源码同步不可用就停止。写已安装 Cancip 插件文件后必须说明需要重载/重启才有可见效果。只有长期记忆和已提供上下文不够时才用 cancip.searchVault 搜库，然后只读取必要命中文件。动作批次要小，等待工具结果后继续。工具失败就是权威上下文，必须解释失败或改用更小的下一步。Vault 整理、移动、重命名、合并、拆分、修复链接等高风险改动前，先用 cancip.reviewGate 程序化生成 Cancip 原生审核面板数据；它不是提示词，也不是外部 HTML 流程。Plan mode 只增加计划/待办层，不改变访问权限。原始 JavaScript eval 阻止。",
+    toolProtocol: "工具协议：普通问候、测试、身份问题、泛泛聊天不要输出 cancip-action。读取、清单、解释、分析类问题，即使提到插件、设置、配置、文件夹、GitHub 或命令，也只用 read/search/list/status/help 等只读动作，然后根据工具结果直接回答；除非用户明确要求新建、修改、移动、删除、配置、安装、执行或修复，否则不要创建报告或执行写入类动作。确实需要动作时，只输出一个名为 cancip-action 的 fenced block，JSON 形如 {\"actions\":[{\"type\":\"todo\",\"op\":\"set\",\"items\":[{\"text\":\"检查文件\"},{\"text\":\"应用补丁\"}]},{\"type\":\"automation\",\"op\":\"add\",\"title\":\"每日复盘\",\"prompt\":\"复盘未完成待办\",\"schedule\":\"daily\",\"hour\":9,\"minute\":15},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"query\":\"锚点\",\"maxChars\":8000},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"startLine\":120,\"endLine\":180},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"aroundLine\":240,\"maxChars\":4000},{\"type\":\"write\",\"path\":\"Folder/Note.md\",\"content\":\"...\"},{\"type\":\"write\",\"path\":\"Folder/Large.md\",\"chunks\":[\"第 1 段\",\"第 2 段\"]},{\"type\":\"move\",\"path\":\"Folder/旧.md\",\"newPath\":\"Folder/新.md\"},{\"type\":\"move\",\"path\":\"Folder/旧.md\",\"newPath\":\"归档\"},{\"type\":\"delete\",\"path\":\"Folder/旧.md\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"find\":\"旧内容\",\"replace\":\"新内容\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"regex\":true,\"find\":\"旧内容\\\\s+模式\",\"replace\":\"新内容\",\"flags\":\"m\"},{\"type\":\"config\",\"set\":{\"maxToolIterations\":6},\"unset\":[\"oldSetting\"]},{\"type\":\"command\",\"command\":\"cancip.searchVault\",\"args\":{\"query\":\"关键词\",\"limit\":8}}]}。支持动作：read、write、append、patch、config、todo、automation、mkdir、rename、move、copy、delete、command。read 支持 query、occurrence、startLine、endLine、aroundLine、maxChars，用来精确读取带行号的大文件/压缩构建文件片段；优先用 query 或行号范围，不要轻易整文件读取；读取文件夹会返回直接子项列表。write/append 支持 content 或 chunks:[\"part1\",\"part2\"]；写大文件优先用 chunks，Cancip 会顺序写入/追加并读回校验。move 是正常移动文件/文件夹动作，rename 保留为别名；如果 newPath 是文件夹路径，工具层会保留原文件/文件夹名放进该文件夹。delete 默认进入回收站；平台回收站不可用时移入 Cancip 回收目录；只有用户明确要求永久删除时才使用 permanent:true。patch 支持精确 find/replace，也支持 regex:true 和可选 flags；如果 patch 提示 find text was not found，绝对不要重复同一个 find，必须先用 query 或行号范围读取当前文件片段，再换更小锚点或正则补丁。config 默认安全深度合并写入 Cancip 配置文件，可选 path、set、unset、replace，会格式化 JSON 并读回校验；改大型配置文件优先用 config，不要靠脆弱字符串 patch。todo 支持 set、add、update、remove、list、clear，并会更新可见 Plan 面板。automation 支持 add、update、remove、list、run；schedule 可用 manual、hourly、daily；daily 支持 hour+minute。文件动作只能使用 Vault 相对路径。命令动作走命令总线：obsidian.listCommands、obsidian.execute、obsidian.currentView、obsidian.dom.snapshot、obsidian.dom.click、obsidian.dom.input、obsidian.ui.buttons、obsidian.ui.buttonRules、obsidian.ui.applyButtonRules、obsidian.tags、obsidian.tags.pin、obsidian.tags.unpin、obsidian.tags.deleteUnpinned、obsidian.tabs、obsidian.tabs.pin、obsidian.tabs.unpin、obsidian.tabs.closeUnpinned、cancip.reviewGate、cancip.reviewGate.list、cancip.reviewGate.testMarkdown、cancip.sessionEvents、cancip.sessionHistory、cancip.installedPlugins、cancip.skills.list、cancip.skills.read、cancip.skills.refresh、cancip.attachment.help、cancip.tts.help/probe/voices/status/installLocal/speak/readActive/pause/resume/seek/stop、cancip.externalFiles.help、cancip.automation.templates、cancip.automation.addTemplate、cancip.searchVault、cancip.rebuildIndex、cancip.previewVaultSearch、cancip.localVersionCommit、cancip.importCodexMemory、cancip.newsBrief、cancip.vaultDailyReport、cancip.automation.list、cancip.automation.add、cancip.automation.addNewsBrief、cancip.automation.addVaultDailyReport、cancip.automation.run、cancip.automation.remove、github.help、github.status、github.repo、github.issues、github.pulls、github.releases、github.workflowRuns、github.branches、github.file、github.createIssue、github.installObsidianPlugin。用 obsidian.ui.buttons 检查当前笔记/PDF/官方更多菜单按钮和菜单项；用 obsidian.ui.applyButtonRules 按 selector 规则显示、隐藏、排序、改名、换图标。可用 obsidian.tabs 查看工作区标签页，obsidian.tabs.pin/unpin 固定/取消固定页，obsidian.tabs.closeUnpinned 关闭非固定页但不删除文件。需要查看能力或本轮没有注入匹配 Skill 时，用 cancip.skills.list/read/refresh 程序化检查可用 Skill。设置/界面/插件/自身修复类任务，先用 read/search 检查相关源码或配置，再 patch/write/config 并验证；若桌面源码不可用，就把已安装插件文件作为手机热补丁实现面，不能仅因 npm build/重启/源码同步不可用就停止。写已安装 Cancip 插件文件后必须说明需要重载/重启才有可见效果。只有长期记忆和已提供上下文不够时才用 cancip.searchVault 搜库，然后只读取必要命中文件。动作批次要小，等待工具结果后继续。工具失败就是权威上下文，必须解释失败或改用更小的下一步。Vault 整理、移动、重命名、合并、拆分、修复链接等高风险改动前，先用 cancip.reviewGate 程序化生成 Cancip 原生审核面板数据；它不是提示词，也不是外部 HTML 流程。Plan mode 只增加计划/待办层，不改变访问权限。原始 JavaScript eval 阻止。",
     actionsNeedApproval: "动作块已进入确认队列，尚未执行。\n\n{summary}",
     actionsExecuted: "工具执行结果：\n\n{summary}",
     toolRunsQueued: "{count} 个工具调用已排队。确认后点 Run 执行。",
@@ -2204,7 +2290,7 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     toolFeedbackSaved: "工具反馈已记录",
     toolContinueStatus: "正在根据工具结果继续...",
     toolRunResult: "工具结果",
-    toolContinuationPrompt: "上一步工具执行结果：\n\n{summary}\n\n请根据这些结果继续完成任务。工具失败是权威上下文，不能忽略：要解释失败原因，改用更小且更明确的下一步，或直接给最终回答。如果 patch 因 find text was not found 失败，绝对不要重复同一个 find；先用 query/maxChars 读取当前文件片段，再换更小的精确锚点或 regex:true 补丁。如果用户要求实现/修改，而目前只执行了读取、搜索、待办或列表步骤，说明还没完成：除非有真实阻塞，否则继续给出下一个 patch/write/command 具体动作。如果写入、补丁或命令已经成功，必须再通过读取改动路径或检查命令结果验证，然后给用户能直接看懂的最终结论。若还需要工具动作，只输出一个 cancip-action 块；否则最终回答必须写明状态、改动路径、验证结果和阻塞项。",
+    toolContinuationPrompt: "上一步工具执行结果：\n\n{summary}\n\n请根据这些结果继续完成任务。工具失败是权威上下文，不能忽略：要解释失败原因，改用更小且更明确的下一步，或直接给最终回答。如果 patch 因 find text was not found 失败，绝对不要重复同一个 find；先用 query/maxChars 读取当前文件片段，再换更小的精确锚点或 regex:true 补丁。如果用户要求实现/修改，而目前只执行了读取、搜索、待办或列表步骤，说明还没完成：除非有真实阻塞，否则继续给出下一个 patch/write/command 具体动作。如果写入、补丁或命令已经成功，必须再通过读取改动路径或检查命令结果验证，然后给用户能直接看懂的最终结论。实现/改动/工具类最终回答格式：先说这轮干了什么，再按序号列出要点；按需包含「动作」「改动的文件」「验证/结果」「提醒/阻塞」。工具细节放折叠过程里，不要暴露原始 action JSON。若还需要工具动作，只输出一个 cancip-action 块；否则最终回答必须写明状态、改动路径、验证结果和阻塞项。",
     invalidActionBlock: "Cancip 找到了动作块，但里面不是可执行的 JSON。请使用一个 fenced ```cancip-action JSON 块，或 <cancip-action>JSON</cancip-action>。",
     actionFailed: "动作失败：{reason}",
     actionRead: "read {path}\n{content}",
@@ -3803,6 +3889,8 @@ export default class CancipPlugin extends Plugin {
   private uiRuleStyleEl: HTMLStyleElement | null = null;
   private activeUtterance: SpeechSynthesisUtterance | null = null;
   private activeTtsParts: string[] = [];
+  private activeTtsDisplayParts: string[] = [];
+  private activeTtsDisplayIndexByPart: number[] = [];
   private activeTtsPartIndex = 0;
   private ttsKeepAliveTimer: number | null = null;
   private ttsVoiceWarmupTimer: number | null = null;
@@ -3816,17 +3904,27 @@ export default class CancipPlugin extends Plugin {
   private activeTtsLastError = "";
   private activeTtsStartedAudio = false;
   private activeTtsRunId = 0;
+  private activeTtsPrimeCacheSessionId = 0;
+  private activeTtsStoppedAt = 0;
+  private activeTtsLastHighlightCursor = 0;
+  private activeTtsHighlightKey = "";
   private activeTtsSourcePath = "";
   private activeTtsSourceText = "";
   private activeTtsSourceHighlightNodes: HTMLElement[] = [];
+  private activeTtsSourceClassNodes: HTMLElement[] = [];
+  private activeTtsEditorSelectionSnapshot: { anchor: { line: number; ch: number }; head: { line: number; ch: number }; filePath: string } | null = null;
   private activeNativeBridge: NativeTtsBridge | null = null;
   private activeWebAudioContext: AudioContext | null = null;
   private activeWebAudioSource: AudioBufferSourceNode | null = null;
   private activeTtsPrimeCache = new Map<number, Promise<ArrayBuffer>>();
   private activeTtsPrimeCacheRunId = 0;
+  private activeTtsPrimeDecodedCache = new Map<number, Promise<AudioBuffer>>();
+  private activeTtsPrimeDecodedCacheRunId = 0;
+  private builtinPrimeTtsPackage: PrimeTtsPackageDefinition = PRIME_TTS_PACKAGE_DEFINITIONS[0];
   private builtinPrimeTtsPromise: Promise<PrimeTtsRuntime> | null = null;
   private builtinPrimeTtsRuntime: PrimeTtsRuntime | null = null;
-  private builtinPrimeTtsSynthesisQueue: Promise<void> = Promise.resolve();
+  private builtinPrimeTtsActiveSynths = 0;
+  private builtinPrimeTtsSynthWaiters: Array<() => void> = [];
   private builtinPrimeTtsWarmupTimer: number | null = null;
   private builtinPrimeTtsInstallPromise: Promise<string> | null = null;
   private builtinPrimeTtsInstallStartedAt = 0;
@@ -3956,13 +4054,20 @@ export default class CancipPlugin extends Plugin {
           });
       });
     }));
-    this.app.workspace.onLayoutReady(() => this.refreshTtsViewActions());
-    this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.refreshTtsViewActions()));
-    this.registerEvent(this.app.workspace.on("file-open", () => this.refreshTtsViewActions()));
+    this.app.workspace.onLayoutReady(() => this.scheduleTtsViewActionRefresh());
+    this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.scheduleTtsViewActionRefresh()));
+    this.registerEvent(this.app.workspace.on("file-open", () => this.scheduleTtsViewActionRefresh()));
     this.registerEvent(this.app.workspace.on("layout-change", () => {
-      this.refreshTtsViewActions();
+      this.scheduleTtsViewActionRefresh();
       this.applyUiButtonRules();
     }));
+    const applyRulesAfterPointer = () => window.setTimeout(() => this.applyUiButtonRules(), 80);
+    document.addEventListener("click", applyRulesAfterPointer, true);
+    document.addEventListener("pointerup", applyRulesAfterPointer, true);
+    this.register(() => {
+      document.removeEventListener("click", applyRulesAfterPointer, true);
+      document.removeEventListener("pointerup", applyRulesAfterPointer, true);
+    });
     this.applyUiButtonRules();
 
     this.registerEvent(this.app.workspace.on("editor-menu", (menu: Menu, editor: Editor, view: MarkdownView) => {
@@ -4042,7 +4147,7 @@ export default class CancipPlugin extends Plugin {
     this.clearUiRuleMarks();
     this.uiRuleStyleEl?.remove();
     this.uiRuleStyleEl = null;
-    this.stopTts(false);
+    this.stopTts(false, false);
     this.disposeBuiltinPrimeTtsRuntime();
     this.builtinPrimeTtsRuntime = null;
     this.builtinPrimeTtsPromise = null;
@@ -4084,6 +4189,26 @@ export default class CancipPlugin extends Plugin {
     void this.startTts(text, label, provider, sourcePath, sourceText || text);
   }
 
+  private ttsPartsForText(text: string, provider?: TtsProvider): TtsPartPlan {
+    const chineseNumbers = isChineseLanguage(this.language());
+    const usePrimeFastPlan = provider === "builtin-prime-tts" || !provider;
+    const configuredTarget = Number(this.settings.ttsChunkChars) || DEFAULT_SETTINGS.ttsChunkChars;
+    const targetLength = usePrimeFastPlan
+      ? primeTtsFastTargetLength(configuredTarget)
+      : Math.max(120, Math.min(360, configuredTarget || 240));
+    return makeTtsPartPlan(
+      text,
+      provider,
+      targetLength,
+      chineseNumbers ? (part) => normalizeChineseNumbersForPrimeTts(part, true) : undefined
+    );
+  }
+
+  private ttsSpokenText(text: string): string {
+    const normalized = normalizeTtsInputText(text);
+    return isChineseLanguage(this.language()) ? normalizeChineseNumbersForPrimeTts(normalized, true) : normalized;
+  }
+
   obsidianConfigDir(): string {
     return normalizePath(this.app.vault.configDir || OBSIDIAN_CONFIG_FALLBACK);
   }
@@ -4108,25 +4233,37 @@ export default class CancipPlugin extends Plugin {
 
   private async startTts(text: string, label?: string, forcedProvider?: TtsProvider, sourcePath = "", sourceText = ""): Promise<void> {
     try {
-      this.stopTts(false);
+      this.stopTts(false, false);
       this.activeTtsLabel = label || "";
       this.activeTtsMode = "starting";
       this.activeTtsLastError = "";
       this.activeTtsPaused = false;
       this.activeTtsStartedAudio = false;
       this.activeTtsRunId += 1;
-      this.activeTtsParts = splitTtsText(text, Math.max(120, Math.min(360, this.settings.ttsChunkChars || 240)), true);
+      this.activeTtsPrimeCacheSessionId += 1;
+      const preferredProvider = forcedProvider && forcedProvider !== "auto"
+        ? forcedProvider
+        : (isTtsProvider(this.settings.ttsProvider) && this.settings.ttsProvider !== "auto" ? this.settings.ttsProvider : undefined);
+      const spokenText = this.ttsSpokenText(text);
+      const partPlan = this.ttsPartsForText(text, preferredProvider);
+      this.activeTtsParts = partPlan.playParts;
+      this.activeTtsDisplayParts = partPlan.displayParts;
+      this.activeTtsDisplayIndexByPart = partPlan.displayIndexByPlayIndex;
       this.activeTtsPartIndex = 0;
       this.activeTtsSourcePath = sourcePath;
       this.activeTtsSourceText = sourceText || text;
       this.syncTtsOverlay();
-      const providers = this.ttsProviderChain(forcedProvider, text);
+      const providers = this.ttsProviderChain(forcedProvider, spokenText);
       const errors: string[] = [];
       for (const provider of providers) {
         try {
-          const started = await this.startTtsWithProvider(provider, text);
+          const partsForProvider = this.activeTtsParts;
+          const startRunId = this.activeTtsRunId;
+          const started = await this.startTtsWithProvider(provider, spokenText, partsForProvider);
           if (started) {
-            new Notice(label ? `${this.t("ttsStarted")}: ${label}` : this.t("ttsStarted"));
+            if (this.activeTtsRunId === startRunId && Date.now() - this.activeTtsStoppedAt > 500) {
+              new Notice(label ? `${this.t("ttsStarted")}: ${label}` : this.t("ttsStarted"));
+            }
             this.syncTtsOverlay();
             this.refreshOpenViews();
             return;
@@ -4160,9 +4297,15 @@ export default class CancipPlugin extends Plugin {
     }
   }
 
-  stopTts(showNotice = true): void {
+  stopTts(showNotice = true, markStopped = showNotice): void {
     this.activeTtsRunId += 1;
+    this.activeTtsPrimeCacheSessionId += 1;
+    if (markStopped) this.activeTtsStoppedAt = Date.now();
     this.activeTtsLastError = "";
+    if (this.ttsOverlayHideTimer !== null) {
+      window.clearTimeout(this.ttsOverlayHideTimer);
+      this.ttsOverlayHideTimer = null;
+    }
     if (this.ttsKeepAliveTimer !== null) {
       window.clearInterval(this.ttsKeepAliveTimer);
       this.ttsKeepAliveTimer = null;
@@ -4171,18 +4314,21 @@ export default class CancipPlugin extends Plugin {
       window.clearTimeout(this.ttsVoiceWarmupTimer);
       this.ttsVoiceWarmupTimer = null;
     }
-    this.activeTtsParts = [];
+    this.clearActiveTtsParts();
     this.activeTtsPartIndex = 0;
     this.activeTtsPaused = false;
     this.activeTtsProvider = "";
     this.activeNativeBridge = null;
-    this.activeTtsMode = showNotice ? "stopped" : "idle";
+    this.activeTtsMode = "idle";
     this.activeTtsStartedAudio = false;
     this.activeTtsSourcePath = "";
     this.activeTtsSourceText = "";
     this.clearTtsSourceHighlight();
     this.activeTtsPrimeCache.clear();
     this.activeTtsPrimeCacheRunId = 0;
+    this.activeTtsPrimeDecodedCache.clear();
+    this.activeTtsPrimeDecodedCacheRunId = 0;
+    this.ttsOverlay?.root.addClass("is-hidden");
     this.stopAudioTts();
     this.stopWebAudioTts();
     this.activeTtsAbort?.abort();
@@ -4195,6 +4341,9 @@ export default class CancipPlugin extends Plugin {
     void this.nativeTtsBridge()?.stop?.();
     this.activeUtterance = null;
     this.syncTtsOverlay();
+    if (showNotice) {
+      this.ttsOverlay?.root.addClass("is-hidden");
+    }
     this.refreshOpenViews();
     if (showNotice) new Notice(this.t("ttsStopped"));
   }
@@ -4221,6 +4370,7 @@ export default class CancipPlugin extends Plugin {
     this.activeTtsPaused = false;
     this.activeTtsMode = "playing";
     try {
+      this.prefetchActivePrimeTtsPlayback(this.activeTtsPartIndex);
       if (this.activeTtsAudio) await this.activeTtsAudio.play();
       if (this.activeWebAudioContext?.state === "suspended") await this.activeWebAudioContext.resume();
       if (this.activeUtterance) window.speechSynthesis?.resume();
@@ -4233,13 +4383,44 @@ export default class CancipPlugin extends Plugin {
     if (showNotice) new Notice(this.t("ttsResumed"));
   }
 
+  private prefetchActivePrimeTtsPlayback(index: number): void {
+    if (this.activeTtsProvider !== "builtin-prime-tts" || !this.builtinPrimeTtsRuntime || !this.activeTtsParts.length) return;
+    const runId = this.activeTtsRunId;
+    const safeIndex = Math.max(0, Math.min(this.activeTtsParts.length - 1, index));
+    this.activeTtsPrimeCacheRunId = this.activeTtsPrimeCacheSessionId;
+    this.prefetchPrimeTtsWindow(this.builtinPrimeTtsRuntime, this.activeTtsParts, safeIndex, runId);
+    this.prefetchPrimeTtsBlockLookahead(this.builtinPrimeTtsRuntime, this.activeTtsParts, safeIndex, runId);
+  }
+
   seekTtsPart(part: number): void {
+    const displayCount = this.activeTtsDisplayCount();
+    if (!displayCount) {
+      new Notice(this.t("ttsNoText"));
+      return;
+    }
+    const displayIndex = Math.max(0, Math.min(displayCount - 1, Math.floor(part) - 1));
+    this.seekTtsPlayIndex(this.playIndexForDisplayIndex(displayIndex));
+  }
+
+  private seekTtsDisplayDelta(delta: number): void {
+    const displayCount = this.activeTtsDisplayCount();
+    if (!displayCount) {
+      new Notice(this.t("ttsNoText"));
+      return;
+    }
+    const displayIndex = Math.max(0, Math.min(displayCount - 1, this.activeTtsDisplayIndex() + delta));
+    this.seekTtsPlayIndex(this.playIndexForDisplayIndex(displayIndex));
+  }
+
+  private seekTtsPlayIndex(playIndex: number, showNotice = true): void {
     if (!this.activeTtsParts.length) {
       new Notice(this.t("ttsNoText"));
       return;
     }
-    const index = Math.max(0, Math.min(this.activeTtsParts.length - 1, Math.floor(part) - 1));
+    const index = Math.max(0, Math.min(this.activeTtsParts.length - 1, Math.floor(playIndex)));
     const parts = this.activeTtsParts.slice();
+    const displayParts = this.activeTtsDisplayParts.slice();
+    const displayIndexByPart = this.activeTtsDisplayIndexByPart.slice();
     const label = this.activeTtsLabel;
     const sourcePath = this.activeTtsSourcePath;
     const sourceText = this.activeTtsSourceText;
@@ -4254,6 +4435,8 @@ export default class CancipPlugin extends Plugin {
     void this.activeNativeBridge?.stop?.();
     this.activeTtsPartIndex = index;
     this.activeTtsParts = parts;
+    this.activeTtsDisplayParts = displayParts;
+    this.activeTtsDisplayIndexByPart = displayIndexByPart;
     this.activeTtsLabel = label;
     this.activeTtsSourcePath = sourcePath;
     this.activeTtsSourceText = sourceText;
@@ -4261,26 +4444,46 @@ export default class CancipPlugin extends Plugin {
     this.activeTtsMode = "playing";
     this.activeTtsStartedAudio = false;
     this.activeTtsRunId += 1;
-    this.activeTtsPrimeCache.clear();
-    this.activeTtsPrimeCacheRunId = 0;
+    if (provider === "builtin-prime-tts") {
+      this.activeTtsPrimeCacheSessionId += 1;
+      this.activeTtsPrimeCache.clear();
+      this.activeTtsPrimeCacheRunId = this.activeTtsPrimeCacheSessionId;
+      this.activeTtsPrimeDecodedCache.clear();
+      this.activeTtsPrimeDecodedCacheRunId = this.activeTtsPrimeCacheSessionId;
+    } else {
+      this.activeTtsPrimeCache.clear();
+      this.activeTtsPrimeCacheRunId = 0;
+      this.activeTtsPrimeDecodedCache.clear();
+      this.activeTtsPrimeDecodedCacheRunId = 0;
+    }
     this.syncTtsOverlay();
     const resumeProvider = provider === "auto" ? this.ttsProviderChain(undefined, this.activeTtsParts.join("\n\n")).find((item) => item !== "auto") ?? "web-speech" : provider;
-    window.setTimeout(() => {
-      void this.resumeTtsFromActivePart(resumeProvider);
-    }, 0);
-    new Notice(this.t("ttsSeeked", { part: index + 1, total: this.activeTtsParts.length }));
+    if (resumeProvider === "builtin-prime-tts" && this.builtinPrimeTtsRuntime) {
+      const runId = this.activeTtsRunId;
+      this.activeTtsPrimeCacheRunId = this.activeTtsPrimeCacheSessionId;
+      this.prefetchPrimeTtsWindow(this.builtinPrimeTtsRuntime, this.activeTtsParts, index, runId);
+      this.prefetchPrimeTtsBlockLookahead(this.builtinPrimeTtsRuntime, this.activeTtsParts, index, runId);
+    }
+    void this.resumeTtsFromActivePart(resumeProvider);
+    const displayIndex = this.activeTtsDisplayIndex();
+    const displayCount = this.activeTtsDisplayCount();
+    if (showNotice) new Notice(this.t("ttsSeeked", { part: displayIndex + 1, total: displayCount || this.activeTtsParts.length }));
     this.refreshOpenViews();
   }
 
   ttsStatus(): TtsStatus {
-    const partText = this.activeTtsParts[this.activeTtsPartIndex] ?? "";
+    const displayIndex = this.activeTtsDisplayIndex();
+    const displayCount = this.activeTtsDisplayCount();
+    const playText = (this.activeTtsParts[this.activeTtsPartIndex] ?? "").trim();
+    const displayText = (this.activeTtsDisplayParts[displayIndex] ?? "").trim();
+    const partText = displayText || playText;
     return {
       mode: this.activeTtsMode,
       provider: this.activeTtsProvider,
       startedAudio: this.activeTtsStartedAudio,
       label: this.activeTtsLabel,
-      partIndex: this.activeTtsParts.length ? this.activeTtsPartIndex + 1 : 0,
-      partCount: this.activeTtsParts.length,
+      partIndex: displayCount ? displayIndex + 1 : 0,
+      partCount: displayCount,
       partText: trimContext(partText, 180),
       rate: this.settings.ttsRate,
       pitch: this.settings.ttsPitch,
@@ -4288,6 +4491,27 @@ export default class CancipPlugin extends Plugin {
       qualityMode: this.settings.ttsQualityMode,
       lastError: this.activeTtsLastError
     };
+  }
+
+  private activeTtsDisplayIndex(): number {
+    if (!this.activeTtsParts.length) return 0;
+    const mapped = this.activeTtsDisplayIndexByPart[this.activeTtsPartIndex];
+    const count = this.activeTtsDisplayCount();
+    if (typeof mapped === "number" && Number.isFinite(mapped)) return Math.max(0, Math.min(Math.max(0, count - 1), mapped));
+    return Math.max(0, Math.min(Math.max(0, count - 1), this.activeTtsPartIndex));
+  }
+
+  private activeTtsDisplayCount(): number {
+    if (this.activeTtsDisplayParts.length) return this.activeTtsDisplayParts.length;
+    return this.activeTtsParts.length ? this.activeTtsParts.length : 0;
+  }
+
+  private playIndexForDisplayIndex(displayIndex: number): number {
+    if (!this.activeTtsParts.length) return 0;
+    const safeDisplay = Math.max(0, Math.min(Math.max(0, this.activeTtsDisplayCount() - 1), displayIndex));
+    const index = this.activeTtsDisplayIndexByPart.findIndex((item) => item === safeDisplay);
+    if (index >= 0) return index;
+    return Math.max(0, Math.min(this.activeTtsParts.length - 1, safeDisplay));
   }
 
   formatTtsStatus(): string {
@@ -4342,7 +4566,11 @@ export default class CancipPlugin extends Plugin {
     const panel = root.createDiv({ cls: "obcc-tts-floating-panel" });
     const handle = panel.createDiv({ cls: "obcc-tts-floating-handle" });
     const titleWrap = handle.createDiv({ cls: "obcc-tts-floating-title-wrap" });
-    const title = titleWrap.createDiv({ cls: "obcc-tts-floating-title", text: this.t("ttsFloatingTitle") });
+    const title = titleWrap.createEl("button", {
+      cls: "obcc-tts-floating-title",
+      text: this.t("ttsFloatingTitle"),
+      attr: { type: "button", title: this.t("ttsFloatingTitle"), "aria-label": this.t("ttsFloatingTitle") }
+    });
     const meta = titleWrap.createDiv({ cls: "obcc-tts-floating-meta" });
     const settingsButton = handle.createEl("button", {
       cls: "obcc-tts-floating-icon",
@@ -4415,6 +4643,11 @@ export default class CancipPlugin extends Plugin {
       event.stopPropagation();
       if (!this.ttsOverlayDragMoved) this.setTtsOverlayCollapsed(false);
     });
+    title.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (this.ttsOverlayDragMoved) return;
+      void this.openActiveTtsSourceFile();
+    });
     settingsButton.addEventListener("click", (event) => {
       event.stopPropagation();
       const open = settingsPanel.hasClass("is-hidden");
@@ -4424,7 +4657,7 @@ export default class CancipPlugin extends Plugin {
     });
     previousButton.addEventListener("click", (event) => {
       event.stopPropagation();
-      this.seekTtsPart(this.activeTtsPartIndex);
+      this.seekTtsDisplayDelta(-1);
     });
     playPauseButton.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -4433,12 +4666,11 @@ export default class CancipPlugin extends Plugin {
     });
     nextButton.addEventListener("click", (event) => {
       event.stopPropagation();
-      this.seekTtsPart(this.activeTtsPartIndex + 2);
+      this.seekTtsDisplayDelta(1);
     });
     progress.addEventListener("input", () => {
       const nextPart = Number(progress.value);
-      const total = Math.max(1, this.activeTtsParts.length || 1);
-      if (Number.isFinite(nextPart)) progressLabel.setText(`${this.t("ttsPosition")} ${Math.max(1, Math.min(total, Math.floor(nextPart)))}/${total}`);
+      if (Number.isFinite(nextPart)) progressLabel.setText(this.t("ttsPosition"));
     });
     progress.addEventListener("change", () => {
       const nextPart = Number(progress.value);
@@ -4451,7 +4683,7 @@ export default class CancipPlugin extends Plugin {
     });
     rate.addEventListener("change", () => {
       void this.saveSettings();
-      if (this.isSpeaking() && this.activeTtsParts.length) this.seekTtsPart(this.activeTtsPartIndex + 1);
+      if (this.isSpeaking() && this.activeTtsParts.length) this.seekTtsPlayIndex(this.activeTtsPartIndex, false);
     });
     pitch.addEventListener("input", () => {
       const nextPitch = Math.max(0.5, Math.min(1.5, Number(pitch.value) || 1));
@@ -4460,7 +4692,7 @@ export default class CancipPlugin extends Plugin {
     });
     pitch.addEventListener("change", () => {
       void this.saveSettings();
-      if (this.isSpeaking() && this.activeTtsParts.length) this.seekTtsPart(this.activeTtsPartIndex + 1);
+      if (this.isSpeaking() && this.activeTtsParts.length) this.seekTtsPlayIndex(this.activeTtsPartIndex, false);
     });
     providerSelect.addEventListener("change", () => {
       const value = providerSelect.value;
@@ -4557,6 +4789,10 @@ export default class CancipPlugin extends Plugin {
     }
     const overlay = this.createTtsOverlay();
     const status = this.ttsStatus();
+    if (status.mode === "idle" && status.partCount === 0 && !status.lastError && Date.now() - this.activeTtsStoppedAt < 5000) {
+      overlay.root.addClass("is-hidden");
+      return;
+    }
     const shouldShow = status.mode !== "idle" || status.partCount > 0 || Boolean(status.lastError);
     overlay.root.toggleClass("is-hidden", !shouldShow);
     overlay.root.toggleClass("is-collapsed", this.ttsOverlayCollapsed);
@@ -4566,9 +4802,15 @@ export default class CancipPlugin extends Plugin {
     if (!shouldShow) return;
 
     overlay.title.setText(status.label || this.t("ttsFloatingTitle"));
+    const sourcePath = this.activeTtsSourcePath.trim();
+    const canOpenSource = Boolean(sourcePath && this.app.vault.getAbstractFileByPath(sourcePath) instanceof TFile);
+    overlay.title.disabled = !canOpenSource;
+    overlay.title.toggleClass("is-clickable", canOpenSource);
+    overlay.title.setAttr("title", canOpenSource ? sourcePath : (status.label || this.t("ttsFloatingTitle")));
+    overlay.title.setAttr("aria-label", canOpenSource ? sourcePath : (status.label || this.t("ttsFloatingTitle")));
     const current = status.partCount ? Math.max(1, Math.min(status.partCount, status.partIndex || 1)) : 0;
     const providerLabel = status.provider || this.t("ttsPreparing");
-    overlay.meta.setText(status.partCount ? `${providerLabel} · ${current}/${status.partCount}` : providerLabel);
+    overlay.meta.setText(providerLabel);
     overlay.text.setText(status.partText || (status.lastError ? status.lastError : this.t("ttsPreparing")));
     overlay.bubble.setAttr("aria-label", status.partText ? `${this.t("ttsFloatingTitle")}: ${status.partText}` : this.t("ttsFloatingTitle"));
     overlay.bubble.setAttr("aria-expanded", this.ttsOverlayCollapsed ? "false" : "true");
@@ -4576,7 +4818,7 @@ export default class CancipPlugin extends Plugin {
     overlay.progress.max = String(Math.max(1, status.partCount || 1));
     overlay.progress.value = String(Math.max(1, current || 1));
     overlay.progress.disabled = !status.partCount;
-    overlay.progressLabel.setText(status.partCount ? `${this.t("ttsPosition")} ${current}/${status.partCount}` : this.t("ttsPreparing"));
+    overlay.progressLabel.setText(status.mode === "starting" || !status.startedAudio ? this.t("ttsPreparing") : "");
     const rate = Math.max(0.5, Math.min(2, Number(status.rate) || 1));
     overlay.rate.value = String(rate);
     overlay.rateLabel.setText(`${this.t("ttsRateControl")} ${rate.toFixed(2)}x`);
@@ -4602,13 +4844,31 @@ export default class CancipPlugin extends Plugin {
     this.updateTtsSourceHighlight();
   }
 
+  private async openActiveTtsSourceFile(): Promise<void> {
+    const sourcePath = normalizePath(this.activeTtsSourcePath.trim());
+    if (!sourcePath) return;
+    const target = this.app.vault.getAbstractFileByPath(sourcePath);
+    if (!(target instanceof TFile)) {
+      new Notice(`未找到可跳转文件：${sourcePath}`);
+      return;
+    }
+    try {
+      const leaf = this.app.workspace.getLeaf("tab");
+      await leaf.openFile(target, { active: true });
+      await this.app.workspace.revealLeaf(leaf);
+    } catch (error) {
+      new Notice(error instanceof Error ? error.message : String(error));
+    }
+  }
+
   private startTtsOverlayDrag(event: PointerEvent): void {
     if (event.button !== 0 && event.pointerType !== "touch" && event.pointerType !== "pen") return;
     const overlay = this.ttsOverlay;
     if (!overlay) return;
     const target = event.target as HTMLElement | null;
     const isBubbleDrag = target === overlay.bubble || Boolean(target?.closest(".obcc-tts-floating-bubble"));
-    if (!isBubbleDrag && target?.closest("button,input")) return;
+    const isTitleDrag = target === overlay.title || Boolean(target?.closest(".obcc-tts-floating-title"));
+    if (!isBubbleDrag && !isTitleDrag && target?.closest("button,input,select,textarea")) return;
     event.preventDefault();
     const rect = overlay.root.getBoundingClientRect();
     const offsetX = event.clientX - rect.left;
@@ -4675,22 +4935,40 @@ export default class CancipPlugin extends Plugin {
     }
   }
 
-  private refreshTtsViewActions(): void {
+  private scheduleTtsViewActionRefresh(): void {
+    this.refreshTtsViewActions();
+    for (const delay of [80, 250, 700, 1400]) {
+      window.setTimeout(() => this.refreshTtsViewActions(), delay);
+    }
+  }
+
+  refreshTtsViewActions(): void {
     const leaves: WorkspaceLeaf[] = [];
     this.app.workspace.iterateAllLeaves((leaf) => leaves.push(leaf));
     for (const leaf of leaves) {
       const view = leaf.view as unknown as { file?: TFile; containerEl?: HTMLElement };
-      const file = view.file instanceof TFile ? view.file : null;
+      const file = this.viewFileForTtsAction(view.file);
       const container = view.containerEl;
       if (!container) continue;
-      const existing = container.querySelector(".obcc-view-tts-action") as HTMLButtonElement | null;
-      const canRead = Boolean(file && (isContextTextFile(file) || isPdfFile(file)));
+      const leafContainer = (leaf as unknown as { containerEl?: HTMLElement }).containerEl ?? container.closest<HTMLElement>(".workspace-leaf") ?? container;
+      const actionRoots = Array.from(new Set([container, leafContainer].filter((root): root is HTMLElement => root instanceof HTMLElement)));
+      const actions = actionRoots
+        .map((root) => root.querySelector(".view-header .view-actions, .view-actions"))
+        .find((el): el is HTMLElement => el instanceof HTMLElement) ?? null;
+      const removalRoots = actions ? [actions] : actionRoots;
+      const existing = removalRoots
+        .map((root) => root.querySelector(".obcc-view-tts-action"))
+        .find((button): button is HTMLButtonElement => button instanceof HTMLButtonElement) ?? null;
+      if (!this.settings.ttsShowViewActions) {
+        for (const root of removalRoots) root.querySelectorAll(".obcc-view-tts-action").forEach((button) => button.remove());
+        continue;
+      }
+      const canRead = this.canShowTtsViewAction(file);
       if (!canRead) {
-        existing?.remove();
+        for (const root of removalRoots) root.querySelectorAll(".obcc-view-tts-action").forEach((button) => button.remove());
         continue;
       }
       if (existing) continue;
-      const actions = container.querySelector(".view-actions") as HTMLElement | null;
       if (!actions) continue;
       const button = actions.createEl("button", {
         cls: "clickable-icon view-action obcc-view-tts-action",
@@ -4700,15 +4978,78 @@ export default class CancipPlugin extends Plugin {
       button.addEventListener("click", (event) => {
         event.preventDefault();
         event.stopPropagation();
-        const latestFile = (leaf.view as unknown as { file?: TFile }).file;
-        if (latestFile instanceof TFile && (isContextTextFile(latestFile) || isPdfFile(latestFile))) {
+        const latestFile = this.viewFileForTtsAction((leaf.view as unknown as { file?: TFile }).file);
+        if (this.canShowTtsViewAction(latestFile)) {
           void this.speakFile(latestFile);
         }
       });
     }
+    this.ensureActiveTtsViewAction();
+  }
+
+  private ensureActiveTtsViewAction(): void {
+    if (!this.settings.ttsShowViewActions) return;
+    const activeFile = this.app.workspace.getActiveFile();
+    if (!this.canShowTtsViewAction(activeFile)) return;
+    const activeLeaf = this.app.workspace.activeLeaf;
+    const activeViewContainer = (activeLeaf?.view as unknown as { containerEl?: HTMLElement } | null)?.containerEl ?? null;
+    const activeLeafContainer = (activeLeaf as unknown as { containerEl?: HTMLElement } | null)?.containerEl ?? activeViewContainer?.closest<HTMLElement>(".workspace-leaf") ?? null;
+    const actions = activeLeafContainer?.querySelector<HTMLElement>(".view-header .view-actions, .view-actions")
+      ?? activeViewContainer?.querySelector<HTMLElement>(".view-header .view-actions, .view-actions")
+      ?? document.querySelector<HTMLElement>(".workspace-leaf.mod-active .view-header .view-actions, .workspace-leaf.mod-active .view-actions");
+    if (!actions || actions.querySelector(".obcc-view-tts-action")) return;
+    const button = actions.createEl("button", {
+      cls: "clickable-icon view-action obcc-view-tts-action",
+      attr: { type: "button", title: this.t("speakNote"), "aria-label": this.t("speakNote") }
+    });
+    setIcon(button, "volume-2");
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const latestFile = this.app.workspace.getActiveFile();
+      if (this.canShowTtsViewAction(latestFile)) void this.speakFile(latestFile);
+    });
+  }
+
+  private canShowTtsViewAction(file: TFile | null): file is TFile {
+    if (!file) return false;
+    const extension = (file.extension || file.path.split(".").pop() || "").toLowerCase();
+    return extension === "pdf" || [
+      "md",
+      "markdown",
+      "txt",
+      "json",
+      "jsonl",
+      "csv",
+      "ts",
+      "tsx",
+      "js",
+      "jsx",
+      "css",
+      "html",
+      "xml",
+      "yaml",
+      "yml"
+    ].includes(extension);
+  }
+
+  private viewFileForTtsAction(value: unknown): TFile | null {
+    if (value instanceof TFile) return value;
+    const path = typeof (value as { path?: unknown } | null)?.path === "string" ? (value as { path: string }).path : "";
+    if (!path) return null;
+    const resolved = this.app.vault.getAbstractFileByPath(path);
+    return resolved instanceof TFile ? resolved : null;
   }
 
   private clearTtsSourceHighlight(): void {
+    if (this.activeTtsEditorSelectionSnapshot) {
+      const editor = this.app.workspace.activeEditor?.editor;
+      const file = this.app.workspace.activeEditor?.file;
+      if (editor && file?.path === this.activeTtsEditorSelectionSnapshot.filePath) {
+        editor.setSelection(this.activeTtsEditorSelectionSnapshot.anchor, this.activeTtsEditorSelectionSnapshot.head);
+      }
+      this.activeTtsEditorSelectionSnapshot = null;
+    }
     for (const node of this.activeTtsSourceHighlightNodes) {
       if (!node.isConnected) continue;
       const text = document.createTextNode(node.textContent ?? "");
@@ -4716,56 +5057,135 @@ export default class CancipPlugin extends Plugin {
       text.parentElement?.normalize();
     }
     this.activeTtsSourceHighlightNodes = [];
+    for (const node of this.activeTtsSourceClassNodes) {
+      if (node.isConnected) node.removeClass("obcc-tts-source-highlight");
+    }
+    this.activeTtsSourceClassNodes = [];
     document.querySelectorAll(".obcc-tts-source-highlight").forEach((node) => {
       if (!(node instanceof HTMLElement)) return;
+      if (!node.hasClass("obcc-tts-source-wrap")) {
+        node.removeClass("obcc-tts-source-highlight");
+        return;
+      }
       const text = document.createTextNode(node.textContent ?? "");
       node.replaceWith(text);
       text.parentElement?.normalize();
     });
+    this.activeTtsHighlightKey = "";
   }
 
   private updateTtsSourceHighlight(): void {
-    const current = this.activeTtsParts[this.activeTtsPartIndex]?.trim();
-    if (!current || !this.activeTtsSourcePath) {
+    const displayIndex = this.activeTtsDisplayIndex();
+    const displayText = (this.activeTtsDisplayParts[displayIndex] ?? "").trim();
+    const playText = (this.activeTtsParts[this.activeTtsPartIndex] ?? displayText).trim();
+    const keyText = displayText || playText;
+    const key = `${this.activeTtsSourcePath}:${displayIndex}:${normalizeTtsHighlightText(keyText).slice(0, 220)}`;
+    if (!displayText || !this.activeTtsSourcePath) {
       this.clearTtsSourceHighlight();
       return;
     }
-    const activeFile = this.app.workspace.getActiveFile();
-    if (activeFile?.path !== this.activeTtsSourcePath) return;
-    this.highlightActiveEditorTtsPart(current);
-    this.highlightActiveRenderedTtsPart(current);
+    if (this.activeTtsHighlightKey === key) return;
+    this.clearTtsSourceHighlight();
+    const highlightedRendered = this.highlightActiveRenderedTtsPart(displayText) || this.highlightActiveRenderedTtsPart(playText);
+    const highlightedEditor = this.highlightActiveEditorTtsPart(displayText) || this.highlightActiveEditorTtsPart(playText);
+    if (highlightedRendered || highlightedEditor) this.activeTtsHighlightKey = key;
   }
 
-  private highlightActiveEditorTtsPart(current: string): void {
+  private highlightActiveEditorTtsPart(current: string): boolean {
     const editor = this.app.workspace.activeEditor?.editor;
     const file = this.app.workspace.activeEditor?.file;
-    if (!editor || file?.path !== this.activeTtsSourcePath) return;
+    if (!editor || file?.path !== this.activeTtsSourcePath) return false;
     const value = editor.getValue();
     const range = this.findTtsPartRange(value, current);
-    if (!range) return;
+    if (!range) return false;
+    if (!this.activeTtsEditorSelectionSnapshot || this.activeTtsEditorSelectionSnapshot.filePath !== file.path) {
+      this.activeTtsEditorSelectionSnapshot = {
+        anchor: editor.getCursor("anchor"),
+        head: editor.getCursor("head"),
+        filePath: file.path
+      };
+    }
+    editor.setSelection(range.from, range.to);
     editor.scrollIntoView(range, true);
+    this.highlightActiveEditorDomRange(editor, range);
+    return true;
   }
 
-  private highlightActiveRenderedTtsPart(current: string): void {
-    this.clearTtsSourceHighlight();
+  private highlightActiveEditorDomRange(editor: Editor, range: { from: { line: number; ch: number }; to: { line: number; ch: number } }): void {
     const leaf = this.app.workspace.activeLeaf;
     const container = (leaf?.view as unknown as { containerEl?: HTMLElement } | null)?.containerEl;
     if (!container) return;
-    const roots = Array.from(container.querySelectorAll(".markdown-preview-view, .pdf-viewer, .pdf-container, .pdfViewer, .textLayer"));
-    for (const root of roots) {
-      if (!(root instanceof HTMLElement)) continue;
-      if (this.wrapFirstTextMatch(root, current)) return;
+    const lines = Array.from(container.querySelectorAll<HTMLElement>(".markdown-source-view .cm-line, .cm-editor .cm-line"));
+    if (!lines.length) return;
+    const fromLine = Math.min(range.from.line, range.to.line);
+    const toLine = Math.max(range.from.line, range.to.line);
+    const matched: HTMLElement[] = [];
+    const used = new Set<HTMLElement>();
+    for (let line = fromLine; line <= toLine && matched.length < 20; line += 1) {
+      const lineText = normalizeTtsHighlightText(editor.getLine(line) ?? "");
+      if (!lineText) continue;
+      const el = lines.find((candidate) => {
+        if (used.has(candidate)) return false;
+        const domText = normalizeTtsHighlightText(candidate.textContent ?? "");
+        return domText.length >= 2 && (domText.includes(lineText) || lineText.includes(domText));
+      });
+      if (!el) continue;
+      used.add(el);
+      matched.push(el);
     }
+    if (!matched.length) return;
+    for (const el of matched) {
+      el.addClass("obcc-tts-source-highlight");
+      this.activeTtsSourceClassNodes.push(el);
+    }
+  }
+
+  private highlightActiveRenderedTtsPart(current: string): boolean {
+    for (const container of this.ttsSourceContainers()) {
+      if (this.highlightPdfTextLayerPart(container, current)) return true;
+      const roots = Array.from(container.querySelectorAll(".markdown-preview-view, .markdown-rendered, .cm-content, .pdf-viewer, .pdf-container, .pdfViewer, .textLayer, .pdf-embed"));
+      for (const root of roots) {
+        if (!(root instanceof HTMLElement)) continue;
+        if (this.wrapFirstTextMatch(root, current)) return true;
+        if (this.highlightRenderedPart(root, current)) return true;
+      }
+    }
+    return false;
+  }
+
+  private ttsSourceContainers(): HTMLElement[] {
+    const containers: HTMLElement[] = [];
+    this.app.workspace.iterateAllLeaves((leaf) => {
+      const view = leaf.view as unknown as { file?: TFile; containerEl?: HTMLElement };
+      if (view.file instanceof TFile && view.file.path === this.activeTtsSourcePath && view.containerEl) {
+        containers.push(view.containerEl);
+      }
+    });
+    if (containers.length) return containers;
+    const activeContainer = (this.app.workspace.activeLeaf?.view as unknown as { containerEl?: HTMLElement } | null)?.containerEl;
+    return activeContainer ? [activeContainer] : [];
   }
 
   private findTtsPartRange(source: string, current: string): { from: { line: number; ch: number }; to: { line: number; ch: number } } | null {
     const needle = this.ttsHighlightNeedle(current);
     if (!needle) return null;
-    const index = source.indexOf(needle);
-    if (index < 0) return null;
+    const index = closestStringIndex(source, needle, this.ttsSourceTextOffsetHint());
+    if (index >= 0) {
+      return {
+        from: offsetToEditorPosition(source, index),
+        to: offsetToEditorPosition(source, index + needle.length)
+      };
+    }
+    const compactNeedle = normalizeTtsHighlightText(current).slice(0, 140);
+    if (compactNeedle.length < 2) return null;
+    const normalized = normalizedTextWithSourceOffsets(source);
+    const compactIndex = closestStringIndex(normalized.text, compactNeedle, this.ttsNormalizedHighlightCursor());
+    if (compactIndex < 0) return null;
+    const start = normalized.offsets[compactIndex] ?? 0;
+    const end = (normalized.offsets[compactIndex + compactNeedle.length - 1] ?? start) + 1;
     return {
-      from: offsetToEditorPosition(source, index),
-      to: offsetToEditorPosition(source, index + needle.length)
+      from: offsetToEditorPosition(source, start),
+      to: offsetToEditorPosition(source, end)
     };
   }
 
@@ -4775,33 +5195,199 @@ export default class CancipPlugin extends Plugin {
     return compact.length > 80 ? compact.slice(0, 80).trim() : compact;
   }
 
+  private ttsNormalizedHighlightCursor(): number {
+    let cursor = 0;
+    if (this.activeTtsDisplayParts.length) {
+      const displayIndex = this.activeTtsDisplayIndex();
+      for (let index = 0; index < displayIndex; index += 1) {
+        cursor += normalizeTtsHighlightText(this.activeTtsDisplayParts[index] ?? "").length;
+      }
+    } else if (this.activeTtsParts.length) {
+      for (let index = 0; index < this.activeTtsPartIndex; index += 1) {
+        cursor += normalizeTtsHighlightText(this.activeTtsParts[index] ?? "").length;
+      }
+    }
+    if (Number.isFinite(cursor) && cursor >= 0) this.activeTtsLastHighlightCursor = cursor;
+    return this.activeTtsLastHighlightCursor;
+  }
+
+  private ttsSourceTextOffsetHint(): number {
+    const normalizedSource = normalizedTextWithSourceOffsets(this.activeTtsSourceText || "");
+    const offset = normalizedSource.offsets[this.ttsNormalizedHighlightCursor()];
+    return Number.isFinite(offset) ? offset : 0;
+  }
+
   private wrapFirstTextMatch(root: HTMLElement, current: string): boolean {
     const needle = this.ttsHighlightNeedle(current);
     if (!needle) return false;
+    const normalizedNeedle = normalizeTtsHighlightText(current).slice(0, 160);
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
       acceptNode: (node) => {
         const parent = node.parentElement;
         if (!parent || parent.closest(".obcc-tts-floating, .obcc-view-tts-action, script, style, textarea, input, button")) return NodeFilter.FILTER_REJECT;
-        return node.textContent?.includes(needle) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
+        const text = node.textContent ?? "";
+        if (text.includes(needle)) return NodeFilter.FILTER_ACCEPT;
+        if (normalizedNeedle.length >= 2 && normalizeTtsHighlightText(text).includes(normalizedNeedle.slice(0, Math.min(normalizedNeedle.length, 24)))) return NodeFilter.FILTER_ACCEPT;
+        return NodeFilter.FILTER_SKIP;
       }
     });
-    const node = walker.nextNode();
-    if (!node || !node.textContent) return false;
-    const index = node.textContent.indexOf(needle);
-    if (index < 0) return false;
-    const range = document.createRange();
-    range.setStart(node, index);
-    range.setEnd(node, index + needle.length);
-    const mark = document.createElement("span");
-    mark.addClass("obcc-tts-source-highlight");
-    try {
-      range.surroundContents(mark);
-      this.activeTtsSourceHighlightNodes = [mark];
-      mark.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
-      return true;
-    } catch {
-      return false;
+    let node = walker.nextNode();
+    while (node?.textContent) {
+      const text = node.textContent;
+      let start = text.indexOf(needle);
+      let end = start >= 0 ? start + needle.length : -1;
+      if (start < 0 && normalizedNeedle.length >= 2) {
+        const normalized = normalizedTextWithSourceOffsets(text);
+        const match = findBestNormalizedNeedleMatch(normalized.text, normalizedNeedle, true, 0);
+        if (match) {
+          start = normalized.offsets[match.index] ?? -1;
+          end = (normalized.offsets[match.index + match.needle.length - 1] ?? start) + 1;
+        }
+      }
+      if (start >= 0 && end > start) {
+        const range = document.createRange();
+        range.setStart(node, start);
+        range.setEnd(node, end);
+        const mark = document.createElement("span");
+        mark.addClass("obcc-tts-source-highlight");
+        mark.addClass("obcc-tts-source-wrap");
+        try {
+          range.surroundContents(mark);
+          this.activeTtsSourceHighlightNodes = [mark];
+          mark.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
+          return true;
+        } catch {
+          mark.remove();
+        }
+      }
+      node = walker.nextNode();
     }
+    return false;
+  }
+
+  private highlightPdfTextLayerPart(container: HTMLElement, current: string): boolean {
+    const directLayer = container.hasClass("textLayer") ? [container] : [];
+    const textLayers = [...directLayer, ...Array.from(container.querySelectorAll<HTMLElement>(".textLayer"))];
+    const needle = normalizeTtsHighlightText(current).slice(0, 220);
+    if (needle.length < 2) return false;
+    const orderedLayers = this.pdfTextLayersForTtsHighlight(container, textLayers);
+    for (const layer of orderedLayers) {
+      const matched = this.highlightTextStreamElements(layer, "span, br", needle, false, 0);
+      if (matched) return true;
+    }
+    if (!textLayers.length) {
+      return this.highlightTextStreamElements(container, ".page span, [data-page-number] span, span[role='presentation']", needle, false, 0);
+    }
+    return false;
+  }
+
+  private pdfTextLayersForTtsHighlight(container: HTMLElement, layers: HTMLElement[]): HTMLElement[] {
+    if (!layers.length) return [];
+    const viewport = ttsReadableViewport(container);
+    const scored = layers
+      .map((layer, index) => {
+        const rect = layer.getBoundingClientRect();
+        const visible = rect.height > 0 && rect.width > 0 && rect.bottom >= viewport.top && rect.top <= viewport.bottom;
+        const distance = visible ? 0 : Math.min(Math.abs(rect.top - viewport.top), Math.abs(rect.bottom - viewport.bottom));
+        return { layer, index, visible, distance };
+      })
+      .sort((a, b) => Number(b.visible) - Number(a.visible) || a.distance - b.distance || a.index - b.index);
+    const visible = scored.filter((item) => item.visible).map((item) => item.layer);
+    if (visible.length) {
+      const nearby = scored.filter((item) => !item.visible).slice(0, 4).map((item) => item.layer);
+      return [...visible, ...nearby];
+    }
+    return scored.slice(0, 6).map((item) => item.layer);
+  }
+
+  private highlightTextStreamElements(root: HTMLElement, selector: string, needle: string, preferShortFallback: boolean, cursorOverride?: number): boolean {
+    const entries: { node: HTMLElement; start: number; end: number }[] = [];
+    let haystack = "";
+    const elements = Array.from(root.querySelectorAll(selector));
+    for (const element of elements) {
+      if (!(element instanceof HTMLElement)) continue;
+      if (element.closest(".obcc-tts-floating, .obcc-view-tts-action, script, style, textarea, input, button")) continue;
+      const rawText = element.tagName === "BR" ? "\n" : (element.innerText || element.textContent || "");
+      const text = normalizeTtsHighlightText(rawText);
+      if (!text) continue;
+      const start = haystack.length;
+      haystack += text;
+      const end = haystack.length;
+      entries.push({ node: element, start, end });
+      if (haystack.length > 120000) break;
+    }
+    const cursor = typeof cursorOverride === "number" && Number.isFinite(cursorOverride) ? cursorOverride : this.ttsNormalizedHighlightCursor();
+    const match = findBestNormalizedNeedleMatch(haystack, needle, preferShortFallback, cursor);
+    if (!match) return false;
+    const matchNeedle = match.needle;
+    const matchStart = match.index;
+    const matchEnd = matchStart + matchNeedle.length;
+    const matched = entries.filter((entry) => entry.end > matchStart && entry.start < matchEnd).slice(0, 120);
+    if (!matched.length) return false;
+    for (const entry of matched) {
+      entry.node.addClass("obcc-tts-source-highlight");
+      this.activeTtsSourceClassNodes.push(entry.node);
+    }
+    matched[0].node.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
+    return true;
+  }
+
+  private highlightRenderedPart(root: HTMLElement, current: string): boolean {
+    const needle = normalizeTtsHighlightText(current).slice(0, 160);
+    if (needle.length < 2) return false;
+    const entries: { node: HTMLElement; start: number; end: number }[] = [];
+    let haystack = "";
+    const renderedSelectors = [
+      ".markdown-preview-section",
+      ".markdown-preview-sizer",
+      ".markdown-rendered",
+      ".el-p",
+      ".el-li",
+      ".el-blockquote",
+      ".el-pre",
+      ".cm-line",
+      ".HyperMD-list-line",
+      ".HyperMD-codeblock",
+      "span",
+      "div",
+      "p",
+      "li",
+      "td",
+      "th",
+      "blockquote",
+      "pre",
+      "code",
+      "label",
+      "input.task-list-item-checkbox"
+    ].join(",");
+    const elements = keepTopLevelReadableItems(Array.from(root.querySelectorAll(renderedSelectors))
+      .filter((element): element is HTMLElement => element instanceof HTMLElement)
+      .map((element) => ({ element, text: renderedElementReadableText(element) })));
+    for (const { element } of elements) {
+      if (!(element instanceof HTMLElement)) continue;
+      if (element.closest(".obcc-tts-floating, .obcc-view-tts-action, script, style, textarea, input, button")) continue;
+      if (element.children.length && !element.matches("li, blockquote, p, td, th, div, .el-p, .el-li, .el-blockquote, .el-pre, .markdown-preview-section, .markdown-preview-sizer, .markdown-rendered")) continue;
+      const text = normalizeTtsHighlightText(renderedElementReadableText(element));
+      if (!text) continue;
+      const start = haystack.length;
+      haystack += text;
+      const end = haystack.length;
+      entries.push({ node: element, start, end });
+      if (haystack.length > 80000) break;
+    }
+    const match = findBestNormalizedNeedleMatch(haystack, needle, true, this.ttsNormalizedHighlightCursor());
+    if (!match) return false;
+    const matchNeedle = match.needle;
+    const matchStart = match.index;
+    const matchEnd = matchStart + matchNeedle.length;
+    const matched = entries.filter((entry) => entry.end > matchStart && entry.start < matchEnd).slice(0, 80);
+    if (!matched.length) return false;
+    for (const entry of matched) {
+      entry.node.addClass("obcc-tts-source-highlight");
+      this.activeTtsSourceClassNodes.push(entry.node);
+    }
+    matched[0].node.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
+    return true;
   }
 
   private async resumeTtsFromActivePart(provider: TtsProvider): Promise<void> {
@@ -4832,20 +5418,51 @@ export default class CancipPlugin extends Plugin {
     if (configured !== "auto") {
       return [configured];
     }
-    return ["builtin-prime-tts", "web-speech", "android-system", "custom-url"];
+    const languageCode = this.ttsLanguageCodeForText(text).toLowerCase();
+    if (languageCode.startsWith("en")) return ["web-speech", "android-system", "custom-url", "builtin-prime-tts"];
+    if (this.shouldAutoTryBuiltinPrimeTts(text)) {
+      if (!this.builtinPrimeTtsRuntime || !this.builtinPrimeTtsWarmupSynthDone) {
+        void this.prewarmBuiltinPrimeTts();
+        return ["android-system", "web-speech", "custom-url", "builtin-prime-tts"];
+      }
+      return ["builtin-prime-tts", "android-system", "web-speech", "custom-url"];
+    }
+    return ["android-system", "web-speech", "custom-url"];
   }
 
-  private async startTtsWithProvider(provider: TtsProvider, text: string): Promise<boolean> {
+  private setActiveTtsParts(parts: string[], provider?: TtsProvider): void {
+    this.activeTtsParts = parts.slice();
+    const currentDisplays = this.activeTtsDisplayParts.filter(Boolean);
+    if (!currentDisplays.length) {
+      const plan = makeTtsPartPlan(parts.join("\n\n"), provider, Math.max(120, Math.min(360, this.settings.ttsChunkChars || 240)));
+      this.activeTtsDisplayParts = plan.displayParts;
+      this.activeTtsDisplayIndexByPart = plan.displayIndexByPlayIndex;
+      this.activeTtsParts = plan.playParts;
+      return;
+    }
+    if (this.activeTtsDisplayIndexByPart.length !== this.activeTtsParts.length) {
+      this.activeTtsDisplayIndexByPart = mapTtsPlayPartsToDisplayParts(this.activeTtsParts, currentDisplays);
+    }
+  }
+
+  private clearActiveTtsParts(): void {
+    this.activeTtsParts = [];
+    this.activeTtsDisplayParts = [];
+    this.activeTtsDisplayIndexByPart = [];
+    this.activeTtsLastHighlightCursor = 0;
+  }
+
+  private async startTtsWithProvider(provider: TtsProvider, text: string, existingParts?: string[], startIndex = 0): Promise<boolean> {
     if (provider === "auto") {
       for (const item of this.ttsProviderChain(undefined, text).filter((entry) => entry !== "auto")) {
-        if (await this.startTtsWithProvider(item, text)) return true;
+        if (await this.startTtsWithProvider(item, text, existingParts, startIndex)) return true;
       }
       return false;
     }
-    if (provider === "android-system") return await this.startAndroidSystemTts(text);
-    if (provider === "builtin-prime-tts") return await this.startBuiltinPrimeTts(text);
+    if (provider === "android-system") return await this.startAndroidSystemTts(text, existingParts, startIndex);
+    if (provider === "builtin-prime-tts") return await this.startBuiltinPrimeTts(text, existingParts, startIndex);
     if (provider === "web-speech") {
-      if (!this.startWebSpeechTts(text)) return false;
+      if (!this.startWebSpeechTts(text, existingParts, startIndex)) return false;
       if (!Platform.isMobileApp) return true;
       const started = await this.waitForWebSpeechStart();
       if (started) return true;
@@ -4855,13 +5472,13 @@ export default class CancipPlugin extends Plugin {
         // Best effort before trying the next provider.
       }
       this.activeUtterance = null;
-      this.activeTtsParts = [];
+      this.clearActiveTtsParts();
       this.activeTtsPartIndex = 0;
       this.activeTtsLastError = this.activeTtsLastError || "Web Speech did not start on this mobile WebView";
       this.activeTtsStartedAudio = false;
       return false;
     }
-    if (provider === "custom-url") return await this.startCustomUrlTts(text, "custom-url");
+    if (provider === "custom-url") return await this.startCustomUrlTts(text, "custom-url", existingParts, startIndex);
     return false;
   }
 
@@ -4870,38 +5487,84 @@ export default class CancipPlugin extends Plugin {
   }
 
   private async startBuiltinPrimeTts(text: string, existingParts?: string[], startIndex = 0): Promise<boolean> {
-    const chunks = existingParts?.length ? existingParts.slice() : splitPrimeTtsProgressiveText(text);
+    const chunks = existingParts?.length
+      ? existingParts.slice()
+      : splitPrimeTtsMicroPlayText(text, primeTtsFastTargetLength(this.settings.ttsChunkChars));
     if (!chunks.length) return false;
     const runId = this.activeTtsRunId;
     this.activeTtsProvider = "builtin-prime-tts";
     this.activeTtsMode = "playing";
     this.activeTtsStartedAudio = false;
-    this.activeTtsParts = chunks;
-    this.activeTtsPartIndex = Math.max(0, Math.min(chunks.length - 1, startIndex));
+    this.setActiveTtsParts(chunks, "builtin-prime-tts");
+    const playChunks = this.activeTtsParts;
+    this.activeTtsPartIndex = Math.max(0, Math.min(playChunks.length - 1, startIndex));
     this.syncTtsOverlay();
     void this.prepareTtsAudioOutput();
-    const runtime = await this.loadBuiltinPrimeTts();
-    this.activeTtsPrimeCache.clear();
-    this.activeTtsPrimeCacheRunId = runId;
-    this.prefetchPrimeTtsWindow(runtime, chunks, this.activeTtsPartIndex, runId);
-    for (let index = this.activeTtsPartIndex; index < chunks.length; index += 1) {
+    const runtime = await this.loadBuiltinPrimeTtsForPlayback(runId, text, playChunks, this.activeTtsPartIndex);
+    if (!runtime) return true;
+    if (this.activeTtsPrimeCacheRunId !== this.activeTtsPrimeCacheSessionId) {
+      this.activeTtsPrimeCache.clear();
+      this.activeTtsPrimeCacheRunId = this.activeTtsPrimeCacheSessionId;
+    }
+    if (this.activeTtsPrimeDecodedCacheRunId !== this.activeTtsPrimeCacheSessionId) {
+      this.activeTtsPrimeDecodedCache.clear();
+      this.activeTtsPrimeDecodedCacheRunId = this.activeTtsPrimeCacheSessionId;
+    }
+    this.prefetchPrimeTtsWindow(runtime, playChunks, this.activeTtsPartIndex, runId);
+    this.prefetchPrimeTtsBlockLookahead(runtime, playChunks, this.activeTtsPartIndex, runId);
+    for (let index = this.activeTtsPartIndex; index < playChunks.length; index += 1) {
       if (this.activeTtsRunId !== runId || !this.activeTtsParts.length) return true;
       this.activeTtsPartIndex = index;
       this.syncTtsOverlay();
       this.refreshOpenViews();
-      this.prefetchPrimeTtsWindow(runtime, chunks, index, runId);
-      const wav = await this.getPrimeTtsCachedAudio(runtime, chunks, index, runId);
+      this.prefetchPrimeTtsWindow(runtime, playChunks, index, runId);
+      this.prefetchPrimeTtsBlockLookahead(runtime, playChunks, index, runId);
+      let playable: PrimeTtsPlayable | "skip" | null = null;
+      try {
+        playable = await this.getPrimeTtsPlayableWithStallFallback(runtime, playChunks, index, runId);
+      } catch (error) {
+        if (this.trySplitFailedPrimeTtsChunk(index, playChunks, runtime, runId, error)) {
+          index -= 1;
+          continue;
+        }
+        this.activeTtsLastError = error instanceof Error ? error.message : String(error);
+        continue;
+      }
+      if (playable === null) {
+        index -= 1;
+        continue;
+      }
+      if (playable === "skip") {
+        this.activeTtsLastError = `PrimeTTS skipped a stalled chunk: ${trimContext(playChunks[index] ?? "", 20)}`;
+        continue;
+      }
       if (this.activeTtsRunId !== runId || !this.activeTtsParts.length) return true;
-      this.prefetchPrimeTtsWindow(runtime, chunks, index + 1, runId);
-      await this.playTtsGeneratedWav(wav, runId);
+      this.prefetchPrimeTtsWindow(runtime, playChunks, index + 1, runId);
+      this.prefetchPrimeTtsBlockLookahead(runtime, playChunks, index + 1, runId);
+      try {
+        await this.playPrimeTtsPlayable(playable, runId);
+      } catch (error) {
+        if (playable.kind === "audio-buffer") {
+          try {
+            const wav = await this.getPrimeTtsCachedAudio(runtime, playChunks, index, runId);
+            await this.playTtsGeneratedWav(wav, runId);
+          } catch (fallbackError) {
+            this.activeTtsLastError = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+          }
+        } else {
+          this.activeTtsLastError = error instanceof Error ? error.message : String(error);
+        }
+      }
       this.prunePrimeTtsCache(index);
     }
     if (this.activeTtsRunId === runId) {
-      this.activeTtsParts = [];
+      this.clearActiveTtsParts();
       this.activeTtsPartIndex = 0;
       this.activeTtsMode = "idle";
       this.activeTtsPrimeCache.clear();
       this.activeTtsPrimeCacheRunId = 0;
+      this.activeTtsPrimeDecodedCache.clear();
+      this.activeTtsPrimeDecodedCacheRunId = 0;
       this.stopWebAudioTts();
       this.clearTtsSourceHighlight();
       this.syncTtsOverlay();
@@ -4910,57 +5573,238 @@ export default class CancipPlugin extends Plugin {
     return true;
   }
 
+  private async loadBuiltinPrimeTtsForPlayback(runId: number, text: string, chunks: string[], startIndex: number): Promise<PrimeTtsRuntime | null> {
+    if (this.builtinPrimeTtsRuntime) return this.builtinPrimeTtsRuntime;
+    const runtimePromise = this.loadBuiltinPrimeTts();
+    const result = await Promise.race<PrimeTtsRuntime | "stall">([
+      runtimePromise,
+      sleep(PRIME_TTS_RUNTIME_STALL_MS).then(() => "stall" as const)
+    ]);
+    if (result !== "stall") return result;
+    this.activeTtsLastError = "PrimeTTS runtime is still loading; deferred playback will resume automatically.";
+    void runtimePromise.then(() => {
+      if (this.activeTtsRunId !== runId) return;
+      if (this.activeTtsStartedAudio) return;
+      if (this.activeTtsMode === "stopped" || this.activeTtsMode === "idle") return;
+      this.activeTtsProvider = "builtin-prime-tts";
+      this.activeTtsMode = "playing";
+      this.activeTtsParts = chunks.slice();
+      this.activeTtsPartIndex = Math.max(0, Math.min(chunks.length - 1, startIndex));
+      void this.startBuiltinPrimeTts(text, chunks, this.activeTtsPartIndex);
+    }).catch((error) => {
+      if (this.activeTtsRunId !== runId) return;
+      this.activeTtsLastError = error instanceof Error ? error.message : String(error);
+      this.syncTtsOverlay();
+    });
+    this.syncTtsOverlay();
+    return null;
+  }
+
+  private applyPrimeTtsProgressiveFallback(index: number, chunks: string[], runtime?: PrimeTtsRuntime, runId?: number): boolean {
+    const chunk = chunks[index] ?? "";
+    const smaller = splitPrimeTtsStallFallbackText(chunk).filter(Boolean);
+    if (smaller.length <= 1) return false;
+    return this.replacePrimeTtsChunkWith(index, chunks, smaller, runtime, runId);
+  }
+
   private prefetchPrimeTtsWindow(runtime: PrimeTtsRuntime, chunks: string[], startIndex: number, runId: number): void {
-    const end = Math.min(chunks.length, Math.max(0, startIndex) + BUILTIN_PRIME_TTS_PREFETCH_AHEAD);
-    for (let index = Math.max(0, startIndex); index < end; index += 1) {
+    const safeStart = Math.max(0, Math.min(chunks.length - 1, startIndex));
+    const from = safeStart;
+    const ahead = runtime.kind === "main" ? BUILTIN_PRIME_TTS_MAIN_PREFETCH_AHEAD : BUILTIN_PRIME_TTS_PREFETCH_AHEAD;
+    const to = Math.min(chunks.length, safeStart + ahead + 1);
+    for (let index = from; index < to; index += 1) {
       this.prefetchPrimeTtsAudioUrl(runtime, chunks, index, runId);
+      if (runtime.kind === "worker" && index >= safeStart && index <= safeStart + BUILTIN_PRIME_TTS_DECODE_AHEAD) {
+        this.prefetchPrimeTtsDecodedAudio(chunks, index, runId);
+      }
+    }
+  }
+
+  private prefetchPrimeTtsBlockLookahead(runtime: PrimeTtsRuntime, chunks: string[], startIndex: number, runId: number): void {
+    if (!chunks.length) return;
+    const currentDisplay = this.activeTtsDisplayIndexByPart[Math.max(0, Math.min(chunks.length - 1, startIndex))] ?? 0;
+    const nextDisplayStart = this.playIndexForDisplayIndex(currentDisplay + 1);
+    if (nextDisplayStart > startIndex && nextDisplayStart < chunks.length) {
+      this.prefetchPrimeTtsWindow(runtime, chunks, nextDisplayStart, runId);
     }
   }
 
   private prefetchPrimeTtsAudioUrl(runtime: PrimeTtsRuntime, chunks: string[], index: number, runId: number): void {
     if (index < 0 || index >= chunks.length) return;
-    if (this.activeTtsPrimeCacheRunId !== runId) {
+    if (this.activeTtsPrimeCacheRunId !== this.activeTtsPrimeCacheSessionId) {
       this.activeTtsPrimeCache.clear();
-      this.activeTtsPrimeCacheRunId = runId;
+      this.activeTtsPrimeCacheRunId = this.activeTtsPrimeCacheSessionId;
     }
     if (this.activeTtsPrimeCache.has(index)) return;
-    const promise = this.queueBuiltinPrimeTtsSynthesis(runtime, chunks[index], runId)
+    const sessionId = this.activeTtsPrimeCacheSessionId;
+    const promise = this.queueBuiltinPrimeTtsSynthesis(runtime, chunks[index], sessionId)
       .then((wav) => wav)
       .catch((error) => {
         this.activeTtsPrimeCache.delete(index);
-        if (this.activeTtsRunId !== runId || !this.activeTtsParts.length) return new ArrayBuffer(0);
+        if (this.activeTtsPrimeCacheSessionId !== sessionId || !this.activeTtsParts.length) return new ArrayBuffer(0);
         throw error;
       }) as Promise<ArrayBuffer>;
     this.activeTtsPrimeCache.set(index, promise);
   }
 
   private async getPrimeTtsCachedAudio(runtime: PrimeTtsRuntime, chunks: string[], index: number, runId: number): Promise<ArrayBuffer> {
-    if (this.activeTtsPrimeCacheRunId !== runId) {
+    if (this.activeTtsPrimeCacheRunId !== this.activeTtsPrimeCacheSessionId) {
       this.activeTtsPrimeCache.clear();
-      this.activeTtsPrimeCacheRunId = runId;
+      this.activeTtsPrimeCacheRunId = this.activeTtsPrimeCacheSessionId;
     }
     this.prefetchPrimeTtsAudioUrl(runtime, chunks, index, runId);
     const promise = this.activeTtsPrimeCache.get(index);
     if (!promise) {
-      return await this.queueBuiltinPrimeTtsSynthesis(runtime, chunks[index], runId);
+      return await this.queueBuiltinPrimeTtsSynthesis(runtime, chunks[index], this.activeTtsPrimeCacheSessionId);
     }
     return await promise;
   }
 
-  private queueBuiltinPrimeTtsSynthesis(runtime: PrimeTtsRuntime, text: string, runId: number): Promise<ArrayBuffer> {
-    const task = this.builtinPrimeTtsSynthesisQueue.then(async () => {
-      if (this.activeTtsRunId !== runId || !this.activeTtsParts.length) throw new Error("tts cancelled");
+  private prefetchPrimeTtsDecodedAudio(chunks: string[], index: number, runId: number): void {
+    if (index < 0 || index >= chunks.length) return;
+    if (!this.ensureReusableAudioContext()) return;
+    if (this.activeTtsPrimeDecodedCacheRunId !== this.activeTtsPrimeCacheSessionId) {
+      this.activeTtsPrimeDecodedCache.clear();
+      this.activeTtsPrimeDecodedCacheRunId = this.activeTtsPrimeCacheSessionId;
+    }
+    if (this.activeTtsPrimeDecodedCache.has(index)) return;
+    const sessionId = this.activeTtsPrimeCacheSessionId;
+    const promise = this.decodePrimeTtsCachedAudio(chunks, index, runId, sessionId)
+      .catch((error) => {
+        this.activeTtsPrimeDecodedCache.delete(index);
+        throw error;
+      });
+    this.activeTtsPrimeDecodedCache.set(index, promise);
+  }
+
+  private async getPrimeTtsDecodedPlayable(chunks: string[], index: number, runId: number): Promise<PrimeTtsPlayable> {
+    if (!this.ensureReusableAudioContext()) {
+      return { kind: "wav", buffer: await this.getPrimeTtsCachedAudio(this.requireBuiltinPrimeTtsRuntime(), chunks, index, runId) };
+    }
+    if (this.activeTtsPrimeDecodedCacheRunId !== this.activeTtsPrimeCacheSessionId) {
+      this.activeTtsPrimeDecodedCache.clear();
+      this.activeTtsPrimeDecodedCacheRunId = this.activeTtsPrimeCacheSessionId;
+    }
+    this.prefetchPrimeTtsDecodedAudio(chunks, index, runId);
+    const promise = this.activeTtsPrimeDecodedCache.get(index);
+    if (!promise) return { kind: "wav", buffer: await this.getPrimeTtsCachedAudio(this.requireBuiltinPrimeTtsRuntime(), chunks, index, runId) };
+    try {
+      return { kind: "audio-buffer", buffer: await promise };
+    } catch {
+      return { kind: "wav", buffer: await this.getPrimeTtsCachedAudio(this.requireBuiltinPrimeTtsRuntime(), chunks, index, runId) };
+    }
+  }
+
+  private async decodePrimeTtsCachedAudio(chunks: string[], index: number, runId: number, sessionId: number): Promise<AudioBuffer> {
+    const context = this.ensureReusableAudioContext();
+    if (!context) throw new Error("Web Audio is not available");
+    if (context.state === "suspended") {
+      try {
+        await context.resume();
+      } catch {
+        // Mobile may require a direct gesture; playback will try again.
+      }
+    }
+    const wav = await this.getPrimeTtsCachedAudio(this.requireBuiltinPrimeTtsRuntime(), chunks, index, runId);
+    if (this.activeTtsPrimeCacheSessionId !== sessionId || !this.activeTtsParts.length) throw new Error("tts cancelled");
+    return await context.decodeAudioData(wav.slice(0));
+  }
+
+  private requireBuiltinPrimeTtsRuntime(): PrimeTtsRuntime {
+    if (!this.builtinPrimeTtsRuntime) throw new Error("PrimeTTS runtime is not loaded");
+    return this.builtinPrimeTtsRuntime;
+  }
+
+  private async getPrimeTtsPlayableWithStallFallback(runtime: PrimeTtsRuntime, chunks: string[], index: number, runId: number): Promise<PrimeTtsPlayable | "skip" | null> {
+    const playablePromise = runtime.kind === "main"
+      ? this.getPrimeTtsCachedAudio(runtime, chunks, index, runId).then((buffer): PrimeTtsPlayable => ({ kind: "wav", buffer }))
+      : this.getPrimeTtsDecodedPlayable(chunks, index, runId);
+    const result = await Promise.race<PrimeTtsPlayable | "stall">([
+      playablePromise,
+      sleep(PRIME_TTS_STALL_MS).then(() => "stall" as const)
+    ]);
+    if (result !== "stall") {
+      this.builtinPrimeTtsWarmupSynthDone = true;
+      return result;
+    }
+    if (this.activeTtsRunId !== runId || !this.activeTtsParts.length) return null;
+    const chunk = chunks[index] ?? "";
+    const normalizedLength = normalizeTtsHighlightText(chunks[index] ?? "").length;
+    if (shouldSplitStalledPrimeTtsChunk(chunk, normalizedLength) && this.applyPrimeTtsProgressiveFallback(index, chunks, runtime, runId)) return null;
+    const fallback = await Promise.race<PrimeTtsPlayable | "skip">([
+      playablePromise,
+      sleep(PRIME_TTS_STALL_SKIP_MS).then(() => "skip" as const)
+    ]);
+    if (fallback === "skip") {
+      this.activeTtsPrimeCache.delete(index);
+      this.activeTtsPrimeDecodedCache.delete(index);
+      return "skip";
+    }
+    this.builtinPrimeTtsWarmupSynthDone = true;
+    return fallback;
+  }
+
+  private replacePrimeTtsChunkWith(index: number, chunks: string[], smaller: string[], runtime?: PrimeTtsRuntime, runId?: number): boolean {
+    if (smaller.length <= 1) return false;
+    for (const key of Array.from(this.activeTtsPrimeCache.keys())) {
+      if (key >= index) this.activeTtsPrimeCache.delete(key);
+    }
+    for (const key of Array.from(this.activeTtsPrimeDecodedCache.keys())) {
+      if (key >= index) this.activeTtsPrimeDecodedCache.delete(key);
+    }
+    const displayIndex = this.activeTtsDisplayIndexByPart[index] ?? this.activeTtsDisplayIndex();
+    chunks.splice(index, 1, ...smaller);
+    this.activeTtsParts = chunks;
+    this.activeTtsDisplayIndexByPart.splice(index, 1, ...smaller.map(() => displayIndex));
+    this.syncTtsOverlay();
+    if (runtime && typeof runId === "number" && this.activeTtsRunId === runId) {
+      this.prefetchPrimeTtsWindow(runtime, chunks, index, runId);
+      this.prefetchPrimeTtsBlockLookahead(runtime, chunks, index, runId);
+    }
+    return true;
+  }
+
+  private trySplitFailedPrimeTtsChunk(index: number, chunks: string[], runtime: PrimeTtsRuntime, runId: number, error: unknown): boolean {
+    const chunk = chunks[index] ?? "";
+    const normalizedLength = normalizeTtsHighlightText(chunk).length;
+    if (normalizedLength <= 1) {
+      this.activeTtsLastError = error instanceof Error ? error.message : String(error);
+      return false;
+    }
+    const smaller = splitPrimeTtsProgressiveFallbackText(chunk, Math.max(4, Math.min(PRIME_TTS_MAX_PLAY_CHARS, Math.floor(normalizedLength / 2)))).filter(Boolean);
+    return this.replacePrimeTtsChunkWith(index, chunks, smaller, runtime, runId);
+  }
+
+  private queueBuiltinPrimeTtsSynthesis(runtime: PrimeTtsRuntime, text: string, sessionId: number): Promise<ArrayBuffer> {
+    return this.withPrimeTtsSynthSlot(async () => {
+      if (this.activeTtsPrimeCacheSessionId !== sessionId || !this.activeTtsParts.length) throw new Error("tts cancelled");
       const wav = await this.synthesizeBuiltinPrimeTts(runtime, text);
-      if (this.activeTtsRunId !== runId || !this.activeTtsParts.length) throw new Error("tts cancelled");
+      if (this.activeTtsPrimeCacheSessionId !== sessionId || !this.activeTtsParts.length) throw new Error("tts cancelled");
       return wav;
     });
-    this.builtinPrimeTtsSynthesisQueue = task.then(() => undefined, () => undefined);
-    return task;
+  }
+
+  private async withPrimeTtsSynthSlot<T>(task: () => Promise<T>): Promise<T> {
+    const maxConcurrent = 1;
+    while (this.builtinPrimeTtsActiveSynths >= maxConcurrent) {
+      await new Promise<void>((resolve) => this.builtinPrimeTtsSynthWaiters.push(resolve));
+    }
+    this.builtinPrimeTtsActiveSynths += 1;
+    try {
+      return await task();
+    } finally {
+      this.builtinPrimeTtsActiveSynths = Math.max(0, this.builtinPrimeTtsActiveSynths - 1);
+      const next = this.builtinPrimeTtsSynthWaiters.shift();
+      if (next) next();
+    }
   }
 
   private prunePrimeTtsCache(currentIndex: number): void {
     for (const index of Array.from(this.activeTtsPrimeCache.keys())) {
-      if (index < currentIndex - BUILTIN_PRIME_TTS_CACHE_KEEP_BEHIND) this.activeTtsPrimeCache.delete(index);
+      if (index < currentIndex - BUILTIN_PRIME_TTS_CACHE_KEEP_BEHIND || index > currentIndex + BUILTIN_PRIME_TTS_CACHE_KEEP_AHEAD) this.activeTtsPrimeCache.delete(index);
+    }
+    for (const index of Array.from(this.activeTtsPrimeDecodedCache.keys())) {
+      if (index < currentIndex - BUILTIN_PRIME_TTS_CACHE_KEEP_BEHIND || index > currentIndex + BUILTIN_PRIME_TTS_CACHE_KEEP_AHEAD) this.activeTtsPrimeDecodedCache.delete(index);
     }
   }
 
@@ -4996,13 +5840,15 @@ export default class CancipPlugin extends Plugin {
   }
 
   private async createBuiltinPrimeTtsMainRuntime(): Promise<PrimeTtsMainRuntime> {
+    const pkg = await this.resolveBuiltinPrimeTtsPackage();
+    const paths = primeTtsAssetPaths(pkg.basePath);
     const ort = await import("onnxruntime-web/wasm") as unknown as OrtModuleLike;
     const [encoderBuffer, decoderBuffer, vocoderBuffer, metaText, wasmBuffer] = await Promise.all([
-      this.app.vault.adapter.readBinary(BUILTIN_PRIME_TTS_ENCODER),
-      this.app.vault.adapter.readBinary(BUILTIN_PRIME_TTS_DECODER),
-      this.app.vault.adapter.readBinary(BUILTIN_PRIME_TTS_VOCODER),
-      this.app.vault.adapter.read(BUILTIN_PRIME_TTS_META),
-      this.app.vault.adapter.readBinary(`${BUILTIN_PRIME_TTS_ORT_BASE}/ort-wasm-simd-threaded.wasm`)
+      this.app.vault.adapter.readBinary(paths.encoder),
+      this.app.vault.adapter.readBinary(paths.decoder),
+      this.app.vault.adapter.readBinary(paths.vocoder),
+      this.app.vault.adapter.read(paths.meta),
+      this.app.vault.adapter.readBinary(paths.ortWasm)
     ]);
     this.configureBuiltinPrimeOrt(ort, wasmBuffer.slice(0));
     const meta = parsePrimeTtsMeta(metaText);
@@ -5016,12 +5862,14 @@ export default class CancipPlugin extends Plugin {
   }
 
   private async createBuiltinPrimeTtsWorkerRuntime(): Promise<PrimeTtsWorkerRuntime> {
+    const pkg = await this.resolveBuiltinPrimeTtsPackage();
+    const paths = primeTtsAssetPaths(pkg.basePath);
     const [encoderBuffer, decoderBuffer, vocoderBuffer, metaText, wasmBuffer] = await Promise.all([
-      this.app.vault.adapter.readBinary(BUILTIN_PRIME_TTS_ENCODER),
-      this.app.vault.adapter.readBinary(BUILTIN_PRIME_TTS_DECODER),
-      this.app.vault.adapter.readBinary(BUILTIN_PRIME_TTS_VOCODER),
-      this.app.vault.adapter.read(BUILTIN_PRIME_TTS_META),
-      this.app.vault.adapter.readBinary(`${BUILTIN_PRIME_TTS_ORT_BASE}/ort-wasm-simd-threaded.wasm`)
+      this.app.vault.adapter.readBinary(paths.encoder),
+      this.app.vault.adapter.readBinary(paths.decoder),
+      this.app.vault.adapter.readBinary(paths.vocoder),
+      this.app.vault.adapter.read(paths.meta),
+      this.app.vault.adapter.readBinary(paths.ortWasm)
     ]);
     const meta = parsePrimeTtsMeta(metaText);
     const workerUrl = createPrimeTtsWorkerUrl();
@@ -5089,21 +5937,111 @@ export default class CancipPlugin extends Plugin {
     this.builtinPrimeTtsWarmupSynthDone = false;
   }
 
+  private primeTtsRegistryPackageForLanguage(languageCode = this.ttsLanguageCode()): PrimeTtsPackageDefinition | null {
+    const exact = PRIME_TTS_PACKAGE_DEFINITIONS.find((pkg) => primeTtsPackageSupportsLanguage(pkg, languageCode));
+    return exact ?? null;
+  }
+
+  private shouldAutoTryBuiltinPrimeTts(text = ""): boolean {
+    const languageCode = this.ttsLanguageCodeForText(text);
+    const registryPackage = this.primeTtsRegistryPackageForLanguage(languageCode);
+    if (!registryPackage) return hasCjkText(text) && Boolean(this.primeTtsRegistryPackageForLanguage("zh-CN"));
+    if (languageCode.toLowerCase().startsWith("en")) return false;
+    return true;
+  }
+
+  private async resolveBuiltinPrimeTtsPackage(): Promise<PrimeTtsPackageDefinition> {
+    const languageCode = this.ttsLanguageCode() || "en-US";
+    const installed = await this.discoverInstalledPrimeTtsPackages();
+    const installedMatch = installed.find((pkg) => primeTtsPackageSupportsLanguage(pkg, languageCode));
+    if (installedMatch) {
+      this.builtinPrimeTtsPackage = installedMatch;
+      return installedMatch;
+    }
+    const registryMatch = this.primeTtsRegistryPackageForLanguage(languageCode);
+    if (registryMatch) {
+      this.builtinPrimeTtsPackage = registryMatch;
+      return registryMatch;
+    }
+    const fallback = PRIME_TTS_PACKAGE_DEFINITIONS.find((pkg) => pkg.defaultPackage) ?? PRIME_TTS_PACKAGE_DEFINITIONS[0];
+    if (primeTtsPackageSupportsLanguage(fallback, languageCode)) {
+      this.builtinPrimeTtsPackage = fallback;
+      return fallback;
+    }
+    throw new Error(`No local PrimeTTS package is registered for ${languageCode}. Use Android/system, Web Speech, custom-url, or install a compatible package manifest under ${PRIME_TTS_PACKAGES_ROOT}.`);
+  }
+
+  private async discoverInstalledPrimeTtsPackages(): Promise<PrimeTtsPackageDefinition[]> {
+    const adapter = this.app.vault.adapter;
+    const bases = new Set<string>([BUILTIN_PRIME_TTS_BASE]);
+    try {
+      if (await adapter.exists(PRIME_TTS_PACKAGES_ROOT)) {
+        const listed = await adapter.list(PRIME_TTS_PACKAGES_ROOT);
+        for (const folder of listed.folders) bases.add(normalizePath(folder));
+      }
+    } catch {
+      // Some adapters throw when a folder is absent; the registry fallback handles that.
+    }
+    const packages: PrimeTtsPackageDefinition[] = [];
+    for (const basePath of bases) {
+      const required = primeTtsRequiredAssets(basePath);
+      const complete = (await Promise.all(required.map((asset) => adapter.exists(asset.path)))).every(Boolean);
+      if (!complete) continue;
+      const registry = PRIME_TTS_PACKAGE_DEFINITIONS.find((pkg) => normalizePath(pkg.basePath) === normalizePath(basePath));
+      const manifest = await this.readPrimeTtsPackageManifest(basePath);
+      packages.push({
+        id: manifest?.id || registry?.id || basePath.split("/").pop() || "prime-tts-package",
+        label: manifest?.label || registry?.label || basePath.split("/").pop() || "PrimeTTS package",
+        languages: manifest?.languages?.length ? manifest.languages : registry?.languages ?? inferPrimeTtsPackageLanguages(basePath),
+        basePath,
+        releaseTag: registry?.releaseTag,
+        assetName: registry?.assetName,
+        url: registry?.url,
+        defaultPackage: registry?.defaultPackage,
+        bundled: registry?.bundled,
+        custom: !registry,
+        notes: manifest?.notes || registry?.notes
+      });
+    }
+    return packages;
+  }
+
+  private async readPrimeTtsPackageManifest(basePath: string): Promise<Partial<PrimeTtsPackageDefinition> | null> {
+    const path = `${basePath}/manifest.json`;
+    try {
+      if (!(await this.app.vault.adapter.exists(path))) return null;
+      const raw = JSON.parse(await this.app.vault.adapter.read(path)) as unknown;
+      if (!isRecord(raw)) return null;
+      const engine = typeof raw.engine === "string" ? raw.engine : "prime-tts";
+      if (engine !== "prime-tts") return null;
+      const languages = Array.isArray(raw.languages) ? raw.languages.filter((item): item is string => typeof item === "string" && item.trim().length > 0) : [];
+      return {
+        id: typeof raw.id === "string" ? raw.id : undefined,
+        label: typeof raw.label === "string" ? raw.label : typeof raw.name === "string" ? raw.name : undefined,
+        languages,
+        notes: typeof raw.notes === "string" ? raw.notes : undefined
+      };
+    } catch {
+      return null;
+    }
+  }
+
   private async assertBuiltinPrimeTtsAssets(): Promise<void> {
-    let missing = await this.missingBuiltinPrimeTtsAssets();
+    const pkg = await this.resolveBuiltinPrimeTtsPackage();
+    let missing = await this.missingBuiltinPrimeTtsAssets(pkg);
     if (missing.length) {
       await this.installBuiltinPrimeTtsPackage(false);
-      missing = await this.missingBuiltinPrimeTtsAssets();
+      missing = await this.missingBuiltinPrimeTtsAssets(pkg);
     }
     if (missing.length) {
       throw new Error(`local PrimeTTS package is incomplete: ${missing.join(", ")}`);
     }
   }
 
-  private async missingBuiltinPrimeTtsAssets(): Promise<string[]> {
+  private async missingBuiltinPrimeTtsAssets(pkg = this.builtinPrimeTtsPackage): Promise<string[]> {
     const adapter = this.app.vault.adapter;
     const missing: string[] = [];
-    for (const asset of BUILTIN_PRIME_TTS_REQUIRED_ASSETS) {
+    for (const asset of primeTtsRequiredAssets(pkg.basePath)) {
       if (!(await adapter.exists(asset.path))) missing.push(asset.path);
     }
     return missing;
@@ -5155,9 +6093,10 @@ export default class CancipPlugin extends Plugin {
   }
 
   private async completeBuiltinPrimeTtsStatus(): Promise<string> {
-    const missing = await this.missingBuiltinPrimeTtsAssets();
+    const pkg = await this.resolveBuiltinPrimeTtsPackage();
+    const missing = await this.missingBuiltinPrimeTtsAssets(pkg);
     if (missing.length) return "";
-    const result = `complete (${BUILTIN_PRIME_TTS_BASE})`;
+    const result = `complete (${pkg.label}; ${pkg.basePath})`;
     this.builtinPrimeTtsInstallPromise = null;
     this.builtinPrimeTtsInstallStartedAt = 0;
     this.builtinPrimeTtsInstallStatus = result;
@@ -5168,23 +6107,28 @@ export default class CancipPlugin extends Plugin {
   private async downloadAndInstallBuiltinPrimeTtsPackage(showNotice: boolean): Promise<string> {
     const alreadyComplete = await this.completeBuiltinPrimeTtsStatus();
     if (alreadyComplete) return alreadyComplete;
+    const pkg = await this.resolveBuiltinPrimeTtsPackage();
+    if (!pkg.url) {
+      throw new Error(`No downloadable local PrimeTTS package is registered for ${this.ttsLanguageCode()}. Install a compatible package under ${pkg.basePath} or use system/Web/custom-url TTS.`);
+    }
     this.builtinPrimeTtsInstallStatus = this.t("ttsInstallingLocalPackage");
     this.builtinPrimeTtsInstallLastError = "";
     this.syncTtsOverlay();
     if (showNotice) new Notice(this.t("ttsInstallingLocalPackage"), 7000);
     try {
-      const url = this.accelerateGithubDownloadUrl(BUILTIN_PRIME_TTS_PACKAGE_URL);
+      const url = this.accelerateGithubDownloadUrl(pkg.url);
       const response = await requestUrl({ url, method: "GET", throw: false });
       if (response.status < 200 || response.status >= 300) {
         throw new Error(`HTTP ${response.status}: ${response.text?.slice(0, 160) ?? ""}`);
       }
-      const installed = await this.installBuiltinPrimeTtsZip(response.arrayBuffer);
+      const installed = await this.installBuiltinPrimeTtsZip(response.arrayBuffer, pkg);
       this.builtinPrimeTtsRuntime = null;
       this.builtinPrimeTtsPromise = null;
-      const afterMissing = await this.missingBuiltinPrimeTtsAssets();
+      this.builtinPrimeTtsPackage = pkg;
+      const afterMissing = await this.missingBuiltinPrimeTtsAssets(pkg);
       if (afterMissing.length) throw new Error(`still missing ${afterMissing.join(", ")}`);
       const result = this.t("ttsLocalPackageInstalled", { count: installed });
-      this.builtinPrimeTtsInstallStatus = `${result} (${BUILTIN_PRIME_TTS_BASE})`;
+      this.builtinPrimeTtsInstallStatus = `${result} (${pkg.label}; ${pkg.basePath})`;
       this.builtinPrimeTtsInstallLastError = "";
       if (showNotice) new Notice(result, 8000);
       return this.builtinPrimeTtsInstallStatus;
@@ -5199,7 +6143,7 @@ export default class CancipPlugin extends Plugin {
     }
   }
 
-  private async installBuiltinPrimeTtsZip(buffer: ArrayBuffer): Promise<number> {
+  private async installBuiltinPrimeTtsZip(buffer: ArrayBuffer, pkg = this.builtinPrimeTtsPackage): Promise<number> {
     const warnings: string[] = [];
     const bytes = new Uint8Array(buffer);
     const entries = readZipEntries(bytes, warnings);
@@ -5211,10 +6155,10 @@ export default class CancipPlugin extends Plugin {
     }
     const adapter = this.app.vault.adapter;
     let written = 0;
-    for (const asset of [...BUILTIN_PRIME_TTS_REQUIRED_ASSETS, ...BUILTIN_PRIME_TTS_OPTIONAL_ASSETS]) {
+    for (const asset of [...primeTtsRequiredAssets(pkg.basePath), ...primeTtsOptionalAssets(pkg.basePath)]) {
       const entry = byName.get(asset.relative);
       if (!entry) {
-        if (BUILTIN_PRIME_TTS_REQUIRED_ASSETS.some((required) => required.relative === asset.relative)) {
+        if (PRIME_TTS_REQUIRED_RELATIVES.includes(asset.relative as typeof PRIME_TTS_REQUIRED_RELATIVES[number])) {
           throw new Error(`PrimeTTS package missing ${asset.relative}`);
         }
         continue;
@@ -5290,7 +6234,7 @@ export default class CancipPlugin extends Plugin {
     this.activeTtsMode = "playing";
     this.activeTtsStartedAudio = true;
     this.activeNativeBridge = nativeBridge;
-    this.activeTtsParts = existingParts?.length ? existingParts.slice() : splitTtsText(text, Math.max(200, Math.min(2000, this.settings.ttsChunkChars || 1800)), true);
+    this.setActiveTtsParts(existingParts?.length ? existingParts.slice() : splitTtsText(text, Math.max(200, Math.min(2000, this.settings.ttsChunkChars || 1800)), true), "android-system");
     this.activeTtsPartIndex = Math.max(0, Math.min(Math.max(0, this.activeTtsParts.length - 1), startIndex));
     this.syncTtsOverlay();
     await this.speakNativeTtsParts(nativeBridge, runId);
@@ -5303,7 +6247,7 @@ export default class CancipPlugin extends Plugin {
     this.activeTtsProvider = "web-speech";
     this.activeTtsMode = "playing";
     this.activeTtsStartedAudio = false;
-    this.activeTtsParts = existingParts?.length ? existingParts.slice() : splitTtsText(text, Math.max(200, Math.min(1800, this.settings.ttsChunkChars || 900)), true);
+    this.setActiveTtsParts(existingParts?.length ? existingParts.slice() : splitTtsText(text, Math.max(200, Math.min(1800, this.settings.ttsChunkChars || 900)), true), "web-speech");
     this.activeTtsPartIndex = Math.max(0, Math.min(Math.max(0, this.activeTtsParts.length - 1), startIndex));
     this.syncTtsOverlay();
     try {
@@ -5347,20 +6291,21 @@ export default class CancipPlugin extends Plugin {
     this.activeTtsProvider = "custom-url";
     this.activeTtsMode = "playing";
     this.activeTtsStartedAudio = true;
-    this.activeTtsParts = chunks;
-    this.activeTtsPartIndex = Math.max(0, Math.min(Math.max(0, chunks.length - 1), startIndex));
+    this.setActiveTtsParts(chunks, "custom-url");
+    const playChunks = this.activeTtsParts;
+    this.activeTtsPartIndex = Math.max(0, Math.min(Math.max(0, playChunks.length - 1), startIndex));
     this.syncTtsOverlay();
-    for (let index = this.activeTtsPartIndex; index < chunks.length; index += 1) {
+    for (let index = this.activeTtsPartIndex; index < playChunks.length; index += 1) {
       if (this.activeTtsRunId !== runId || !this.activeTtsParts.length) return true;
       this.activeTtsPartIndex = index;
       this.syncTtsOverlay();
       this.refreshOpenViews();
-      const audioUrl = await this.fetchTtsAudioUrl(url, chunks[index], provider);
+      const audioUrl = await this.fetchTtsAudioUrl(url, playChunks[index], provider);
       if (this.activeTtsRunId !== runId || !this.activeTtsParts.length) return true;
       await this.playTtsAudio(audioUrl, runId);
     }
     if (this.activeTtsRunId === runId) {
-      this.activeTtsParts = [];
+      this.clearActiveTtsParts();
       this.activeTtsPartIndex = 0;
       this.activeTtsMode = "idle";
       this.clearTtsSourceHighlight();
@@ -5371,7 +6316,7 @@ export default class CancipPlugin extends Plugin {
   }
 
   private async fetchTtsAudioUrl(templateUrl: string, text: string, provider: TtsProvider): Promise<string> {
-    const lang = this.ttsLanguageCode();
+    const lang = this.ttsLanguageCodeForText(text);
     const voice = this.settings.ttsVoice.trim() || defaultTtsVoiceForLanguage(lang);
     const rate = Math.max(0.25, Math.min(4, Number(this.settings.ttsRate) || 1));
     const pitch = Math.max(0, Math.min(2, Number(this.settings.ttsPitch) || 1));
@@ -5518,42 +6463,70 @@ export default class CancipPlugin extends Plugin {
       if (context.state === "suspended") await context.resume();
       const audioBuffer = await context.decodeAudioData(buffer.slice(0));
       if (typeof runId === "number" && this.activeTtsRunId !== runId) return;
-      const playbackRate = this.ttsPlaybackRate();
-      this.activeTtsMode = "playing";
-      this.activeTtsStartedAudio = true;
-      this.syncTtsOverlay();
-      await new Promise<void>((resolve, reject) => {
-        const isCancelled = () => typeof runId === "number" && this.activeTtsRunId !== runId;
-        let settled = false;
-        const finish = () => {
-          if (settled) return;
-          settled = true;
-          if (this.activeWebAudioSource === source) this.activeWebAudioSource = null;
-          if (isCancelled()) {
-            resolve();
-            return;
-          }
-          window.setTimeout(resolve, PRIME_TTS_PLAYBACK_DRAIN_MS);
-        };
-        const source = context.createBufferSource();
-        this.activeWebAudioSource = source;
-        source.buffer = audioBuffer;
-        source.playbackRate.value = playbackRate;
-        source.connect(context.destination);
-        source.onended = finish;
-        try {
-          source.start();
-          window.setTimeout(finish, Math.ceil(audioBuffer.duration * 1000 / playbackRate) + PRIME_TTS_PLAYBACK_DRAIN_MS + 80);
-        } catch (error) {
-          if (this.activeWebAudioSource === source) this.activeWebAudioSource = null;
-          if (typeof runId === "number" && this.activeTtsRunId !== runId) resolve();
-          else reject(error instanceof Error ? error : new Error(String(error)));
-        }
-      });
+      await this.playTtsAudioBuffer(audioBuffer, runId);
     } catch {
       this.stopWebAudioTts();
       await this.playTtsAudio(this.audioBlobUrl(buffer, "audio/wav"), runId);
     }
+  }
+
+  private async playPrimeTtsPlayable(playable: PrimeTtsPlayable, runId?: number): Promise<void> {
+    if (playable.kind === "audio-buffer") {
+      await this.playTtsAudioBuffer(playable.buffer, runId);
+      return;
+    }
+    await this.playTtsGeneratedWav(playable.buffer, runId);
+  }
+
+  private async playTtsAudioBuffer(audioBuffer: AudioBuffer, runId?: number): Promise<void> {
+    const context = this.ensureReusableAudioContext();
+    if (!context) {
+      throw new Error("Web Audio is not available");
+    }
+    if (context.state === "suspended") await context.resume();
+    if (typeof runId === "number" && this.activeTtsRunId !== runId) return;
+    const playbackRate = this.ttsPlaybackRate();
+    this.activeTtsMode = "playing";
+    this.activeTtsStartedAudio = true;
+    this.syncTtsOverlay();
+    await new Promise<void>((resolve, reject) => {
+      const isCancelled = () => typeof runId === "number" && this.activeTtsRunId !== runId;
+      let settled = false;
+      const playbackSeconds = audioBuffer.duration / playbackRate;
+      let expectedEndAt = 0;
+      const finish = () => {
+        if (settled) return;
+        if (!isCancelled() && expectedEndAt > 0) {
+          const remainingMs = Math.max(0, (expectedEndAt - context.currentTime) * 1000);
+          if (remainingMs > 60) {
+            window.setTimeout(finish, Math.min(remainingMs + 70, PRIME_TTS_WEB_AUDIO_FALLBACK_GRACE_MS));
+            return;
+          }
+        }
+        settled = true;
+        if (this.activeWebAudioSource === source) this.activeWebAudioSource = null;
+        if (isCancelled()) {
+          resolve();
+          return;
+        }
+        window.setTimeout(resolve, PRIME_TTS_PLAYBACK_DRAIN_MS);
+      };
+      const source = context.createBufferSource();
+      this.activeWebAudioSource = source;
+      source.buffer = audioBuffer;
+      source.playbackRate.value = playbackRate;
+      source.connect(context.destination);
+      source.onended = finish;
+      try {
+        expectedEndAt = context.currentTime + playbackSeconds;
+        source.start();
+        window.setTimeout(finish, Math.ceil(playbackSeconds * 1000) + PRIME_TTS_WEB_AUDIO_FALLBACK_GRACE_MS);
+      } catch (error) {
+        if (this.activeWebAudioSource === source) this.activeWebAudioSource = null;
+        if (isCancelled()) resolve();
+        else reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
   }
 
   private async playTtsAudioWithWebAudio(url: string, runId?: number): Promise<void> {
@@ -5578,8 +6551,17 @@ export default class CancipPlugin extends Plugin {
     await new Promise<void>((resolve, reject) => {
       const isCancelled = () => typeof runId === "number" && this.activeTtsRunId !== runId;
       let settled = false;
+      const playbackSeconds = audioBuffer.duration / playbackRate;
+      let expectedEndAt = 0;
       const finish = () => {
         if (settled) return;
+        if (!isCancelled() && expectedEndAt > 0) {
+          const remainingMs = Math.max(0, (expectedEndAt - context.currentTime) * 1000);
+            if (remainingMs > 80) {
+              window.setTimeout(finish, Math.min(remainingMs + 90, PRIME_TTS_WEB_AUDIO_FALLBACK_GRACE_MS));
+            return;
+          }
+        }
         settled = true;
         if (this.activeWebAudioSource === source) this.activeWebAudioSource = null;
         if (this.activeWebAudioContext === context) this.activeWebAudioContext = null;
@@ -5597,8 +6579,9 @@ export default class CancipPlugin extends Plugin {
       source.connect(context.destination);
       source.onended = finish;
       try {
+        expectedEndAt = context.currentTime + playbackSeconds;
         source.start();
-        window.setTimeout(finish, Math.ceil(audioBuffer.duration * 1000 / playbackRate) + PRIME_TTS_PLAYBACK_DRAIN_MS + 80);
+        window.setTimeout(finish, Math.ceil(playbackSeconds * 1000) + PRIME_TTS_WEB_AUDIO_FALLBACK_GRACE_MS);
       } catch (error) {
         if (this.activeWebAudioSource === source) this.activeWebAudioSource = null;
         if (this.activeWebAudioContext === context) this.activeWebAudioContext = null;
@@ -5641,18 +6624,18 @@ export default class CancipPlugin extends Plugin {
   }
 
   private async speakNativeTtsParts(bridge: NativeTtsBridge, runId: number): Promise<void> {
-    const lang = this.ttsLanguageCode();
     try {
       for (let index = this.activeTtsPartIndex; index < this.activeTtsParts.length; index += 1) {
         if (this.activeTtsRunId !== runId || !this.activeTtsParts.length) return;
         this.activeTtsPartIndex = index;
         this.syncTtsOverlay();
         this.refreshOpenViews();
+        const lang = this.ttsLanguageCodeForText(this.activeTtsParts[index]);
         await bridge.speak(this.activeTtsParts[index], lang);
       }
     } finally {
       if (this.activeTtsRunId === runId) {
-        this.activeTtsParts = [];
+        this.clearActiveTtsParts();
         this.activeTtsPartIndex = 0;
         this.activeUtterance = null;
         this.activeTtsMode = "idle";
@@ -5710,9 +6693,10 @@ export default class CancipPlugin extends Plugin {
   private speakNextTtsPart(): void {
     const synth = window.speechSynthesis;
     const part = this.activeTtsParts[this.activeTtsPartIndex];
+    const runId = this.activeTtsRunId;
     if (!synth || typeof SpeechSynthesisUtterance === "undefined" || !part) {
       this.activeUtterance = null;
-      this.activeTtsParts = [];
+      this.clearActiveTtsParts();
       this.activeTtsPartIndex = 0;
       if (this.ttsKeepAliveTimer !== null) {
         window.clearInterval(this.ttsKeepAliveTimer);
@@ -5725,7 +6709,7 @@ export default class CancipPlugin extends Plugin {
       return;
     }
     const utterance = new SpeechSynthesisUtterance(part);
-    const lang = this.ttsLanguageCode();
+    const lang = this.ttsLanguageCodeForText(part);
     if (lang) utterance.lang = lang;
     const voice = this.bestTtsVoice(lang);
     if (voice) utterance.voice = voice;
@@ -5733,6 +6717,7 @@ export default class CancipPlugin extends Plugin {
     utterance.pitch = Math.max(0, Math.min(2, Number(this.settings.ttsPitch) || 1));
     utterance.volume = 1;
     utterance.onstart = () => {
+      if (this.activeTtsRunId !== runId) return;
       if (this.activeUtterance !== utterance) return;
       this.activeTtsStartedAudio = true;
       this.activeTtsLastError = "";
@@ -5740,19 +6725,22 @@ export default class CancipPlugin extends Plugin {
       this.refreshOpenViews();
     };
     utterance.onend = () => {
+      if (this.activeTtsRunId !== runId) return;
       if (this.activeUtterance !== utterance) return;
       if (this.activeTtsPaused) return;
       this.activeTtsPartIndex += 1;
       this.speakNextTtsPart();
     };
     utterance.onerror = (event) => {
+      if (this.activeTtsRunId !== runId) return;
       const errorName = typeof event.error === "string" ? event.error : "speech synthesis error";
       this.activeTtsLastError = errorName;
       console.warn("Cancip TTS utterance failed", event);
       if (this.activeUtterance === utterance) {
         if (this.activeTtsPaused) return;
-        this.activeTtsPartIndex += 1;
-        this.speakNextTtsPart();
+        this.activeTtsMode = "failed";
+        this.syncTtsOverlay();
+        this.refreshOpenViews();
       }
     };
     this.activeUtterance = utterance;
@@ -5808,31 +6796,36 @@ export default class CancipPlugin extends Plugin {
     const configuredUrl = this.settings.ttsCustomUrl.trim();
     const provider = isTtsProvider(this.settings.ttsProvider) ? this.settings.ttsProvider : DEFAULT_SETTINGS.ttsProvider;
     const localPrimeStatus = await this.localPrimeTtsAssetStatus();
+    const selectedPrime = await this.safePrimeTtsPackageSummary();
+    const currentLanguage = this.ttsLanguageCode() || "auto";
     const lines = [
       "TTS probe:",
       `- platform: mobile=${Platform.isMobileApp ? "yes" : "no"}, android=${Platform.isAndroidApp ? "yes" : "no"}, desktop=${Platform.isDesktopApp ? "yes" : "no"}`,
       `- configured provider: ${provider}`,
+      `- language: ${currentLanguage}, voice: ${this.settings.ttsVoice.trim() || defaultTtsVoiceForLanguage(currentLanguage)}, rate: ${this.settings.ttsRate}, pitch: ${this.settings.ttsPitch}`,
       `- auto policy: ${this.settings.ttsQualityMode}`,
-      `- auto chain: ${this.ttsProviderChain().join(" -> ")}`,
+      `- current auto chain: ${this.ttsProviderChain(undefined, "").join(" -> ")}`,
       `- Chinese quality chain: ${this.ttsProviderChain(undefined, "你好，Cancip 中文朗读测试。").join(" -> ")}`,
+      `- English default chain: ${this.ttsProviderChain(undefined, "Hello, Cancip speech test.").join(" -> ")}`,
       `- playback: ${this.formatTtsStatus().replace(/\n/g, " | ")}`,
       `- local PrimeTTS package: ${localPrimeStatus}`,
+      `- selected local package: ${selectedPrime}`,
       `- PrimeTTS installer: ${this.builtinPrimeTtsInstallStatus || (this.builtinPrimeTtsInstallPromise ? this.t("ttsInstallingLocalPackage") : "idle")}`,
       `- PrimeTTS runtime: ${this.builtinPrimeTtsRuntime?.kind ?? (this.builtinPrimeTtsPromise ? "loading" : "not loaded")}`,
       `- PrimeTTS worker fallback reason: ${this.builtinPrimeTtsRuntimeLastError || "none"}`,
       `- PrimeTTS warmup synth: ${this.builtinPrimeTtsWarmupSynthDone ? "done" : "not done"}`,
-      `- PrimeTTS package URL: ${this.accelerateGithubDownloadUrl(BUILTIN_PRIME_TTS_PACKAGE_URL)}`,
+      `- PrimeTTS package URL: ${this.builtinPrimeTtsPackage.url ? this.accelerateGithubDownloadUrl(this.builtinPrimeTtsPackage.url) : "none registered for selected package"}`,
       `- native bridge: ${nativeBridge ? nativeBridge.name : "not detected"}`,
       `- Web Speech: ${synth && typeof SpeechSynthesisUtterance !== "undefined" ? `available, voices=${voices.length}` : "not available"}`,
       `- custom-url: ${configuredUrl ? `configured (${configuredUrl.replace(/\?.*$/, "?...")})` : "not configured"}`,
-      "- Official review-clean releases do not include model assets in the three release files; local PrimeTTS downloads prime-tts.zip only when needed or when cancip.tts.installLocal is run.",
-      "- builtin-prime-tts borrows the 0.1.207 local WAV synthesis route. It may sound rough, but it can output audio without an Android native TTS bridge.",
+      "- Official review-clean releases do not include model assets in the core plugin files; local TTS packages are downloaded only when needed or when cancip.tts.installLocal is run.",
+      "- builtin-prime-tts uses a compatible local ONNX package. The current default package is Chinese/English; other languages should use system/Web/custom-url unless a compatible package manifest is installed.",
       "- web-speech: must start from the tap/click gesture on mobile. If it does not really start, Cancip falls through to the next provider.",
-      `- language: ${this.ttsLanguageCode() || "auto"}, voice: ${this.settings.ttsVoice.trim() || defaultTtsVoiceForLanguage(this.ttsLanguageCode())}, rate: ${this.settings.ttsRate}, pitch: ${this.settings.ttsPitch}`,
       "",
       "Executable routes:",
-      "- Preferred on this build: provider auto or builtin-prime-tts if local PrimeTTS package is complete.",
-      "- If local PrimeTTS is missing: run cancip.tts.installLocal or tap the local TTS install button; reading aloud with builtin-prime-tts also auto-installs.",
+      "- English default route: Web Speech / system TTS before local package.",
+      "- Chinese local route: provider auto or builtin-prime-tts if the local package is complete.",
+      "- If local PrimeTTS is missing for a registered language: run cancip.tts.installLocal or tap the local TTS install button; reading aloud with builtin-prime-tts also auto-installs.",
       "- Better quality route: configure custom-url to a trusted local/private neural TTS bridge, or use a mobile Obsidian build that exposes a native TTS bridge."
     ];
     return lines.join("\n");
@@ -5853,9 +6846,10 @@ export default class CancipPlugin extends Plugin {
       "TTS voices:",
       `- native bridge: ${nativeBridge ? nativeBridge.name : "not detected"}`,
       `- local PrimeTTS package: ${localPrimeStatus}`,
+      `- selected local package: ${await this.safePrimeTtsPackageSummary()}`,
       `- PrimeTTS installer: ${this.builtinPrimeTtsInstallStatus || (this.builtinPrimeTtsInstallPromise ? this.t("ttsInstallingLocalPackage") : "idle")}`,
       "- Providers:",
-      "  - builtin-prime-tts uses the optional installed tts/prime-tts ONNX package",
+      "  - builtin-prime-tts uses an optional compatible ONNX package under tts/",
       "  - android-system only if Obsidian exposes a native bridge",
       "  - custom-url for a trusted local/private neural bridge",
       "  - web-speech when the WebView can really start speech from a tap/click gesture",
@@ -5865,38 +6859,38 @@ export default class CancipPlugin extends Plugin {
   }
 
   private async localPrimeTtsAssetStatus(): Promise<string> {
-    const paths = [
-      BUILTIN_PRIME_TTS_ENCODER,
-      BUILTIN_PRIME_TTS_DECODER,
-      BUILTIN_PRIME_TTS_VOCODER,
-      BUILTIN_PRIME_TTS_META,
-      BUILTIN_PRIME_TTS_SYMBOLS,
-      `${BUILTIN_PRIME_TTS_ORT_BASE}/ort-wasm-simd-threaded.wasm`,
-      `${BUILTIN_PRIME_TTS_ORT_BASE}/ort-wasm-simd-threaded.mjs`
-    ];
-    const missing: string[] = [];
-    for (const path of paths) {
-      if (!(await this.app.vault.adapter.exists(path))) missing.push(path);
+    const installed = await this.discoverInstalledPrimeTtsPackages();
+    const installedSummary = installed.length
+      ? installed.map((pkg) => `${pkg.label} [${pkg.languages.join(", ")}] at ${pkg.basePath}`).join("; ")
+      : "none installed";
+    let selected = "";
+    try {
+      const pkg = await this.resolveBuiltinPrimeTtsPackage();
+      const missing = await this.missingBuiltinPrimeTtsAssets(pkg);
+      selected = missing.length ? `selected incomplete: ${pkg.label}, missing ${missing.slice(0, 3).join(", ")}${missing.length > 3 ? ` +${missing.length - 3}` : ""}` : `selected complete: ${pkg.label} (${pkg.basePath})`;
+    } catch (error) {
+      selected = `selected unavailable: ${error instanceof Error ? error.message : String(error)}`;
     }
-    if (!missing.length) return await this.completeBuiltinPrimeTtsStatus();
-    if (missing.length === paths.length) return `not installed (${BUILTIN_PRIME_TTS_BASE})`;
-    return `incomplete, missing ${missing.slice(0, 3).join(", ")}${missing.length > 3 ? ` +${missing.length - 3}` : ""}`;
+    return `${selected}; installed compatible packages: ${installedSummary}`;
+  }
+
+  private async safePrimeTtsPackageSummary(): Promise<string> {
+    try {
+      const pkg = await this.resolveBuiltinPrimeTtsPackage();
+      return `${pkg.label} [${pkg.languages.join(", ")}] at ${pkg.basePath}${pkg.url ? `, download=${this.accelerateGithubDownloadUrl(pkg.url)}` : ""}`;
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
   }
 
   async speakFile(file: TFile): Promise<void> {
     try {
-      if (isPdfFile(file)) {
-        const content = await this.readPdfFileText(file, 30000);
-        if (!content) {
-          new Notice(this.t("ttsPdfNoText"));
-          return;
-        }
-        this.speakText(content, file.basename, file.path, content);
+      const content = await this.captureFileTtsStartSnapshot(file, TTS_CAPTURE_MAX_CHARS);
+      if (!content) {
+        if (isPdfFile(file)) new Notice(this.t("ttsPdfNoText"));
+        else new Notice(this.t("ttsNoText"));
         return;
       }
-      const content = isMarkdownFile(file)
-        ? await this.readMarkdownRenderedText(file, 30000)
-        : await this.app.vault.cachedRead(file);
       this.speakText(content, file.basename, file.path, content);
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
@@ -5904,11 +6898,30 @@ export default class CancipPlugin extends Plugin {
     }
   }
 
+  private async captureFileTtsStartSnapshot(file: TFile, maxChars: number): Promise<string> {
+    // Capture the viewport only once at the moment the user starts reading.
+    // Playback, seek, prefetch, and fallback chunking must reuse this snapshot.
+    if (isPdfFile(file)) {
+      const visibleText = this.readActivePdfLayerText(file, maxChars);
+      const fullText = await this.readPdfFileText(file, maxChars);
+      return visibleText ? textFromAnchor(fullText, visibleText, maxChars) : fullText;
+    }
+    if (isMarkdownFile(file)) {
+      const visibleText = this.readActiveMarkdownViewportText(file, maxChars);
+      if (visibleText) {
+        const fullRendered = await this.readMarkdownRenderedText(file, maxChars);
+        return textFromAnchor(fullRendered, visibleText, maxChars);
+      }
+      return await this.readMarkdownRenderedText(file, maxChars);
+    }
+    return await this.app.vault.cachedRead(file);
+  }
+
   async speakActiveNote(): Promise<void> {
     const file = this.app.workspace.getActiveFile();
     const selected = getWindowSelectionText();
     if (selected) {
-      this.speakText(selected, this.t("speakSelection"));
+      this.speakText(selected, this.t("speakSelection"), file?.path ?? "", selected);
       return;
     }
     if (!file || (!isContextTextFile(file) && !isPdfFile(file))) {
@@ -5921,9 +6934,61 @@ export default class CancipPlugin extends Plugin {
   private async readPdfFileText(file: TFile, maxChars: number): Promise<string> {
     const warnings: string[] = [];
     const buffer = await this.app.vault.adapter.readBinary(file.path);
-    const text = extractPdfTextFromBytes(new Uint8Array(buffer), file.name, maxChars, warnings);
+    const text = normalizePdfTtsText(extractPdfTextFromBytes(new Uint8Array(buffer), file.name, maxChars, warnings));
     if (!text && warnings.length) this.activeTtsLastError = warnings.join("; ");
     return text;
+  }
+
+  private readActivePdfLayerText(file: TFile, maxChars: number): string {
+    const container = this.activeFileContainer(file);
+    if (!container) return "";
+    const textLayers = Array.from(container.querySelectorAll(".textLayer"));
+    const roots = textLayers.length ? textLayers : Array.from(container.querySelectorAll(".pdfViewer, .pdf-viewer, .pdf-container"));
+    const chunks: string[] = [];
+    const seen = new Set<string>();
+    for (const root of roots) {
+      if (!(root instanceof HTMLElement)) continue;
+      const text = extractVisiblePdfViewportText(root, maxChars);
+      const key = normalizeTtsHighlightText(text);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      if (text) chunks.push(text);
+      if (chunks.join("\n\n").length >= maxChars) break;
+    }
+    const merged = normalizePdfTtsText(chunks.join("\n\n"));
+    return normalizeTtsHighlightText(merged).length >= 2 ? trimContext(merged, maxChars) : "";
+  }
+
+  private readActiveMarkdownViewportText(file: TFile, maxChars: number): string {
+    const container = this.activeFileContainer(file);
+    if (!container) return "";
+    const roots = innermostReadableRoots(Array.from(container.querySelectorAll<HTMLElement>(".markdown-preview-view, .markdown-rendered, .cm-content, .markdown-source-view")));
+    const chunks: string[] = [];
+    const seen = new Set<string>();
+    for (const root of roots) {
+      const text = extractVisibleMarkdownViewportText(root, maxChars);
+      const key = normalizeTtsHighlightText(text);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      if (text) chunks.push(text);
+      if (chunks.join("\n\n").length >= maxChars) break;
+    }
+    return trimContext(chunks.join("\n\n"), maxChars);
+  }
+
+  private activeFileContainer(file: TFile): HTMLElement | null {
+    let fallback: HTMLElement | null = null;
+    this.app.workspace.iterateAllLeaves((leaf) => {
+      const view = leaf.view as unknown as { file?: TFile; containerEl?: HTMLElement };
+      if (!(view.file instanceof TFile) || view.file.path !== file.path || !view.containerEl) return;
+      if (leaf === this.app.workspace.activeLeaf) fallback = view.containerEl;
+      if (!fallback) fallback = view.containerEl;
+    });
+    if (!fallback && this.app.workspace.getActiveFile()?.path === file.path) {
+      const activeContainer = (this.app.workspace.activeLeaf?.view as unknown as { containerEl?: HTMLElement } | null)?.containerEl;
+      if (activeContainer) fallback = activeContainer;
+    }
+    return fallback;
   }
 
   private async readMarkdownRenderedText(file: TFile, maxChars: number): Promise<string> {
@@ -5947,22 +7012,17 @@ export default class CancipPlugin extends Plugin {
   }
 
   private ttsLanguageCode(): string {
+    return defaultLocaleForLanguage(this.language());
+  }
+
+  private ttsLanguageCodeForText(text = ""): string {
     const language = this.language();
-    const map: Partial<Record<Language, string>> = {
-      zh: "zh-CN",
-      "zh-TW": "zh-TW",
-      en: "en-US",
-      ug: "ug-CN",
-      tr: "tr-TR",
-      ru: "ru-RU",
-      ja: "ja-JP",
-      ko: "ko-KR",
-      es: "es-ES",
-      fr: "fr-FR",
-      de: "de-DE",
-      ar: "ar-SA"
-    };
-    return map[language] ?? "";
+    const trimmed = text.trim();
+    if (trimmed) {
+      if (hasCjkText(trimmed)) return language === "zh-TW" ? "zh-TW" : "zh-CN";
+      if (isChineseLanguage(language) && looksLikeEnglishTtsText(trimmed)) return "en-US";
+    }
+    return defaultLocaleForLanguage(language);
   }
 
   async loadSettings(): Promise<void> {
@@ -6287,7 +7347,12 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
   applyUiButtonRules(): void {
     this.applyUiButtonRuleStyles();
     this.clearUiRuleMarks();
-    const rules = this.settings.uiButtonRules.filter((rule) => rule.hidden || (Number.isFinite(rule.order) && rule.order !== 0));
+    const rules = this.settings.uiButtonRules.filter((rule) =>
+      rule.hidden ||
+      (Number.isFinite(rule.order) && rule.order !== 0) ||
+      Boolean(rule.title?.trim()) ||
+      Boolean(rule.icon?.trim())
+    );
     window.requestAnimationFrame(() => {
       for (const rule of rules) {
         for (const el of this.uiRuleElements(rule)) {
@@ -6301,6 +7366,12 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
             el.style.order = String(rule.order);
             if (parent.style.display !== "flex" && parent.style.display !== "inline-flex") parent.style.display = "flex";
           }
+          if (rule.title?.trim()) {
+            this.applyUiRuleTitle(el, rule.title.trim());
+          }
+          if (rule.icon?.trim()) {
+            this.applyUiRuleIcon(el, rule.icon.trim());
+          }
         }
       }
       if (this.settings.hideUnpinnedTagsInRightSidebar) {
@@ -6310,6 +7381,30 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
         }
       }
     });
+  }
+
+  private applyUiRuleTitle(el: HTMLElement, title: string): void {
+    if (!el.dataset.cancipUiOriginalHtml) el.dataset.cancipUiOriginalHtml = el.innerHTML;
+    if (!el.dataset.cancipUiOriginalTitle) el.dataset.cancipUiOriginalTitle = el.getAttribute("title") ?? "";
+    if (!el.dataset.cancipUiOriginalAria) el.dataset.cancipUiOriginalAria = el.getAttribute("aria-label") ?? "";
+    if (!el.dataset.cancipUiOriginalText) el.dataset.cancipUiOriginalText = el.textContent ?? "";
+    el.dataset.cancipUiTitle = title;
+    el.setAttribute("title", title);
+    el.setAttribute("aria-label", title);
+    const textNode = Array.from(el.childNodes).find((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim());
+    if (textNode) textNode.textContent = title;
+    else if (!el.querySelector("svg")) el.textContent = title;
+    else {
+      const labelEl = el.querySelector<HTMLElement>(".menu-item-title, .view-action-title, .nav-action-title, .setting-item-name, span:not(.svg-icon)");
+      if (labelEl) labelEl.setText(title);
+    }
+  }
+
+  private applyUiRuleIcon(el: HTMLElement, icon: string): void {
+    if (!el.dataset.cancipUiOriginalHtml) el.dataset.cancipUiOriginalHtml = el.innerHTML;
+    if (!el.dataset.cancipUiIcon) el.dataset.cancipUiIcon = icon;
+    const iconTarget = el.querySelector<HTMLElement>(".menu-item-icon, .clickable-icon, .nav-action-button, .view-action-icon") ?? el;
+    setIcon(iconTarget, icon);
   }
 
   private applyUiButtonRuleStyles(): void {
@@ -6325,13 +7420,32 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
   }
 
   private clearUiRuleMarks(): void {
-    for (const el of Array.from(document.querySelectorAll<HTMLElement>("[data-cancip-ui-hidden], [data-cancip-ui-order], [data-cancip-tag-hidden]"))) {
+    for (const el of Array.from(document.querySelectorAll<HTMLElement>("[data-cancip-ui-hidden], [data-cancip-ui-order], [data-cancip-ui-title], [data-cancip-ui-icon], [data-cancip-tag-hidden]"))) {
       delete el.dataset.cancipUiHidden;
       delete el.dataset.cancipTagHidden;
       if (el.dataset.cancipUiOrder !== undefined) {
         delete el.dataset.cancipUiOrder;
         el.style.order = "";
       }
+      if (el.dataset.cancipUiTitle !== undefined) {
+        const originalTitle = el.dataset.cancipUiOriginalTitle ?? "";
+        const originalAria = el.dataset.cancipUiOriginalAria ?? "";
+        const originalHtml = el.dataset.cancipUiOriginalHtml;
+        if (originalHtml !== undefined) el.innerHTML = originalHtml;
+        if (originalTitle) el.setAttribute("title", originalTitle);
+        else el.removeAttribute("title");
+        if (originalAria) el.setAttribute("aria-label", originalAria);
+        else el.removeAttribute("aria-label");
+        delete el.dataset.cancipUiTitle;
+        delete el.dataset.cancipUiOriginalTitle;
+        delete el.dataset.cancipUiOriginalAria;
+        delete el.dataset.cancipUiOriginalText;
+      }
+      if (el.dataset.cancipUiOriginalHtml !== undefined && el.dataset.cancipUiIcon !== undefined && el.dataset.cancipUiTitle === undefined) {
+        el.innerHTML = el.dataset.cancipUiOriginalHtml;
+      }
+      delete el.dataset.cancipUiOriginalHtml;
+      delete el.dataset.cancipUiIcon;
     }
   }
 
@@ -12077,6 +13191,7 @@ class CancipView extends ItemView {
     const sections = [base, languagePrompt];
     if (policy.includeAccessPrompt) sections.push(accessPrompt, this.t("vaultNoteReviewPrompt"));
     if (policy.includeToolProtocol || policy.includeToolCatalog) sections.push(toolPrompt);
+    if (policy.includeToolProtocol || policy.includeWorkingState) sections.push(this.t("finalAnswerFormatPrompt"));
     sections.push(modeInstruction);
     if (!policy.includeToolProtocol) {
       sections.push("Payload policy: lightweight turn. Do not request tool actions unless the user explicitly asks for implementation, file operations, commands, GitHub, automations, or plugin/self repair.");
@@ -12411,7 +13526,7 @@ class CancipView extends ItemView {
     return [
       "Cancip tool catalog: output a cancip-action block only when tool use is needed.",
       "Core actions: read/query lines, write/append chunks, patch exact/regex, mkdir/rename/move/copy/delete, config merge, todo, automation, command.",
-      "Command bus: obsidian.listCommands/execute/currentView/dom.snapshot/dom.click/dom.input/ui.buttons/ui.buttonRules/ui.applyButtonRules/tags/tags.pin/tags.unpin/tags.deleteUnpinned, cancip.searchVault, cancip.skills.list/read/refresh, cancip.installedPlugins, cancip.reviewGate/list/testMarkdown, cancip.sessionEvents/sessionHistory, cancip.attachment.help, cancip.tts.help/probe/voices/status/installLocal/speak/readActive/pause/resume/seek/stop, cancip.externalFiles.help, cancip.automation.*, github.*.",
+      "Command bus: obsidian.listCommands/execute/currentView/dom.snapshot/dom.click/dom.input/ui.buttons/ui.buttonRules/ui.applyButtonRules/tags/tags.pin/tags.unpin/tags.deleteUnpinned/tabs/tabs.pin/tabs.unpin/tabs.closeUnpinned, cancip.searchVault, cancip.skills.list/read/refresh, cancip.installedPlugins, cancip.reviewGate/list/testMarkdown, cancip.sessionEvents/sessionHistory, cancip.attachment.help, cancip.tts.help/probe/voices/status/installLocal/speak/readActive/pause/resume/seek/stop, cancip.externalFiles.help, cancip.automation.*, github.*.",
       "Use read/query/line ranges before editing large files. If a patch fails, read the current snippet and change strategy.",
       "For unknown plugin or Obsidian features, first list/read commands/plugins/skills, then act."
     ].join("\n");
@@ -12883,6 +13998,10 @@ class CancipView extends ItemView {
       commandTarget("command:obsidian.tags", "obsidian.tags", ["tag", "tags", "right", "sidebar", "fixed", "pin", "标签", "右侧栏", "固定", "删除"], 84),
       commandTarget("command:obsidian.tags.pin", "obsidian.tags.pin", ["tag", "pin", "fixed", "right", "sidebar", "标签", "固定", "右侧栏"], 82),
       commandTarget("command:obsidian.tags.deleteUnpinned", "obsidian.tags.deleteUnpinned", ["tag", "delete", "unpinned", "clean", "标签", "删除", "非固定", "清理"], 80),
+      commandTarget("command:obsidian.tabs", "obsidian.tabs", ["tab", "tabs", "leaf", "pane", "right sidebar", "标签页", "页签", "固定页", "右侧栏"], 84),
+      commandTarget("command:obsidian.tabs.pin", "obsidian.tabs.pin", ["tab", "tabs", "pin", "fixed", "标签页", "页签", "固定页", "固定"], 82),
+      commandTarget("command:obsidian.tabs.unpin", "obsidian.tabs.unpin", ["tab", "tabs", "unpin", "fixed", "标签页", "页签", "取消固定"], 80),
+      commandTarget("command:obsidian.tabs.closeUnpinned", "obsidian.tabs.closeUnpinned", ["tab", "tabs", "close", "unpinned", "right sidebar", "标签页", "关闭", "非固定", "右侧栏"], 82),
       commandTarget("command:cancip.reviewGate", "cancip.reviewGate", ["review", "gate", "audit", "approve", "ob", "审核", "审查", "批准", "审核门"], 84),
       commandTarget("command:cancip.reviewGate.list", "cancip.reviewGate.list", ["review", "gate", "list", "audit", "审核", "审查", "审核数据", "列表"], 80),
       commandTarget("command:cancip.reviewGate.testMarkdown", "cancip.reviewGate.testMarkdown", ["review", "gate", "markdown", "render", "diff", "test", "审核", "审查", "渲染", "变化", "测试"], 79),
@@ -13087,10 +14206,14 @@ class CancipView extends ItemView {
       "obsidian.dom.click": "{\"actions\":[{\"type\":\"command\",\"command\":\"obsidian.dom.click\",\"args\":{\"scope\":\"active\",\"selector\":\"button[aria-label='Run']\",\"index\":0}}]}",
       "obsidian.dom.input": "{\"actions\":[{\"type\":\"command\",\"command\":\"obsidian.dom.input\",\"args\":{\"scope\":\"active\",\"selector\":\"textarea\",\"index\":0,\"text\":\"输入内容\"}}]}",
       "obsidian.ui.buttons": "{\"actions\":[{\"type\":\"command\",\"command\":\"obsidian.ui.buttons\",\"args\":{\"scope\":\"active\",\"limit\":80}}]}",
-      "obsidian.ui.applyButtonRules": "{\"actions\":[{\"type\":\"command\",\"command\":\"obsidian.ui.applyButtonRules\",\"args\":{\"rules\":[{\"selector\":\"button[aria-label='More options']\",\"label\":\"More options\",\"hidden\":true,\"order\":0,\"scope\":\"active\"}]}}]}",
+      "obsidian.ui.applyButtonRules": "{\"actions\":[{\"type\":\"command\",\"command\":\"obsidian.ui.applyButtonRules\",\"args\":{\"rules\":[{\"selector\":\"button[aria-label='More options']\",\"label\":\"More options\",\"hidden\":false,\"order\":1,\"title\":\"更多\",\"icon\":\"more-horizontal\",\"scope\":\"active\"}]}}]}",
       "obsidian.tags": "{\"actions\":[{\"type\":\"command\",\"command\":\"obsidian.tags\",\"args\":{\"limit\":80}}]}",
       "obsidian.tags.pin": "{\"actions\":[{\"type\":\"command\",\"command\":\"obsidian.tags.pin\",\"args\":{\"tags\":[\"important\"],\"hideUnpinned\":true}}]}",
       "obsidian.tags.deleteUnpinned": "{\"actions\":[{\"type\":\"command\",\"command\":\"obsidian.tags.deleteUnpinned\",\"args\":{\"dryRun\":true}}]}",
+      "obsidian.tabs": "{\"actions\":[{\"type\":\"command\",\"command\":\"obsidian.tabs\",\"args\":{\"scope\":\"all\"}}]}",
+      "obsidian.tabs.pin": "{\"actions\":[{\"type\":\"command\",\"command\":\"obsidian.tabs.pin\",\"args\":{\"active\":true}}]}",
+      "obsidian.tabs.unpin": "{\"actions\":[{\"type\":\"command\",\"command\":\"obsidian.tabs.unpin\",\"args\":{\"active\":true}}]}",
+      "obsidian.tabs.closeUnpinned": "{\"actions\":[{\"type\":\"command\",\"command\":\"obsidian.tabs.closeUnpinned\",\"args\":{\"scope\":\"right\",\"keepActive\":true,\"dryRun\":false}}]}",
       "cancip.reviewGate": "{\"actions\":[{\"type\":\"command\",\"command\":\"cancip.reviewGate\",\"args\":{\"paths\":[\"Folder/Note.md\"],\"maxFiles\":20}}]}",
       "cancip.reviewGate.list": "{\"actions\":[{\"type\":\"command\",\"command\":\"cancip.reviewGate.list\",\"args\":{\"limit\":10}}]}",
       "cancip.reviewGate.testMarkdown": "{\"actions\":[{\"type\":\"command\",\"command\":\"cancip.reviewGate.testMarkdown\"}]}",
@@ -13975,74 +15098,124 @@ class CancipView extends ItemView {
     const executed = runs.filter((run) => run.status === "executed");
     const writes = executed.filter((run) => this.isWriteLikeAction(run.action));
     const reads = executed.filter((run) => !this.isWriteLikeAction(run.action));
-    const paths = uniqueStrings(writes.map((run) => this.actionPrimaryPath(run.action)).filter(Boolean)).slice(0, 5);
+    if (reads.length && !writes.length && !failed.length && !rejected.length && !pending.length && !blocked.length && classifyPromptIntent(originalPrompt) === "informational") {
+      return "";
+    }
+
+    const changedPaths = uniqueStrings(writes.map((run) => this.actionPrimaryPath(run.action)).filter(Boolean)).slice(0, 8);
     const goal = originalPrompt.trim() ? `针对“${trimContext(originalPrompt.replace(/\s+/g, " "), 80)}”：` : "";
+    const lead = this.finalConclusionLead({ goal, writes, reads, failed, rejected, pending, blocked, needsMoreAction, originalPrompt });
+    const steps = this.finalConclusionSteps(runs);
+    const actionLines = this.finalConclusionActionLines(runs);
+    const fileLines = changedPaths.length
+      ? changedPaths.map((path) => `- ${path}`)
+      : ["- 这轮没有产生文件写入或配置改动。"];
+    const reminders = this.finalConclusionReminders({ runs, writes, reads, failed, rejected, pending, blocked, needsMoreAction, originalPrompt, changedPaths });
 
-    if (pending.length) {
-      const firstPending = pending[0];
-      return [
-        `${goal}还没完成，正在等你确认。`,
-        `待确认：${pending.length} 个操作，当前第一个是 ${firstPending.summary}。`,
-        "确认后会继续执行；拒绝则会按失败/阻塞反馈。"
-      ].join("\n\n");
+    return [
+      lead,
+      "",
+      "这轮干了什么：",
+      ...steps.map((step, index) => `${index + 1}. ${step}`),
+      "",
+      "动作：",
+      ...actionLines.map((line) => `- ${line}`),
+      "",
+      "改动的文件：",
+      ...fileLines,
+      "",
+      "结果和提醒：",
+      ...reminders.map((line) => `- ${line}`)
+    ].join("\n");
+  }
+
+  private finalConclusionLead(args: {
+    goal: string;
+    writes: ToolRun[];
+    reads: ToolRun[];
+    failed: ToolRun[];
+    rejected: ToolRun[];
+    pending: ToolRun[];
+    blocked: ToolRun[];
+    needsMoreAction: boolean;
+    originalPrompt: string;
+  }): string {
+    if (args.pending.length) return `${args.goal}还没完成，正在等你确认。`;
+    if (args.blocked.length) return `${args.goal}没有执行被阻止的写入类动作。`;
+    if (args.failed.length || args.rejected.length) return args.writes.length ? `${args.goal}部分完成，但还有步骤失败。` : `${args.goal}没完成。`;
+    if (args.needsMoreAction) return args.writes.length ? `${args.goal}部分完成，但还没达到目标。` : `${args.goal}没完成。`;
+    if (args.writes.length) return `${args.goal}已完成。`;
+    if (args.reads.length) {
+      return shouldExpectToolActionForPrompt(args.originalPrompt)
+        ? `${args.goal}还没完成，这轮只做了读取/检查。`
+        : `${args.goal}这轮完成了读取/检查。`;
     }
+    return `${args.goal}没完成，Cancip 没有生成可直接使用的结果。`;
+  }
 
-    if (blocked.length) {
-      const firstBlocked = blocked[0];
-      return [
-        `${goal}没有执行写入类动作。`,
-        `已阻止：${blocked.length} 个操作，当前第一个是 ${firstBlocked.summary}。`,
-        firstBlocked.error ? `原因：${trimContext(redactSensitiveText(firstBlocked.error), 220)}` : "原因：当前问题更像读取/清单/解释任务，不应自动写入。",
-        "下一步：如果你确实要改文件或配置，请明确说要修改什么；否则应基于已读取结果直接回答。"
-      ].join("\n\n");
+  private finalConclusionSteps(runs: ToolRun[]): string[] {
+    const ordered = runs.slice(0, 8);
+    if (!ordered.length) return ["没有拿到可执行动作或可用结果。"];
+    return ordered.map((run) => {
+      const status = this.toolRunStatusLabel(run.status);
+      const target = this.actionPrimaryPath(run.action);
+      const targetText = target ? `（${target}）` : "";
+      return `${status}：${run.summary}${targetText}`;
+    });
+  }
+
+  private finalConclusionActionLines(runs: ToolRun[]): string[] {
+    if (!runs.length) return ["无工具动作。"];
+    const grouped = new Map<ToolRunStatus, number>();
+    for (const run of runs) grouped.set(run.status, (grouped.get(run.status) ?? 0) + 1);
+    const counts = [...grouped.entries()]
+      .map(([status, count]) => `${this.toolRunStatusLabel(status)} ${count} 个`)
+      .join("，");
+    const examples = runs.slice(0, 4).map((run) => run.summary).join("；");
+    return [`本轮动作：${counts}。`, examples ? `主要动作：${examples}` : ""].filter(Boolean);
+  }
+
+  private finalConclusionReminders(args: {
+    runs: ToolRun[];
+    writes: ToolRun[];
+    reads: ToolRun[];
+    failed: ToolRun[];
+    rejected: ToolRun[];
+    pending: ToolRun[];
+    blocked: ToolRun[];
+    needsMoreAction: boolean;
+    originalPrompt: string;
+    changedPaths: string[];
+  }): string[] {
+    const lines: string[] = [];
+    if (args.pending.length) {
+      lines.push(`待确认：${args.pending.length} 个操作；确认后会继续执行，拒绝则会按失败/阻塞反馈。`);
     }
-
-    if (failed.length || rejected.length) {
-      const firstRun = failed[0] ?? rejected[0];
-      const firstIssue = firstRun?.error || this.t("toolRunFailed");
-      const target = firstRun ? this.actionPrimaryPath(firstRun.action) : "";
-      const patchFindFailed = failed.some((run) => run.action.type === "patch" && /was not found|find text/i.test(run.error ?? ""));
-      return [
-        writes.length ? `${goal}部分完成，但还有步骤失败。` : `${goal}没完成。`,
-        firstRun ? `失败步骤：${firstRun.summary}${target ? `（${target}）` : ""}` : "",
-        writes.length && paths.length ? `已完成改动：${paths.join("、")}` : reads.length ? "这轮主要完成了读取/检索，还没有完成目标改动。" : "",
-        `失败原因：${trimContext(redactSensitiveText(firstIssue), 220)}`,
-        patchFindFailed
-          ? "下一步：必须读取目标文件的当前片段，换更小锚点或 regex patch；不能重复同一个失败补丁。"
-          : "下一步：基于这个失败结果改用更小、可验证的动作继续；如果确实受限，就明确具体缺少什么能力。"
-      ].filter(Boolean).join("\n\n");
+    if (args.blocked.length) {
+      const first = args.blocked[0];
+      lines.push(first?.error ? `阻止原因：${trimContext(redactSensitiveText(first.error), 220)}` : "阻止原因：当前任务不应自动写入。");
     }
-
-    if (needsMoreAction) {
-      return [
-        writes.length ? `${goal}部分完成，但还没达到目标。` : `${goal}没完成。`,
-        paths.length ? `已完成改动：${paths.join("、")}` : reads.length ? "这轮只完成读取/检索，还没有形成目标要求的改动。" : "",
-        "原因：当前动作不足以证明任务完成。设置页、UI、插件自身或管理功能类任务，不能只读文件或只改配置就算完成。",
-        "下一步：继续做实际 patch/write/验证；如果受限，必须说清楚缺少的能力。"
-      ].filter(Boolean).join("\n\n");
+    if (args.failed.length || args.rejected.length) {
+      const first = args.failed[0] ?? args.rejected[0];
+      const issue = first?.error || this.t("toolRunFailed");
+      lines.push(`失败原因：${trimContext(redactSensitiveText(issue), 220)}`);
+      const patchFindFailed = args.failed.some((run) => run.action.type === "patch" && /was not found|find text/i.test(run.error ?? ""));
+      if (patchFindFailed) lines.push("补丁没找到文本时，下一步必须读取当前片段，换更小锚点或 regex patch，不能重复同一个失败补丁。");
     }
-
-    if (writes.length) {
-      return [
-        `${goal}已完成。`,
-        paths.length ? `已改动：${paths.join("、")}` : "相关写入/修改动作已执行并返回成功。"
-      ].join("\n\n");
+    if (args.needsMoreAction) {
+      lines.push("当前动作还不足以证明任务完成，需要继续做实际 patch/write/验证；如果受限，必须说明具体缺少什么能力。");
     }
-
-    if (reads.length) {
-      if (classifyPromptIntent(originalPrompt) === "informational") {
-        return "";
-      }
-      return [
-        `${goal}没完成。`,
-        shouldExpectToolActionForPrompt(originalPrompt)
-          ? "这轮只完成了读取/检索，还没有按你的要求做实际修改。"
-          : "这轮只完成了读取/检索，没有产生实际改动或可验证结果。",
-        "下一步：直接基于最后一次工具结果继续执行具体 patch/write/验证；不要重新泛搜，也不要套话总结。"
-      ].join("\n\n");
+    if (args.writes.length && !args.failed.length && !args.rejected.length && !args.pending.length && !args.blocked.length && !args.needsMoreAction) {
+      lines.push("相关写入/修改动作返回成功；细节在上方折叠过程里。");
     }
-
-    return `${goal}没完成。Cancip 没有生成可直接使用的结果；应给出明确阻塞原因，或继续执行具体工具动作。`;
+    if (args.reads.length && !args.writes.length && shouldExpectToolActionForPrompt(args.originalPrompt)) {
+      lines.push("这轮只有读取/检查，还没有完成你要求的实际改动。");
+    }
+    if (args.changedPaths.some((path) => /(?:^|\/)\.obsidian\/plugins\/cancip\//i.test(path))) {
+      lines.push("改到 Cancip 已安装插件文件后，需要重载/重启 Obsidian 才能稳定看到效果。");
+    }
+    if (!lines.length) lines.push("没有额外提醒。");
+    return lines;
   }
 
   private isWriteLikeAction(action: CancipAction): boolean {
@@ -14059,6 +15232,9 @@ class CancipView extends ItemView {
       || command === "obsidian.tags.pin"
       || command === "obsidian.tags.unpin"
       || command === "obsidian.tags.deleteUnpinned"
+      || command === "obsidian.tabs.pin"
+      || command === "obsidian.tabs.unpin"
+      || command === "obsidian.tabs.closeUnpinned"
       || command === "cancip.rebuildIndex"
       || command === "cancip.localVersionCommit"
       || command === "cancip.importCodexMemory"
@@ -14950,6 +16126,22 @@ class CancipView extends ItemView {
       return this.t("commandExecuted", { command: normalized, result: await this.deleteUnpinnedTagsCommand(args) });
     }
 
+    if (normalized === "obsidian.tabs") {
+      return this.t("commandExecuted", { command: normalized, result: this.obsidianTabsSummary(args) });
+    }
+
+    if (normalized === "obsidian.tabs.pin") {
+      return this.t("commandExecuted", { command: normalized, result: this.pinObsidianTabsCommand(args, true) });
+    }
+
+    if (normalized === "obsidian.tabs.unpin") {
+      return this.t("commandExecuted", { command: normalized, result: this.pinObsidianTabsCommand(args, false) });
+    }
+
+    if (normalized === "obsidian.tabs.closeUnpinned") {
+      return this.t("commandExecuted", { command: normalized, result: this.closeUnpinnedTabsCommand(args) });
+    }
+
     if (normalized === "obsidian.execute") {
       if (!this.plugin.settings.executeObsidianCommands) {
         throw new Error(this.t("commandBlocked", { reason: this.t("settingsExecuteObsidianCommands") }));
@@ -15446,7 +16638,7 @@ class CancipView extends ItemView {
     const limit = clampInt(args.limit, 80, 1, 200);
     const selector = typeof args.selector === "string" && args.selector.trim()
       ? args.selector.trim()
-      : ".view-header button, .view-header .clickable-icon, .view-actions button, .view-actions .clickable-icon, .workspace-tab-header, .mod-right-split button, .mod-right-split .clickable-icon";
+      : ".view-header button, .view-header .clickable-icon, .view-actions button, .view-actions .clickable-icon, .workspace-tab-header, .mod-right-split button, .mod-right-split .clickable-icon, .menu .menu-item, .menu-item, .document-search-button, .pdf-toolbar button, .pdf-toolbar .clickable-icon";
     const elements = Array.from(root.querySelectorAll<HTMLElement>(selector)).slice(0, limit);
     if (!elements.length) return this.t("none");
     return elements.map((el, index) => {
@@ -15461,7 +16653,7 @@ class CancipView extends ItemView {
   private uiButtonRulesSummary(): string {
     const rules = this.plugin.settings.uiButtonRules;
     if (!rules.length) return this.t("none");
-    return rules.map((rule, index) => `${index + 1}. ${rule.hidden ? "hidden" : "shown"} order=${rule.order} scope=${rule.scope} ${rule.label}\n   ${rule.selector}`).join("\n");
+    return rules.map((rule, index) => `${index + 1}. ${rule.hidden ? "hidden" : "shown"} order=${rule.order} scope=${rule.scope} ${rule.label}${rule.title ? ` title=${rule.title}` : ""}${rule.icon ? ` icon=${rule.icon}` : ""}\n   ${rule.selector}`).join("\n");
   }
 
   private async applyUiButtonRulesCommand(args: Record<string, unknown>): Promise<string> {
@@ -15549,6 +16741,77 @@ class CancipView extends ItemView {
       }
     }
     return counts;
+  }
+
+  private obsidianTabsSummary(args: Record<string, unknown>): string {
+    const tabs = this.workspaceTabInfos(args);
+    if (!tabs.length) return this.t("none");
+    return tabs.map((tab, index) => {
+      const active = tab.leaf === this.app.workspace.activeLeaf ? " active" : "";
+      const pinned = tab.pinned ? " pinned" : "";
+      return `${index}. ${tab.title}${active}${pinned} [${tab.area}/${tab.viewType}]${tab.path ? `\n   ${tab.path}` : ""}`;
+    }).join("\n");
+  }
+
+  private pinObsidianTabsCommand(args: Record<string, unknown>, pin: boolean): string {
+    const tabs = this.workspaceTabInfos(args);
+    const targetTabs = this.filterWorkspaceTabs(tabs, args);
+    if (!targetTabs.length) throw new Error(pin ? "obsidian.tabs.pin target not found" : "obsidian.tabs.unpin target not found");
+    for (const tab of targetTabs) tab.leaf.setPinned(pin);
+    return `${pin ? "pinned" : "unpinned"}: ${targetTabs.length}\n${targetTabs.map((tab) => `- ${tab.title}${tab.path ? ` (${tab.path})` : ""}`).join("\n")}`;
+  }
+
+  private closeUnpinnedTabsCommand(args: Record<string, unknown>): string {
+    const dryRun = args.dryRun === true;
+    const keepActive = args.keepActive !== false;
+    const tabs = this.workspaceTabInfos(args);
+    const activeLeaf = this.app.workspace.activeLeaf;
+    const targets = tabs.filter((tab) => !tab.pinned && (!keepActive || tab.leaf !== activeLeaf));
+    if (!targets.length) return "closed tabs: 0 (no files deleted)";
+    if (!dryRun) {
+      for (const tab of targets) tab.leaf.detach();
+    }
+    return `${dryRun ? "dryRun close tabs" : "closed tabs"}: ${targets.length} (no files deleted)\n${targets.map((tab) => `- ${tab.title}${tab.path ? ` (${tab.path})` : ""}`).join("\n")}`;
+  }
+
+  private workspaceTabInfos(args: Record<string, unknown>): WorkspaceTabInfo[] {
+    const scope = typeof args.scope === "string" ? args.scope.trim().toLowerCase() : "all";
+    const query = typeof args.query === "string" ? args.query.trim().toLowerCase() : "";
+    const pathQuery = typeof args.path === "string" ? normalizePath(args.path.trim()).toLowerCase() : "";
+    const tabs: WorkspaceTabInfo[] = [];
+    this.app.workspace.iterateAllLeaves((leaf) => {
+      const view = leaf.view as unknown as { getViewType?: () => string; getDisplayText?: () => string; file?: TFile; containerEl?: HTMLElement };
+      const file = view.file instanceof TFile ? view.file : null;
+      const area = workspaceLeafArea(leaf);
+      if (scope !== "all" && scope !== area && !(scope === "main" && area === "root")) return;
+      const title = view.getDisplayText?.() || file?.basename || view.getViewType?.() || "tab";
+      const info: WorkspaceTabInfo = {
+        leaf,
+        title,
+        viewType: view.getViewType?.() || "",
+        path: file?.path ?? "",
+        area,
+        pinned: Boolean((leaf as unknown as { pinned?: boolean }).pinned)
+      };
+      if (query && !`${info.title} ${info.path} ${info.viewType}`.toLowerCase().includes(query)) return;
+      if (pathQuery && info.path.toLowerCase() !== pathQuery) return;
+      tabs.push(info);
+    });
+    return tabs;
+  }
+
+  private filterWorkspaceTabs(tabs: WorkspaceTabInfo[], args: Record<string, unknown>): WorkspaceTabInfo[] {
+    if (typeof args.index === "number" || typeof args.index === "string") {
+      const index = clampInt(args.index, 0, 0, Math.max(0, tabs.length - 1));
+      return tabs[index] ? [tabs[index]] : [];
+    }
+    if (args.active === true) {
+      const active = this.app.workspace.activeLeaf;
+      return tabs.filter((tab) => tab.leaf === active);
+    }
+    if (typeof args.path === "string" && args.path.trim()) return tabs;
+    if (typeof args.query === "string" && args.query.trim()) return tabs;
+    return tabs.filter((tab) => tab.leaf === this.app.workspace.activeLeaf);
   }
 
   private async sessionHistoryCommand(args: Record<string, unknown>): Promise<string> {
@@ -17377,12 +18640,17 @@ class CancipSettingTab extends PluginSettingTab {
       this.plugin.settings.ttsCustomUrl = value.trim();
       await this.plugin.saveSettings();
     }, "settingsTtsCustomUrlDesc");
+    this.addToggleSetting(parent, "settingsTtsShowViewActions", this.plugin.settings.ttsShowViewActions, async (value) => {
+      this.plugin.settings.ttsShowViewActions = value;
+      await this.plugin.saveSettings();
+      this.plugin.refreshTtsViewActions();
+    }, "settingsTtsShowViewActionsDesc");
     new Setting(parent)
       .setName(this.plugin.t("settingsTtsHighQualityHint"))
       .setDesc(this.plugin.t("settingsTtsHighQualityHint"));
     new Setting(parent)
       .setName(this.plugin.t("settingsTtsInstallLocalPackage"))
-      .setDesc(`${BUILTIN_PRIME_TTS_BASE} · ${BUILTIN_PRIME_TTS_PACKAGE_ASSET}`)
+      .setDesc(`${PRIME_TTS_PACKAGES_ROOT}/<package> · default ${BUILTIN_PRIME_TTS_PACKAGE_ASSET}`)
       .addButton((button) => {
         button
           .setButtonText(this.plugin.t("ttsInstallLocalPackage"))
@@ -19401,6 +20669,7 @@ function isLowCommitmentAction(action: CancipAction): boolean {
     "obsidian.ui.buttons",
     "obsidian.ui.buttonRules",
     "obsidian.tags",
+    "obsidian.tabs",
     "cancip.reviewGate.list",
     "cancip.sessionEvents",
     "cancip.sessionHistory",
@@ -19721,13 +20990,35 @@ function finalizePrimeTtsSamples(samples: Float32Array, sampleRate: number): Flo
   let sum = 0;
   for (const sample of samples) sum += sample;
   const dc = sum / samples.length;
-  const tailSamples = Math.max(0, Math.round(sampleRate * PRIME_TTS_TAIL_SILENCE_MS / 1000));
-  const output = new Float32Array(samples.length + tailSamples);
+  const normalized = new Float32Array(samples.length);
   for (let index = 0; index < samples.length; index += 1) {
-    output[index] = Math.max(-1, Math.min(1, samples[index] - dc));
+    normalized[index] = Math.max(-1, Math.min(1, samples[index] - dc));
   }
-  applyPrimeTtsEdgeEnvelope(output, sampleRate, samples.length);
+  const voiced = trimPrimeTtsEdgeSilence(normalized, sampleRate);
+  const tailSamples = Math.max(0, Math.round(sampleRate * PRIME_TTS_TAIL_SILENCE_MS / 1000));
+  const output = new Float32Array(voiced.length + tailSamples);
+  output.set(voiced);
+  applyPrimeTtsEdgeEnvelope(output, sampleRate, voiced.length);
   return output;
+}
+
+function trimPrimeTtsEdgeSilence(samples: Float32Array, sampleRate: number): Float32Array {
+  if (samples.length < 8 || !Number.isFinite(sampleRate) || sampleRate <= 0) return samples;
+  let peak = 0;
+  for (const sample of samples) peak = Math.max(peak, Math.abs(sample));
+  if (peak <= 0.0001) return samples;
+  const threshold = Math.max(0.0025, peak * 0.018);
+  let start = 0;
+  while (start < samples.length && Math.abs(samples[start]) < threshold) start += 1;
+  let end = samples.length - 1;
+  while (end > start && Math.abs(samples[end]) < threshold) end -= 1;
+  if (start <= 0 && end >= samples.length - 1) return samples;
+  const startPad = Math.round(sampleRate * 0.003);
+  const endPad = Math.round(sampleRate * 0.005);
+  const from = Math.max(0, start - startPad);
+  const to = Math.min(samples.length, end + endPad + 1);
+  if (to - from < Math.min(samples.length, Math.round(sampleRate * 0.025))) return samples;
+  return samples.slice(from, to);
 }
 
 function applyPrimeTtsEdgeEnvelope(samples: Float32Array, sampleRate: number, voicedLength: number): void {
@@ -19836,7 +21127,43 @@ const PRIME_TTS_DIGIT_PHONES: Record<string, string[]> = {
   "0": ["Z", "IY", "R", "OW"], "1": ["W", "AH", "N"], "2": ["T", "UW"], "3": ["TH", "R", "IY"], "4": ["F", "AO", "R"],
   "5": ["F", "AY", "V"], "6": ["S", "IH", "K", "S"], "7": ["S", "EH", "V", "AH", "N"], "8": ["EY", "T"], "9": ["N", "AY", "N"]
 };
+const PRIME_TTS_CJK_LETTER_READINGS: Record<string, string> = {
+  a: "诶", e: "易", i: "一", o: "哦", u: "优", v: "微"
+};
 const CHINESE_DIGITS = ["零", "一", "二", "三", "四", "五", "六", "七", "八", "九"] as const;
+let primeTtsCustomPinyinReady = false;
+const PRIME_TTS_CUSTOM_PINYIN: Record<string, string> = {
+  了解: "liao3 jie3",
+  了结: "liao3 jie2",
+  了却: "liao3 que4",
+  了然: "liao3 ran2",
+  明了: "ming2 liao3",
+  为了: "wei4 le0",
+  走了: "zou3 le0",
+  来了: "lai2 le0",
+  好了: "hao3 le0",
+  完了: "wan2 le0",
+  快乐: "kuai4 le4",
+  乐观: "le4 guan1",
+  乐趣: "le4 qu4",
+  娱乐: "yu2 le4",
+  可乐: "ke3 le4",
+  音乐: "yin1 yue4",
+  乐队: "yue4 dui4",
+  乐器: "yue4 qi4",
+  乐谱: "yue4 pu3",
+  长大: "zhang3 da4",
+  长高: "zhang3 gao1",
+  长短: "chang2 duan3",
+  长期: "chang2 qi1",
+  银行: "yin2 hang2",
+  行业: "hang2 ye4",
+  行为: "xing2 wei2",
+  行走: "xing2 zou3",
+  重新: "chong2 xin1",
+  重复: "chong2 fu4",
+  重要: "zhong4 yao4"
+};
 
 function primeTtsTextToIds(input: string): PrimeTtsIds {
   const normalized = primeTtsNormalizeText(normalizeChineseNumbersForPrimeTts(input));
@@ -19855,9 +21182,9 @@ function primeTtsTextToIds(input: string): PrimeTtsIds {
       let end = index + 1;
       while (end < normalized.length && isCjkChar(normalized[end])) end += 1;
       const run = normalized.slice(index, end);
-      const syllables = pinyin(run, { toneType: "num", type: "array" });
+      const syllables = primeTtsPinyinArray(run);
       for (let offset = 0; offset < run.length; offset += 1) {
-        const syllable = syllables[offset] ?? pinyin(run[offset], { toneType: "num", type: "array" })[0] ?? "";
+        const syllable = syllables[offset] ?? primeTtsPinyinArray(run[offset])[0] ?? "";
         const units = pinyinSyllableToZhuyin(syllable);
         for (const unit of units.symbols) push(unit, units.tone, 0);
       }
@@ -19868,6 +21195,16 @@ function primeTtsTextToIds(input: string): PrimeTtsIds {
       let end = index + 1;
       while (end < normalized.length && /[A-Za-z']/.test(normalized[end])) end += 1;
       const word = normalized.slice(index, end).replace(/^'+|'+$/g, "");
+      const cjkLetterReading = cjkLetterWordReading(word, normalized, index, end);
+      if (cjkLetterReading) {
+        const syllables = primeTtsPinyinArray(cjkLetterReading);
+        for (let offset = 0; offset < cjkLetterReading.length; offset += 1) {
+          const units = pinyinSyllableToZhuyin(syllables[offset] ?? "");
+          for (const unit of units.symbols) push(unit, units.tone, 0);
+        }
+        index = end;
+        continue;
+      }
       const phones = englishWordToPrimePhones(word);
       for (const phone of phones) push(phone, 0, 1);
       push("SP", 0, 1);
@@ -19887,9 +21224,28 @@ function primeTtsTextToIds(input: string): PrimeTtsIds {
   return { phoneIds, toneIds, langIds };
 }
 
-function normalizeChineseNumbersForPrimeTts(input: string): string {
-  if (!/\d/.test(input) || !hasCjkText(input)) return input;
-  const mode = chineseNumberReadingMode(input);
+function ensurePrimeTtsCustomPinyin(): void {
+  if (primeTtsCustomPinyinReady) return;
+  primeTtsCustomPinyinReady = true;
+  try {
+    customPinyin(PRIME_TTS_CUSTOM_PINYIN, { multiple: "replace", polyphonic: "replace" });
+  } catch (error) {
+    console.debug("Cancip PrimeTTS custom pinyin skipped", error);
+  }
+}
+
+function primeTtsPinyinArray(input: string): string[] {
+  ensurePrimeTtsCustomPinyin();
+  try {
+    return pinyin(input, { toneType: "num", type: "array", toneSandhi: true, segmentit: 2 });
+  } catch {
+    return pinyin(input, { toneType: "num", type: "array" });
+  }
+}
+
+function normalizeChineseNumbersForPrimeTts(input: string, forceFull = false): string {
+  if (!/\d/.test(input) || (!forceFull && !hasCjkText(input))) return input;
+  const mode = forceFull ? "full" : chineseNumberReadingMode(input);
   if (mode === "none") return input;
   const normalizedPatterns = normalizeChineseDateTimeNumbers(input, mode);
   return normalizedPatterns.replace(/\d+(?:\.\d+)?[%％]?/g, (match, offset: number, full: string) => {
@@ -19927,6 +21283,17 @@ function hasCjkText(input: string): boolean {
   return /[\u3400-\u9fff]/.test(input);
 }
 
+function looksLikeEnglishTtsText(input: string): boolean {
+  const text = input.replace(/https?:\/\/\S+/gi, " ").replace(/`[^`]*`/g, " ").trim();
+  if (!text || hasCjkText(text)) return false;
+  const latinCount = (text.match(/[A-Za-z]/g) ?? []).length;
+  if (latinCount < 3) return false;
+  const letterCount = ([...text.matchAll(/\p{L}/gu)]).length;
+  if (letterCount && latinCount / letterCount < 0.8) return false;
+  const wordCount = (text.match(/[A-Za-z]{2,}/g) ?? []).length;
+  return wordCount >= 1 || latinCount >= 8;
+}
+
 function chineseNumberReadingMode(input: string): "none" | "context" | "full" {
   const compact = input.replace(/\s+/g, "");
   const cjkCount = (compact.match(/[\u3400-\u9fff]/g) ?? []).length;
@@ -19960,7 +21327,7 @@ function numberTokenToChinese(token: string, mode: "auto" | "value" | "digits" =
     const [integer, fraction = ""] = token.split(".");
     return `${integerNumberToChinese(integer)}点${digitsToChinese(fraction)}`;
   }
-  if (/^0\d+/.test(token)) return digitsToChinese(token);
+  if (/^0\d+/.test(token)) return integerNumberToChinese(token.replace(/^0+(?=\d)/, "") || "0");
   if (mode === "auto" && token.length === 4 && /^[12]\d{3}$/.test(token)) return digitsToChinese(token);
   return integerNumberToChinese(token);
 }
@@ -20034,10 +21401,10 @@ function primeTtsNormalizeText(input: string): string {
 }
 
 function pinyinSyllableToZhuyin(raw: string): { symbols: string[]; tone: number } {
-  const match = raw.toLowerCase().replace(/ü/g, "v").match(/^([a-zv]+)([1-5])?$/);
+  const match = raw.toLowerCase().replace(/ü/g, "v").match(/^([a-zv]+)([0-5])?$/);
   if (!match) return { symbols: ["UNK"], tone: 0 };
   let body = match[1];
-  const tone = Number(match[2] ?? "5");
+  const tone = Number(match[2] === "0" ? "5" : match[2] ?? "5");
   let initial = "";
   for (const candidate of PRIME_TTS_PINYIN_INITIALS) {
     if (body.startsWith(candidate)) {
@@ -20128,7 +21495,15 @@ function englishLetterSound(char: string): string[] {
 }
 
 function normalizePrimeTtsPunctuation(char: string): string {
-  if (char === "," || char === "." || char === "?" || char === "!" || char === "-" || char === "'") return char;
+  if (!char || isPrimeTtsIgnorableSymbolChar(char)) return "";
+  if (char === "," || char === "，" || char === "、" || char === ";" || char === "；" || char === ":" || char === "：") return ",";
+  if (char === "." || char === "。") return ".";
+  if (char === "?" || char === "？") return "?";
+  if (char === "!" || char === "！") return "!";
+  if (char === "…" || char === "⋯" || char === "⋮") return "...";
+  if (char === "-" || char === "—" || char === "–" || char === "―") return "-";
+  if (char === "'" || char === "’" || char === "‘" || char === "\"" || char === "“" || char === "”") return "'";
+  if (/[\p{P}\p{S}]/u.test(char)) return ",";
   return "";
 }
 
@@ -20153,8 +21528,9 @@ function isReadOnlyAction(action: CancipAction): boolean {
   return new Set([
     "obsidian.listCommands",
     "obsidian.currentView",
-    "obsidian.dom.snapshot",
-    "cancip.reviewGate.list",
+      "obsidian.dom.snapshot",
+      "obsidian.tabs",
+      "cancip.reviewGate.list",
     "cancip.sessionEvents",
     "cancip.sessionHistory",
     "cancip.installedPlugins",
@@ -20274,6 +21650,15 @@ function normalizeSkillRoots(raw: unknown): string[] {
   return uniqueStrings(values).slice(0, 40);
 }
 
+function cjkLetterWordReading(word: string, text: string, start: number, end: number): string {
+  if (!word || word.length > 8) return "";
+  if (!/^[aeiouv]+$/i.test(word)) return "";
+  const before = text.slice(Math.max(0, start - 6), start);
+  const after = text.slice(end, end + 6);
+  if (!/[\u3400-\u9fff]/.test(before + after)) return "";
+  return word.toLowerCase().split("").map((char) => PRIME_TTS_CJK_LETTER_READINGS[char] ?? "").join("");
+}
+
 function normalizeTagList(raw: unknown): string[] {
   const values = Array.isArray(raw) ? raw : [];
   return uniqueStrings(values
@@ -20294,7 +21679,9 @@ function normalizeUiButtonRules(raw: unknown): UiButtonRule[] {
       const id = typeof item.id === "string" && item.id.trim() ? item.id.trim() : stableRuleId(selector);
       const scope = item.scope === "active" || item.scope === "cancip" ? item.scope : "global";
       const order = Number.isFinite(Number(item.order)) ? Math.max(-999, Math.min(999, Math.round(Number(item.order)))) : 0;
-      return { id, selector, label, hidden: Boolean(item.hidden), order, scope };
+      const title = typeof item.title === "string" && item.title.trim() ? item.title.trim() : undefined;
+      const icon = typeof item.icon === "string" && item.icon.trim() ? item.icon.trim() : undefined;
+      return { id, selector, label, hidden: Boolean(item.hidden), order, title, icon, scope };
     })
     .filter((item): item is UiButtonRule => item !== null)
     .slice(0, 200);
@@ -20486,6 +21873,7 @@ function normalizeSettings(input: Partial<Settings>): Settings {
     ttsPitch: Number.isFinite(ttsPitch) ? Math.max(0, Math.min(2, ttsPitch)) : DEFAULT_SETTINGS.ttsPitch,
     ttsChunkChars: Number.isFinite(ttsChunkChars) ? Math.max(120, Math.min(2400, ttsChunkChars)) : DEFAULT_SETTINGS.ttsChunkChars,
     ttsCustomUrl: typeof merged.ttsCustomUrl === "string" ? merged.ttsCustomUrl : DEFAULT_SETTINGS.ttsCustomUrl,
+    ttsShowViewActions: typeof merged.ttsShowViewActions === "boolean" ? merged.ttsShowViewActions : DEFAULT_SETTINGS.ttsShowViewActions,
     systemPrompt: typeof merged.systemPrompt === "string" ? merged.systemPrompt : DEFAULT_SETTINGS.systemPrompt
   };
 }
@@ -20574,6 +21962,7 @@ function settingsToCancipConfig(settings: Settings): Record<string, unknown> {
     ttsPitch: settings.ttsPitch,
     ttsChunkChars: settings.ttsChunkChars,
     ttsCustomUrl: settings.ttsCustomUrl,
+    ttsShowViewActions: settings.ttsShowViewActions,
     systemPrompt: settings.systemPrompt
   };
 }
@@ -20675,6 +22064,7 @@ function parseCancipConfig(raw: unknown): Partial<Settings> {
   if (typeof raw.ttsPitch === "number" || typeof raw.ttsPitch === "string") config.ttsPitch = Number(raw.ttsPitch);
   if (typeof raw.ttsChunkChars === "number" || typeof raw.ttsChunkChars === "string") config.ttsChunkChars = Number.parseInt(String(raw.ttsChunkChars), 10);
   if (typeof raw.ttsCustomUrl === "string") config.ttsCustomUrl = raw.ttsCustomUrl;
+  if (typeof raw.ttsShowViewActions === "boolean") config.ttsShowViewActions = raw.ttsShowViewActions;
   if (typeof raw.systemPrompt === "string") config.systemPrompt = raw.systemPrompt;
   return config;
 }
@@ -20764,7 +22154,8 @@ const CANCIP_CONFIG_BOOLEAN_KEYS = new Set([
   "ntfyEnabled",
   "ntfyOnSessionComplete",
   "ntfyOnSessionFail",
-  "showSupportCodes"
+  "showSupportCodes",
+  "ttsShowViewActions"
 ]);
 
 function assertCancipConfigWriteShape(config: Record<string, unknown>): void {
@@ -21226,6 +22617,9 @@ function extractVisibleRenderedText(root: HTMLElement): string {
     if (ignored.has(node.tagName)) return;
     const style = window.getComputedStyle(node);
     if (style.display === "none" || style.visibility === "hidden") return;
+    if (node.matches("li.task-list-item, .task-list-item")) {
+      chunks.push(`${isRenderedTaskChecked(node) ? "已完成" : "待办"} `);
+    }
     for (const child of Array.from(node.childNodes)) walk(child);
     if (["P", "DIV", "LI", "TR", "BLOCKQUOTE", "H1", "H2", "H3", "H4", "H5", "H6", "PRE", "TABLE"].includes(node.tagName)) {
       chunks.push("\n");
@@ -21240,12 +22634,363 @@ function extractVisibleRenderedText(root: HTMLElement): string {
     .trim();
 }
 
+function extractVisibleMarkdownViewportText(root: HTMLElement, maxChars = TTS_CAPTURE_MAX_CHARS): string {
+  const viewport = ttsReadableViewport(root);
+  const selectors = [
+    ".markdown-preview-view p",
+    ".markdown-preview-view li",
+    ".markdown-preview-view blockquote",
+    ".markdown-preview-view pre",
+    ".markdown-preview-view table",
+    ".markdown-rendered p",
+    ".markdown-rendered li",
+    ".markdown-rendered blockquote",
+    ".markdown-rendered pre",
+    ".markdown-rendered table",
+    ".cm-line",
+    "p",
+    "li",
+    "blockquote",
+    "pre",
+    "table",
+    "tr"
+  ].join(",");
+  let items = Array.from(root.querySelectorAll<HTMLElement>(selectors))
+    .map((element) => {
+      const rect = element.getBoundingClientRect();
+      const readable = rect.bottom >= viewport.top && rect.height > 0 && rect.width > 0;
+      const visible = readable && rect.top <= viewport.bottom && rect.bottom >= viewport.top;
+      const text = renderedElementReadableText(element).replace(/\s+/g, " ").trim();
+      return { element, rect, readable, visible, text };
+    })
+    .filter((item) => item.readable && item.text && !item.element.closest(".obcc-tts-floating, .obcc-view-tts-action, script, style, textarea, input, button"))
+    .sort((a, b) => a.rect.top - b.rect.top || a.rect.left - b.rect.left);
+  items = keepTopLevelReadableItems(items);
+  const startIndex = viewportStartIndex(items, viewport.top);
+  if (startIndex > 0) items = items.slice(startIndex);
+  const chunks: string[] = [];
+  let total = 0;
+  let lastNormalized = "";
+  for (const item of items) {
+    const normalized = normalizeTtsHighlightText(item.text);
+    if (!normalized || normalized === lastNormalized) continue;
+    chunks.push(item.text);
+    lastNormalized = normalized;
+    total += item.text.length;
+    if (total >= maxChars) break;
+  }
+  return chunks
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
+function innermostReadableRoots(roots: HTMLElement[]): HTMLElement[] {
+  return roots.filter((root) => {
+    for (const other of roots) {
+      if (other === root) continue;
+      if (root.contains(other)) return false;
+    }
+    return true;
+  });
+}
+
+function extractVisiblePdfViewportText(root: HTMLElement, maxChars = TTS_CAPTURE_MAX_CHARS): string {
+  const viewport = ttsReadableViewport(root);
+  let pdfSpans = Array.from(root.querySelectorAll<HTMLElement>(".textLayer span"));
+  if (!pdfSpans.length && root.hasClass("textLayer")) pdfSpans = Array.from(root.querySelectorAll<HTMLElement>("span"));
+  if (!pdfSpans.length) pdfSpans = Array.from(root.querySelectorAll<HTMLElement>(".page span, [data-page-number] span, span[role='presentation']"));
+  const spans = pdfSpans
+    .map((element) => {
+      const rect = element.getBoundingClientRect();
+      const readable = rect.bottom >= viewport.top && rect.height > 0 && rect.width > 0;
+      const visible = readable && rect.top <= viewport.bottom && rect.bottom >= viewport.top;
+      const text = (element.innerText || element.textContent || "").replace(/\s+/g, " ").trim();
+      return { element, rect, readable, visible, text };
+    })
+    .filter((item) => item.readable && item.text && !item.element.closest(".obcc-tts-floating, .obcc-view-tts-action, script, style, textarea, input, button"))
+    .sort((a, b) => a.rect.top - b.rect.top || a.rect.left - b.rect.left);
+  const startIndex = viewportStartIndex(spans, viewport.top);
+  const readableSpans = startIndex > 0 ? spans.slice(startIndex) : spans;
+  if (readableSpans.length) return trimContext(normalizePdfTtsText(mergePdfTextLayerSpans(readableSpans)), maxChars);
+  return extractVisibleMarkdownViewportText(root, maxChars);
+}
+
+function ttsReadableViewport(root?: HTMLElement): { top: number; bottom: number } {
+  const visual = window.visualViewport;
+  const rawTop = Math.max(0, visual?.offsetTop ?? 0);
+  const rawBottom = rawTop + Math.max(160, visual?.height ?? window.innerHeight ?? 800);
+  const viewContent = ttsReadableScrollContainer(root);
+  const viewRect = viewContent?.getBoundingClientRect();
+  const top = Math.max(rawTop, viewRect && viewRect.height > 0 ? viewRect.top : rawTop) + 2;
+  const bottom = Math.max(top + 120, Math.min(rawBottom, viewRect && viewRect.height > 0 ? viewRect.bottom : rawBottom));
+  return { top, bottom };
+}
+
+function ttsReadableScrollContainer(root?: HTMLElement): HTMLElement | null {
+  const preferred = root?.closest<HTMLElement>(".markdown-preview-view, .cm-scroller, .pdf-container, .pdf-viewer, .pdfViewer, .view-content, .workspace-leaf-content");
+  if (preferred && preferred.getBoundingClientRect().height > 120) return preferred;
+  let node: HTMLElement | null = root ?? null;
+  while (node && node !== document.body) {
+    const rect = node.getBoundingClientRect();
+    const style = window.getComputedStyle(node);
+    const scrollable = /(auto|scroll|overlay)/.test(style.overflowY) || node.scrollHeight > node.clientHeight + 8;
+    if (scrollable && rect.height > 120) return node;
+    node = node.parentElement;
+  }
+  return root?.closest<HTMLElement>(".view-content, .workspace-leaf-content") ?? null;
+}
+
+function viewportStartIndex<T extends { rect: DOMRect; visible?: boolean }>(items: T[], viewportTop = 0): number {
+  if (!items.length) return 0;
+  const top = Math.max(0, viewportTop);
+  const visibleBelowTop = items.findIndex((item) => item.rect.top >= top - 2 && item.visible !== false);
+  if (visibleBelowTop >= 0) return visibleBelowTop;
+  const crossingTop = items.findIndex((item) => item.rect.bottom >= top - 2 && item.visible !== false);
+  if (crossingTop >= 0) return crossingTop;
+  return 0;
+}
+
+function mergePdfTextLayerSpans(items: Array<{ rect: DOMRect; text: string }>): string {
+  const lines: Array<{ top: number; height: number; items: Array<{ rect: DOMRect; text: string }> }> = [];
+  for (const item of items) {
+    const height = Math.max(1, item.rect.height || 12);
+    const tolerance = Math.max(2, Math.min(8, height * 0.45));
+    let line = lines.find((candidate) => Math.abs(candidate.top - item.rect.top) <= tolerance);
+    if (!line) {
+      line = { top: item.rect.top, height, items: [] };
+      lines.push(line);
+    }
+    line.items.push(item);
+  }
+  lines.sort((a, b) => a.top - b.top);
+  const chunks: string[] = [];
+  for (const line of lines) {
+    line.items.sort((a, b) => a.rect.left - b.rect.left);
+    const pieces: string[] = [];
+    let previous: { rect: DOMRect; text: string } | null = null;
+    for (const item of line.items) {
+      if (previous) {
+        const gap = item.rect.left - previous.rect.right;
+        if (gap > Math.max(2, line.height * 0.35) && shouldInsertTtsSpace(previous.text, item.text)) pieces.push(" ");
+      }
+      pieces.push(item.text);
+      previous = item;
+    }
+    const text = pieces.join("").replace(/\s{2,}/g, " ").trim();
+    if (text) chunks.push(text);
+  }
+  return chunks.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function normalizePdfTtsText(input: string): string {
+  const normalized = normalizeExtractedText(input);
+  if (!normalized) return "";
+  return normalized
+    .split(/\n{2,}/)
+    .map((paragraph) => normalizePdfTtsParagraph(paragraph))
+    .filter(Boolean)
+    .join("\n\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function normalizePdfTtsParagraph(paragraph: string): string {
+  const lines = paragraph
+    .split(/\n+/)
+    .map((line) => line.replace(/[ \t]{2,}/g, " ").trim())
+    .filter(Boolean);
+  const blocks: string[] = [];
+  let buffer = "";
+  const pushBuffer = () => {
+    const text = buffer.trim();
+    if (text) blocks.push(text);
+    buffer = "";
+  };
+  for (const line of lines) {
+    if (isPdfStandaloneLine(line)) {
+      pushBuffer();
+      blocks.push(line);
+      continue;
+    }
+    if (!buffer) {
+      buffer = line;
+      continue;
+    }
+    if (shouldJoinPdfTtsLine(buffer, line)) {
+      buffer = joinPdfTtsLine(buffer, line);
+    } else {
+      pushBuffer();
+      buffer = line;
+    }
+  }
+  pushBuffer();
+  return blocks.join("\n").trim();
+}
+
+function shouldJoinPdfTtsLine(left: string, right: string): boolean {
+  const previous = left.trim();
+  const next = right.trim();
+  if (!previous || !next) return false;
+  if (isPdfStandaloneLine(previous) || isPdfStandaloneLine(next)) return false;
+  if (/[。！？!?；;]$/.test(previous)) return false;
+  if (/^[）)\]】》」』”’]/.test(next)) return true;
+  if (/^[,，.。:：;；!?！？、]/.test(next)) return true;
+  if (looksLikePdfTableLine(previous) || looksLikePdfTableLine(next)) return false;
+  if (previous.length <= 18 && next.length <= 18 && /^[A-Z0-9]/.test(next) && /[A-Za-z0-9]$/.test(previous)) return false;
+  return true;
+}
+
+function joinPdfTtsLine(left: string, right: string): string {
+  const previous = left.trim();
+  const next = right.trim();
+  if (/-$/.test(previous) && /^[A-Za-z]/.test(next)) return `${previous.slice(0, -1)}${next}`;
+  return shouldInsertTtsSpace(previous, next) ? `${previous} ${next}` : `${previous}${next}`;
+}
+
+function isPdfStandaloneLine(line: string): boolean {
+  const text = line.trim();
+  if (!text) return false;
+  if (/^(?:[-*+]|[0-9]+[.)、]|[一二三四五六七八九十]+[、.．])\s+/.test(text)) return true;
+  if (/^(?:第[一二三四五六七八九十0-9]+[章节]|Chapter\s+\d+)\b/i.test(text)) return true;
+  if (looksLikePdfTableLine(text)) return true;
+  return false;
+}
+
+function looksLikePdfTableLine(line: string): boolean {
+  if (/[|	]/.test(line)) return true;
+  const digitGroups = line.match(/\b\d+(?:[.,:：/\-]\d+)*\b/g)?.length ?? 0;
+  const asciiGroups = line.match(/[A-Za-z0-9]{1,16}/g)?.length ?? 0;
+  return digitGroups >= 3 && asciiGroups >= 5;
+}
+
+function keepTopLevelReadableItems<T extends { element: HTMLElement; text: string }>(items: T[]): T[] {
+  return items.filter((item) => {
+    const keepParent = item.element.matches("pre, li.task-list-item, .task-list-item");
+    if (keepParent) return true;
+    const directText = normalizeTtsHighlightText(readableDirectText(item.element));
+    for (const other of items) {
+      if (other === item) continue;
+      if (!other.text) continue;
+      if (item.element.contains(other.element) && !directText) return false;
+      if (!other.element.contains(item.element)) continue;
+      if (other.element.matches("li.task-list-item, .task-list-item")) return false;
+    }
+    return true;
+  });
+}
+
+function readableDirectText(element: HTMLElement): string {
+  const chunks: string[] = [];
+  for (const child of Array.from(element.childNodes)) {
+    if (child.nodeType === Node.TEXT_NODE) chunks.push(child.textContent ?? "");
+  }
+  return chunks.join(" ").replace(/\s+/g, " ").trim();
+}
+
+function shouldInsertTtsSpace(left: string, right: string): boolean {
+  const a = left.slice(-1);
+  const b = right.slice(0, 1);
+  if (!a || !b) return false;
+  if (/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u.test(a) || /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u.test(b)) return false;
+  return /[\p{L}\p{N}]/u.test(a) && /[\p{L}\p{N}]/u.test(b);
+}
+
 function getWindowSelectionText(): string {
   try {
     return window.getSelection?.()?.toString().trim() ?? "";
   } catch {
     return "";
   }
+}
+
+function normalizeTtsHighlightText(input: string): string {
+  return input
+    .replace(/\s+/g, "")
+    .replace(/[，。！？；：、,.!?;:"'“”‘’（）()\[\]【】{}<>《》\-—_~`|/\\]/g, "")
+    .trim();
+}
+
+function findBestNormalizedNeedle(haystack: string, needle: string, preferShortFallback = false): string | null {
+  return findBestNormalizedNeedleMatch(haystack, needle, preferShortFallback)?.needle ?? null;
+}
+
+function findBestNormalizedNeedleMatch(haystack: string, needle: string, preferShortFallback = false, cursor = 0): { needle: string; index: number } | null {
+  if (!needle) return null;
+  const directIndex = closestStringIndex(haystack, needle, cursor);
+  if (directIndex >= 0) return { needle, index: directIndex };
+  const candidates: string[] = [];
+  const lengths = preferShortFallback ? [96, 64, 40, 24, 16, 8, 4, 3] : [96, 64, 40, 24];
+  for (const length of lengths) {
+    if (needle.length > length) candidates.push(needle.slice(0, length));
+  }
+  for (const candidate of candidates) {
+    if (candidate.length < 2) continue;
+    const index = closestStringIndex(haystack, candidate, cursor);
+    if (index >= 0) return { needle: candidate, index };
+  }
+  return null;
+}
+
+function closestStringIndex(haystack: string, needle: string, cursor = 0): number {
+  if (!needle) return -1;
+  let best = -1;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  const safeCursor = Math.max(0, Math.min(haystack.length, Number.isFinite(cursor) ? cursor : 0));
+  let index = haystack.indexOf(needle);
+  while (index >= 0) {
+    const distance = Math.abs(index - safeCursor);
+    if (distance < bestDistance) {
+      best = index;
+      bestDistance = distance;
+      if (distance === 0) break;
+    }
+    index = haystack.indexOf(needle, index + Math.max(1, needle.length));
+  }
+  return best;
+}
+
+function renderedElementReadableText(element: HTMLElement): string {
+  const raw = element.innerText || element.textContent || "";
+  if (element.matches("li.task-list-item, .task-list-item")) {
+    return `${isRenderedTaskChecked(element) ? "已完成" : "待办"} ${raw}`;
+  }
+  return raw;
+}
+
+function isRenderedTaskChecked(element: HTMLElement): boolean {
+  return Boolean(element.querySelector<HTMLInputElement>("input[type='checkbox']")?.checked)
+    || element.getAttribute("data-task") === "x"
+    || element.getAttribute("data-task") === "X"
+    || element.hasClass("is-checked")
+    || element.hasClass("task-list-item-checkbox-checked");
+}
+
+function normalizedTextWithSourceOffsets(input: string): { text: string; offsets: number[] } {
+  let text = "";
+  const offsets: number[] = [];
+  for (let index = 0; index < input.length; index += 1) {
+    const normalized = normalizeTtsHighlightText(input[index] ?? "");
+    if (!normalized) continue;
+    text += normalized;
+    offsets.push(index);
+  }
+  return { text, offsets };
+}
+
+function textFromAnchor(fullText: string, anchorText: string, maxChars: number): string {
+  if (!fullText.trim()) return trimContext(anchorText, maxChars);
+  const normalizedFull = normalizedTextWithSourceOffsets(fullText);
+  const anchor = normalizeTtsHighlightText(anchorText).slice(0, 180);
+  if (anchor.length >= 3) {
+    const match = findBestNormalizedNeedleMatch(normalizedFull.text, anchor, true, 0);
+    if (match) {
+      const offset = normalizedFull.offsets[match.index] ?? 0;
+      return trimContext(fullText.slice(offset), maxChars);
+    }
+  }
+  return anchorText.trim() ? trimContext(anchorText, maxChars) : trimContext(fullText, maxChars);
 }
 
 function offsetToEditorPosition(source: string, offset: number): { line: number; ch: number } {
@@ -21299,8 +23044,8 @@ function splitTtsText(input: string, targetLength = 420, preferSentenceParts = f
   const normalized = input.replace(/\s+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
   if (!normalized) return [];
   const parts: string[] = [];
-  const maxLength = Math.max(240, targetLength);
-  const hardLength = Math.max(maxLength + 80, Math.floor(maxLength * 1.25));
+  const maxLength = Math.max(120, targetLength);
+  const hardLength = Math.max(maxLength + 120, Math.floor(maxLength * 1.8));
   let buffer = "";
   const push = () => {
     const text = buffer.trim();
@@ -21308,9 +23053,9 @@ function splitTtsText(input: string, targetLength = 420, preferSentenceParts = f
     buffer = "";
   };
   for (const segment of splitTtsTextSegments(normalized)) {
-    const next = segment.trim();
+    const next = segment.text.trim();
     if (!next) continue;
-    if (preferSentenceParts && next.length <= hardLength) {
+    if ((preferSentenceParts || segment.forcedBreak) && next.length <= hardLength) {
       push();
       parts.push(next);
       continue;
@@ -21318,51 +23063,453 @@ function splitTtsText(input: string, targetLength = 420, preferSentenceParts = f
     if ((buffer + "\n" + next).length > maxLength) push();
     if (next.length > hardLength) {
       push();
-      for (let index = 0; index < next.length; index += maxLength) {
-        parts.push(next.slice(index, index + maxLength));
+      let rest = next;
+      while (rest) {
+        const take = ttsLongSegmentTakeLength(rest, maxLength, hardLength);
+        parts.push(rest.slice(0, take).trim());
+        rest = rest.slice(take).trimStart();
       }
       continue;
     }
     buffer = buffer ? `${buffer}\n${next}` : next;
   }
   push();
-  return parts.slice(0, 120);
+  return parts.slice(0, 600);
 }
 
-function splitPrimeTtsProgressiveText(input: string): string[] {
-  const normalized = input.replace(/\s+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+function makeTtsPartPlan(input: string, provider: TtsProvider | undefined, targetLength: number, spokenTransform?: (part: string) => string): TtsPartPlan {
+  const usePrimeFastPlan = provider === "builtin-prime-tts" || !provider;
+  const playTarget = usePrimeFastPlan ? primeTtsFastTargetLength(targetLength) : targetLength;
+  const displayTarget = usePrimeFastPlan
+    ? Math.max(220, Math.min(640, playTarget * 4))
+    : Math.max(260, Math.min(900, targetLength * 3));
+  const sourceDisplayParts = usePrimeFastPlan
+    ? splitPrimeTtsDisplayText(input)
+    : splitTtsText(input, displayTarget, true);
+  const displayParts: string[] = [];
+  const playParts: string[] = [];
+  const displayIndexByPlayIndex: number[] = [];
+  const makePlayChunks = (text: string) => usePrimeFastPlan
+    ? splitPrimeTtsMicroPlayText(text, playTarget)
+    : splitTtsText(text, targetLength, false);
+  for (const display of sourceDisplayParts) {
+    const spokenDisplay = spokenTransform ? spokenTransform(display) : display;
+    const spokenChunks = makePlayChunks(spokenDisplay).filter(Boolean);
+    const chunks = spokenChunks.length ? spokenChunks : [spokenDisplay || display];
+    const displayIndex = displayParts.length;
+    displayParts.push(display);
+    for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
+      playParts.push(chunks[chunkIndex]);
+      displayIndexByPlayIndex.push(displayIndex);
+      if (playParts.length >= TTS_MAX_PARTS) return { playParts, displayParts, displayIndexByPlayIndex };
+    }
+  }
+  return {
+    playParts: playParts.length ? playParts : displayParts,
+    displayParts: displayParts.length ? displayParts : playParts,
+    displayIndexByPlayIndex: displayIndexByPlayIndex.length ? displayIndexByPlayIndex : playParts.map((_, index) => index)
+  };
+}
+
+function mapTtsPlayPartsToDisplayParts(playParts: string[], displayParts: string[]): number[] {
+  const normalizedDisplays = displayParts.map((part) => normalizeTtsHighlightText(part));
+  let cursor = 0;
+  return playParts.map((part) => {
+    const needle = normalizeTtsHighlightText(part);
+    if (!needle) return Math.max(0, Math.min(displayParts.length - 1, cursor));
+    for (let attempt = 0; attempt < normalizedDisplays.length; attempt += 1) {
+      const index = (cursor + attempt) % normalizedDisplays.length;
+      if (normalizedDisplays[index]?.includes(needle) || needle.includes(normalizedDisplays[index] ?? "\u0000")) {
+        cursor = index;
+        return index;
+      }
+    }
+    return Math.max(0, Math.min(displayParts.length - 1, cursor));
+  });
+}
+
+function ttsLongSegmentTakeLength(text: string, targetLength: number, hardLength: number): number {
+  if (text.length <= hardLength) return text.length;
+  const min = Math.max(40, Math.floor(targetLength * 0.7));
+  const hard = Math.min(text.length, hardLength);
+  for (let index = hard - 1; index >= min; index -= 1) {
+    if ("。！？；.!?;".includes(text[index] ?? "")) return index + 1;
+  }
+  for (let index = hard - 1; index >= min; index -= 1) {
+    if ((text[index] ?? "") === "\n") return index + 1;
+  }
+  for (let index = hard - 1; index >= min; index -= 1) {
+    if ("，,、：:".includes(text[index] ?? "")) return index + 1;
+  }
+  return Math.min(text.length, targetLength);
+}
+
+function primeTtsFastTargetLength(configured: number): number {
+  const numeric = Number(configured) || 0;
+  if (!numeric || numeric >= 500) return PRIME_TTS_FAST_DEFAULT_CHARS;
+  return Math.max(64, Math.min(150, Math.floor(numeric)));
+}
+
+function splitPrimeTtsFastPlayText(input: string, targetLength = PRIME_TTS_FAST_DEFAULT_CHARS): string[] {
+  const normalized = normalizePrimeTtsPlayText(input);
+  if (!normalized) return [];
+  const target = primeTtsFastTargetLength(targetLength);
+  const parts: string[] = [];
+  for (const segment of splitTtsTextSegments(normalized)) {
+    let rest = segment.text.trim();
+    let chunkInSegment = 0;
+    while (rest) {
+      const dynamicTarget = chunkInSegment === 0
+        ? Math.min(target, PRIME_TTS_FAST_FIRST_CHARS)
+        : target;
+      const hard = Math.max(dynamicTarget + 36, Math.min(PRIME_TTS_FAST_HARD_CHARS, Math.floor(dynamicTarget * 1.55)));
+      const shouldSplit = rest.length > hard
+        || (chunkInSegment === 0 && rest.length > dynamicTarget + 20)
+        || rest.length > target + 46;
+      if (!shouldSplit) {
+        parts.push(rest.trim());
+        break;
+      }
+      const take = Math.max(1, Math.min(rest.length, primeTtsFastTakeLength(rest, dynamicTarget, hard, chunkInSegment)));
+      parts.push(rest.slice(0, take).trim());
+      rest = rest.slice(take).trimStart();
+      chunkInSegment += 1;
+      if (parts.length >= TTS_MAX_PARTS) return parts.filter(Boolean);
+    }
+    if (parts.length >= TTS_MAX_PARTS) break;
+  }
+  return parts.filter(Boolean);
+}
+
+function splitPrimeTtsDisplayText(input: string): string[] {
+  const normalized = normalizeTtsInputText(input);
   if (!normalized) return [];
   const parts: string[] = [];
-  let chunkIndex = 0;
-  for (const rawSegment of splitTtsTextSegments(normalized)) {
-    let segment = rawSegment.trim();
-    while (segment) {
-      const budget = primeTtsProgressiveBudget(chunkIndex);
-      const takeLength = primeTtsProgressiveTakeLength(segment, budget);
-      const part = segment.slice(0, takeLength).trim();
+  for (const segment of splitTtsTextSegments(normalized)) {
+    let rest = segment.text.trim();
+    while (rest && parts.length < TTS_MAX_PARTS) {
+      const take = primeTtsDisplayTakeLength(rest);
+      const part = rest.slice(0, take).trim();
       if (part) parts.push(part);
-      segment = segment.slice(takeLength).trimStart();
-      chunkIndex += 1;
-      if (parts.length >= 180) return parts;
+      rest = rest.slice(take).trimStart();
     }
+    if (parts.length >= TTS_MAX_PARTS) break;
+  }
+  return parts.filter(Boolean);
+}
+
+function primeTtsDisplayTakeLength(text: string): number {
+  if (text.length <= PRIME_TTS_DISPLAY_MAX_CHARS) return text.length;
+  const min = Math.max(8, Math.floor(PRIME_TTS_DISPLAY_TARGET_CHARS * 0.55));
+  const hard = Math.min(text.length, PRIME_TTS_DISPLAY_MAX_CHARS);
+  for (let index = hard - 1; index >= min; index -= 1) {
+    const char = text[index] ?? "";
+    if ("。！？!?；;".includes(char) && isPrimeTtsStrongBreak(text, index)) return adjustPrimeTtsDisplayBoundary(text, index + 1, min, hard);
+  }
+  for (let index = hard - 1; index >= min; index -= 1) {
+    if ((text[index] ?? "") === "\n") return adjustPrimeTtsDisplayBoundary(text, index + 1, min, hard);
+  }
+  for (let index = hard - 1; index >= min; index -= 1) {
+    const char = text[index] ?? "";
+    if ("，,、：:）)]】》」』”’\"'".includes(char) && isPrimeTtsSoftBreak(text, index)) return adjustPrimeTtsDisplayBoundary(text, index + 1, min, hard);
+  }
+  for (let index = hard - 1; index >= min; index -= 1) {
+    if (/\s/.test(text[index] ?? "")) return adjustPrimeTtsDisplayBoundary(text, index + 1, min, hard);
+  }
+  return adjustPrimeTtsDisplayBoundary(text, Math.min(text.length, PRIME_TTS_DISPLAY_TARGET_CHARS), min, hard);
+}
+
+function adjustPrimeTtsDisplayBoundary(text: string, candidate: number, min: number, hard: number): number {
+  const adjusted = adjustPrimeTtsTakeBoundary(text, candidate, min, hard);
+  if (adjusted >= text.length) return text.length;
+  const before = text[adjusted - 1] ?? "";
+  const after = text[adjusted] ?? "";
+  if (!isCjkChar(before) || !isCjkChar(after)) return adjusted;
+  let runStart = adjusted - 1;
+  while (runStart > 0 && isCjkChar(text[runStart - 1] ?? "")) runStart -= 1;
+  let runEnd = adjusted;
+  while (runEnd < text.length && isCjkChar(text[runEnd] ?? "")) runEnd += 1;
+  const run = text.slice(runStart, runEnd);
+  const tokens = splitPrimeTtsCjkRunTokens(run);
+  let cursor = runStart;
+  const boundaries: number[] = [];
+  for (const token of tokens) {
+    cursor += token.length;
+    boundaries.push(cursor);
+  }
+  for (let index = boundaries.length - 1; index >= 0; index -= 1) {
+    const boundary = boundaries[index];
+    if (boundary <= adjusted && boundary >= min) return boundary;
+  }
+  for (const boundary of boundaries) {
+    if (boundary > adjusted && boundary <= hard) return boundary;
+  }
+  return adjusted;
+}
+
+function splitPrimeTtsMicroPlayText(input: string, targetLength = PRIME_TTS_FAST_DEFAULT_CHARS): string[] {
+  void targetLength;
+  const text = normalizePrimeTtsMicroText(input);
+  if (!text) return [];
+  const parts: string[] = [];
+  let buffer = "";
+  const pushBuffer = (): void => {
+    const part = buffer.trim();
+    if (part && hasPrimeTtsReadableToken(part)) parts.push(part);
+    buffer = "";
+  };
+  const pushHard = (value: string, maxLength = PRIME_TTS_MICRO_MAX_CHARS): void => {
+    let rest = value.trim();
+    while (rest) {
+      const part = rest.slice(0, maxLength).trim();
+      if (part && hasPrimeTtsReadableToken(part)) parts.push(part);
+      rest = rest.slice(maxLength).trimStart();
+    }
+  };
+  const appendToken = (token: string, maxLength = PRIME_TTS_MICRO_MAX_CHARS): void => {
+    const clean = token.trim();
+    if (!clean) return;
+    if (clean.length > maxLength) {
+      pushBuffer();
+      pushHard(clean, maxLength);
+      return;
+    }
+    const joinedLength = buffer.length + clean.length;
+    if (!buffer) {
+      buffer = clean;
+    } else if (joinedLength <= Math.max(PRIME_TTS_MICRO_MAX_CHARS, maxLength) && (buffer.length < PRIME_TTS_MICRO_TARGET_CHARS || clean.length <= 2)) {
+      buffer += clean;
+    } else {
+      pushBuffer();
+      buffer = clean;
+    }
+    if (buffer.length >= PRIME_TTS_MICRO_TARGET_CHARS) pushBuffer();
+  };
+  const attachPunctuation = (punctuation: string): void => {
+    if (!punctuation.trim()) return;
+    if (buffer) {
+      if (buffer.length + punctuation.length <= PRIME_TTS_MICRO_MAX_CHARS) buffer += punctuation;
+      pushBuffer();
+      return;
+    }
+    const lastIndex = parts.length - 1;
+    if (lastIndex >= 0 && !/[,.?!;:，。？！；：、…]$/.test(parts[lastIndex] ?? "") && (parts[lastIndex] ?? "").length + punctuation.length <= PRIME_TTS_MICRO_MAX_CHARS) {
+      parts[lastIndex] += punctuation;
+    }
+  };
+  let index = 0;
+  while (index < text.length && parts.length < TTS_MAX_PARTS) {
+    const char = text[index] ?? "";
+    if (/\s/.test(char)) {
+      pushBuffer();
+      index += 1;
+      continue;
+    }
+    if (isPrimeTtsMicroPunctuation(char)) {
+      attachPunctuation(normalizePrimeTtsMicroPunctuation(char));
+      index += 1;
+      continue;
+    }
+    if (isCjkChar(char)) {
+      let end = index + 1;
+      while (end < text.length && isCjkChar(text[end] ?? "")) end += 1;
+      for (const token of splitPrimeTtsCjkRunTokens(text.slice(index, end))) appendToken(token);
+      index = end;
+      continue;
+    }
+    if (/\d/.test(char)) {
+      let end = index + 1;
+      while (end < text.length && /[\d.]/.test(text[end] ?? "")) end += 1;
+      const token = normalizePrimeTtsMicroNumberToken(text.slice(index, end));
+      for (const chunk of splitPrimeTtsMicroAsciiToken(token, PRIME_TTS_MICRO_MAX_CHARS)) appendToken(chunk);
+      index = end;
+      continue;
+    }
+    if (/[A-Za-z]/.test(char)) {
+      let end = index + 1;
+      while (end < text.length && /[A-Za-z']/.test(text[end] ?? "")) end += 1;
+      const token = text.slice(index, end).replace(/^'+|'+$/g, "");
+      pushBuffer();
+      appendToken(normalizePrimeTtsEnglishToken(token), PRIME_TTS_LATIN_WORD_MAX_CHARS);
+      pushBuffer();
+      index = end;
+      continue;
+    }
+    const punctuation = normalizePrimeTtsSpecialSymbolAsPunctuation(char);
+    if (punctuation) attachPunctuation(punctuation);
+    else pushBuffer();
+    index += 1;
+  }
+  pushBuffer();
+  return parts.filter(hasPrimeTtsReadableToken);
+}
+
+function splitPrimeTtsCjkRunTokens(run: string): string[] {
+  if (!run) return [];
+  ensurePrimeTtsCustomPinyin();
+  try {
+    const segments = segment(run, { format: OutputFormat.AllSegment, toneType: "num", toneSandhi: true, segmentit: 2 }) as Array<{ origin?: string }>;
+    const tokens = segments.map((item) => item.origin ?? "").filter(Boolean);
+    if (tokens.length && tokens.join("") === run) return tokens;
+  } catch {
+    // Fall back to character tokens below.
+  }
+  return Array.from(run);
+}
+
+function normalizePrimeTtsMicroText(input: string): string {
+  return normalizeTtsInputText(input)
+    .replace(/(^|[^\w./\\-])0+(\d+(?:\.\d+)?)(?=$|[^\w./\\-])/g, (_match, prefix: string, number: string) => {
+      return `${prefix}${normalizePrimeTtsMicroNumberToken(number)}`;
+    });
+}
+
+function normalizePrimeTtsMicroNumberToken(token: string): string {
+  if (!token) return token;
+  if (token.includes(".")) {
+    const [integer, fraction = ""] = token.split(".");
+    const normalizedInteger = integer.replace(/^0+(?=\d)/, "") || "0";
+    return fraction ? `${normalizedInteger}.${fraction}` : normalizedInteger;
+  }
+  return token.replace(/^0+(?=\d)/, "") || "0";
+}
+
+function splitPrimeTtsMicroAsciiToken(token: string, maxLength: number): string[] {
+  const clean = token.trim();
+  if (!clean) return [];
+  if (clean.length <= maxLength) return [clean];
+  const parts: string[] = [];
+  for (let index = 0; index < clean.length; index += maxLength) {
+    parts.push(clean.slice(index, index + maxLength));
   }
   return parts;
 }
 
-function primeTtsProgressiveBudget(index: number): number {
-  if (index <= 0) return 8;
-  if (index === 1) return 18;
-  if (index === 2) return 40;
-  if (index === 3) return 80;
-  return 128;
+function normalizePrimeTtsEnglishToken(token: string): string {
+  return token.replace(/^'+|'+$/g, "").trim();
 }
 
-function primeTtsProgressiveTakeLength(text: string, budget: number): number {
-  if (text.length <= Math.max(budget + 8, Math.floor(budget * 1.35))) return text.length;
-  const min = Math.max(2, Math.floor(budget * 0.6));
-  const hard = Math.min(text.length, Math.max(budget + 8, Math.floor(budget * 1.45)));
+function splitPrimeTtsMicroLatinToken(token: string): string[] {
+  const clean = token.replace(/^'+|'+$/g, "").trim();
+  if (!clean) return [];
+  if (clean.length <= PRIME_TTS_LATIN_WORD_MAX_CHARS) return [clean];
+  const parts: string[] = [];
+  let index = 0;
+  while (index < clean.length) {
+    const hard = Math.min(clean.length, index + PRIME_TTS_LATIN_WORD_MAX_CHARS);
+    let take = hard;
+    for (let cursor = hard; cursor > index + 1; cursor -= 1) {
+      const before = clean[cursor - 1] ?? "";
+      const after = clean[cursor] ?? "";
+      if (/[aeiouy]/i.test(before) && after && /[bcdfghjklmnpqrstvwxyz]/i.test(after)) {
+        take = cursor;
+        break;
+      }
+    }
+    const part = clean.slice(index, take);
+    if (part) parts.push(part);
+    index = take;
+  }
+  return parts;
+}
+
+function isPrimeTtsMicroPunctuation(char: string): boolean {
+  return !!normalizePrimeTtsMicroPunctuation(char);
+}
+
+function normalizePrimeTtsMicroPunctuation(char: string): string {
+  if (!char || isPrimeTtsIgnorableSymbolChar(char)) return "";
+  if (char === "…" || char === "⋯" || char === "⋮") return "。";
+  if (/[。.!！?？]/.test(char)) return char;
+  if (/[，,；;：:、]/.test(char)) return char;
+  if (/[\p{P}\p{S}]/u.test(char)) return "，";
+  return "";
+}
+
+function normalizePrimeTtsSpecialSymbolAsPunctuation(char: string): string {
+  const punctuation = normalizePrimeTtsMicroPunctuation(char);
+  if (punctuation) return punctuation;
+  return "";
+}
+
+function hasPrimeTtsReadableToken(input: string): boolean {
+  return /[\u3400-\u9fffA-Za-z0-9]/.test(input);
+}
+
+function isPrimeTtsIgnorableSymbolChar(char: string): boolean {
+  return /[\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufe00-\ufe0f]/.test(char);
+}
+
+function primeTtsFastTakeLength(text: string, targetLength: number, hardLength: number, chunkIndex = 0): number {
+  if (text.length <= targetLength + 12) return text.length;
+  const min = Math.max(chunkIndex === 0 ? 34 : 46, Math.floor(targetLength * 0.55));
+  const hard = Math.min(text.length, hardLength);
+  for (let index = hard - 1; index >= min; index -= 1) {
+    const char = text[index] ?? "";
+    if ("。！？!?；;".includes(char) && isPrimeTtsStrongBreak(text, index)) {
+      return adjustPrimeTtsTakeBoundary(text, index + 1, min, hard);
+    }
+  }
+  for (let index = hard - 1; index >= min; index -= 1) {
+    if ((text[index] ?? "") === "\n") return adjustPrimeTtsTakeBoundary(text, index + 1, min, hard);
+  }
+  for (let index = hard - 1; index >= min; index -= 1) {
+    const char = text[index] ?? "";
+    if ("，,、：:".includes(char) && isPrimeTtsSoftBreak(text, index)) {
+      return adjustPrimeTtsTakeBoundary(text, index + 1, min, hard);
+    }
+  }
+  for (let index = hard - 1; index >= min; index -= 1) {
+    if (/\s/.test(text[index] ?? "")) return adjustPrimeTtsTakeBoundary(text, index + 1, min, hard);
+  }
+  return adjustPrimeTtsTakeBoundary(text, Math.min(text.length, targetLength), min, hard);
+}
+
+function isPrimeTtsStrongBreak(text: string, index: number): boolean {
+  const char = text[index] ?? "";
+  if (char !== ".") return true;
+  const before = text[index - 1] ?? "";
+  const after = text[index + 1] ?? "";
+  return !(/\d/.test(before) && /\d/.test(after));
+}
+
+function isPrimeTtsSoftBreak(text: string, index: number): boolean {
+  const char = text[index] ?? "";
+  const before = text[index - 1] ?? "";
+  const after = text[index + 1] ?? "";
+  if (char === "," && /\d/.test(before) && /\d/.test(after)) return false;
+  if ((char === ":" || char === "：") && /\d/.test(before) && /\d/.test(after)) return false;
+  return true;
+}
+
+function normalizePrimeTtsPlayText(input: string): string {
+  return input
+    .replace(/\r\n?/g, "\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n[ \t]+/g, "\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function primeTtsProgressiveTakeLength(text: string, budget: number, chunkIndex = 0): number {
+  if (text.length <= PRIME_TTS_STARTER_CHARS) return text.length;
+  const sentenceHard = Math.min(PRIME_TTS_MAX_PLAY_CHARS, chunkIndex <= 1 ? budget : Math.max(budget, Math.floor(budget * 1.15)));
+  if (text.length <= sentenceHard) return text.length;
+  const min = Math.max(chunkIndex <= 0 ? 6 : chunkIndex === 1 ? 12 : 16, Math.floor(budget * 0.65));
+  const hard = Math.min(text.length, sentenceHard);
   const soft = Math.min(text.length, budget);
-  const punctuation = "，,、：:；;。！？!?）)]】》」』”’\"'";
+  const strongPunctuation = "。！？!?；;";
+  for (let index = Math.min(hard, text.length) - 1; index >= min; index -= 1) {
+    const char = text[index] ?? "";
+    if (strongPunctuation.includes(char)) return adjustPrimeTtsTakeBoundary(text, index + 1, min, hard);
+  }
+  if (chunkIndex > 0) {
+    for (let index = Math.min(hard, text.length) - 1; index >= min; index -= 1) {
+      if ((text[index] ?? "") === "\n") return adjustPrimeTtsTakeBoundary(text, index + 1, min, hard);
+    }
+  }
+  const punctuation = "，,、：:）)]】》」』”’\"'";
   for (let index = Math.min(hard, text.length) - 1; index >= min; index -= 1) {
     const char = text[index] ?? "";
     if (punctuation.includes(char)) return adjustPrimeTtsTakeBoundary(text, index + 1, min, hard);
@@ -21371,6 +23518,89 @@ function primeTtsProgressiveTakeLength(text: string, budget: number): number {
     if (/\s/.test(text[index] ?? "")) return adjustPrimeTtsTakeBoundary(text, index + 1, min, hard);
   }
   return adjustPrimeTtsTakeBoundary(text, Math.max(1, soft), min, hard);
+}
+
+function splitPrimeTtsFallbackText(input: string, maxBudget = PRIME_TTS_MAX_PLAY_CHARS): string[] {
+  return splitPrimeTtsProgressiveFallbackText(input, maxBudget);
+}
+
+function splitPrimeTtsStallFallbackText(input: string): string[] {
+  const text = normalizeTtsInputText(input);
+  if (!text) return [];
+  if (/[A-Za-z]/.test(text)) {
+    const parts: string[] = [];
+    let index = 0;
+    while (index < text.length && parts.length < TTS_MAX_PARTS) {
+      const char = text[index] ?? "";
+      if (/\s/.test(char) || isPrimeTtsMicroPunctuation(char) || normalizePrimeTtsSpecialSymbolAsPunctuation(char)) {
+        index += 1;
+        continue;
+      }
+      if (/[A-Za-z]/.test(char)) {
+        let end = index + 1;
+        while (end < text.length && /[A-Za-z']/.test(text[end] ?? "")) end += 1;
+        const token = text.slice(index, end).replace(/^'+|'+$/g, "");
+        parts.push(...splitPrimeTtsMicroLatinToken(token).filter(Boolean));
+        index = end;
+        continue;
+      }
+      if (/\d/.test(char)) {
+        parts.push(char);
+        index += 1;
+        continue;
+      }
+      if (isCjkChar(char)) {
+        parts.push(char);
+        index += 1;
+        continue;
+      }
+      index += 1;
+    }
+    return parts.filter(hasPrimeTtsReadableToken);
+  }
+  return splitPrimeTtsProgressiveFallbackText(text);
+}
+
+function shouldSplitStalledPrimeTtsChunk(chunk: string, normalizedLength: number): boolean {
+  const normalized = normalizeTtsHighlightText(chunk);
+  const hasLatin = /[A-Za-z]/.test(chunk);
+  const hasCjk = hasCjkText(chunk);
+  if (hasLatin && !hasCjk) return normalized.length > PRIME_TTS_LATIN_WORD_MAX_CHARS;
+  return normalizedLength > PRIME_TTS_MICRO_MAX_CHARS;
+}
+
+function splitPrimeTtsProgressiveFallbackText(input: string, maxBudget = PRIME_TTS_MAX_PLAY_CHARS): string[] {
+  void maxBudget;
+  const text = normalizeTtsInputText(input);
+  if (!text) return [];
+  const parts: string[] = [];
+  let rest = text;
+  for (const budget of PRIME_TTS_PROGRESSIVE_FALLBACK_CHARS) {
+    if (!rest) break;
+    const take = primeTtsProgressiveFallbackTakeLength(rest, budget);
+    const part = rest.slice(0, take).trim();
+    if (part) parts.push(part);
+    rest = rest.slice(take).trimStart();
+    if (rest.length <= budget) break;
+  }
+  if (rest.trim()) parts.push(rest.trim());
+  return parts.length > 1 ? parts : [text];
+}
+
+function primeTtsProgressiveFallbackTakeLength(text: string, budget: number): number {
+  if (text.length <= budget) return text.length;
+  let take = Math.min(text.length, Math.max(1, budget));
+  take = adjustPrimeTtsTakeBoundary(text, take, 1, Math.min(text.length, Math.max(take + 4, budget + 4)));
+  return Math.max(1, Math.min(text.length, take));
+}
+
+function normalizeTtsInputText(input: string): string {
+  return input
+    .replace(/([\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}])[\t ]+([\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}])/gu, "$1$2")
+    .replace(/([\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}])\n(?=[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}])/gu, "$1")
+    .replace(/\s+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function adjustPrimeTtsTakeBoundary(text: string, candidate: number, min: number, hard: number): number {
@@ -21398,13 +23628,13 @@ function isPrimeTtsInlineTokenChar(char: string): boolean {
   return /[A-Za-z0-9_.:%％]/.test(char);
 }
 
-function splitTtsTextSegments(input: string): string[] {
-  const segments: string[] = [];
+function splitTtsTextSegments(input: string): TtsTextSegment[] {
+  const segments: TtsTextSegment[] = [];
   let buffer = "";
   let pendingBreak = false;
-  const push = () => {
+  const push = (forcedBreak = false) => {
     const text = buffer.trim();
-    if (text) segments.push(text);
+    if (text) segments.push({ text, forcedBreak });
     buffer = "";
     pendingBreak = false;
   };
@@ -21412,13 +23642,13 @@ function splitTtsTextSegments(input: string): string[] {
     const char = input[index] ?? "";
     const next = input[index + 1] ?? "";
     buffer += char;
-    if (char === "\n" && next === "\n") {
-      push();
+    if (char === "\n") {
+      push(true);
       while (input[index + 1] === "\n") index += 1;
       continue;
     }
     if ("。！？；".includes(char)) {
-      push();
+      push(false);
       continue;
     }
     if (".!?;".includes(char)) {
@@ -21426,13 +23656,13 @@ function splitTtsTextSegments(input: string): string[] {
       continue;
     }
     if (pendingBreak && /\s/.test(char)) {
-      push();
+      push(false);
       while (/\s/.test(input[index + 1] ?? "") && input[index + 1] !== "\n") index += 1;
     } else if (!/\s/.test(char)) {
       pendingBreak = false;
     }
   }
-  push();
+  push(false);
   return segments;
 }
 
@@ -21968,6 +24198,16 @@ function mergeUiButtonRules(existing: UiButtonRule[], incoming: UiButtonRule[]):
   return [...byId.values()].slice(0, 200);
 }
 
+function workspaceLeafArea(leaf: WorkspaceLeaf): WorkspaceTabInfo["area"] {
+  const container = (leaf.view as unknown as { containerEl?: HTMLElement })?.containerEl;
+  if (!container) return "unknown";
+  if (container.closest(".mod-right-split, .workspace-split.mod-right-split")) return "right";
+  if (container.closest(".mod-left-split, .workspace-split.mod-left-split")) return "left";
+  if (container.closest(".workspace-popout, .mod-popout")) return "floating";
+  if (container.closest(".workspace-tabs, .workspace-leaf")) return "root";
+  return "unknown";
+}
+
 function allTagsFromCache(cache: { tags?: Array<{ tag?: string }>; frontmatter?: Record<string, unknown> }): string[] {
   const tags = new Set<string>();
   for (const item of cache.tags ?? []) {
@@ -22431,8 +24671,11 @@ function extractPdfTextFromBytes(bytes: Uint8Array, name: string, maxChars: numb
     if (chunks.join("\n").length >= maxChars) break;
   }
   if (!chunks.length) chunks.push(...extractPdfTextFragments(raw));
-  const text = normalizeExtractedText(chunks.join("\n"));
-  if (!text) warnings.push(`No readable uncompressed PDF text operators were found in ${name}. This may be scanned/OCR-only, encrypted, or compressed beyond the built-in parser.`);
+  const text = normalizePdfTtsText(chunks.join("\n"));
+  if (!text || !looksLikeReadableExtractedText(text)) {
+    warnings.push(`No readable uncompressed PDF text operators were found in ${name}. This may be scanned/OCR-only, encrypted, compressed, or requires a PDF text layer/OCR parser.`);
+    return "";
+  }
   return trimContext(text, maxChars);
 }
 
@@ -22443,7 +24686,7 @@ function extractPdfTextFragments(raw: string): string[] {
     const text = decodePdfLiteral(body);
     if (looksLikeReadableText(text)) fragments.push(text);
   }
-  for (const match of raw.matchAll(/<([0-9A-Fa-f]{4,1000})>\s*Tj/g)) {
+  for (const match of raw.matchAll(/<([0-9A-Fa-f\s]{4,2000})>\s*(?:Tj|'|"|TJ)?/g)) {
     const text = decodePdfHexText(match[1]);
     if (looksLikeReadableText(text)) fragments.push(text);
   }
@@ -22463,17 +24706,27 @@ function decodePdfLiteral(input: string): string {
 
 function decodePdfHexText(hex: string): string {
   const clean = hex.replace(/\s+/g, "");
-  if (clean.length % 4 === 0) {
-    const chars: string[] = [];
-    for (let index = 0; index < clean.length; index += 4) {
-      const code = parseInt(clean.slice(index, index + 4), 16);
-      if (Number.isFinite(code) && code > 0) chars.push(String.fromCharCode(code));
-    }
-    return chars.join("");
-  }
+  if (/^feff/i.test(clean) && clean.length % 4 === 0) return decodeUtf16BeHex(clean.slice(4));
   const bytes: number[] = [];
   for (let index = 0; index + 1 < clean.length; index += 2) bytes.push(parseInt(clean.slice(index, index + 2), 16));
-  return latin1Decode(new Uint8Array(bytes));
+  const byteArray = new Uint8Array(bytes.filter((byte) => Number.isFinite(byte)));
+  if (byteArray.length >= 3 && byteArray[0] === 0xef && byteArray[1] === 0xbb && byteArray[2] === 0xbf) return utf8Decode(byteArray.subarray(3));
+  const utf8Text = utf8Decode(byteArray);
+  if (looksLikeReadableText(utf8Text)) return utf8Text;
+  if (clean.length % 4 === 0) {
+    const utf16Text = decodeUtf16BeHex(clean);
+    if (looksLikeReadableText(utf16Text)) return utf16Text;
+  }
+  return latin1Decode(byteArray);
+}
+
+function decodeUtf16BeHex(hex: string): string {
+  const chars: string[] = [];
+  for (let index = 0; index + 3 < hex.length; index += 4) {
+    const code = parseInt(hex.slice(index, index + 4), 16);
+    if (Number.isFinite(code) && code > 0) chars.push(String.fromCharCode(code));
+  }
+  return chars.join("");
 }
 
 function readZipEntries(bytes: Uint8Array, warnings: string[]): ZipEntry[] {
@@ -22536,9 +24789,70 @@ function normalizePrimeTtsZipEntry(name: string): string | null {
   if (!normalized || normalized.includes("..") || /^[a-zA-Z]:/.test(normalized)) return null;
   const parts = normalized.split("/").filter(Boolean);
   if (!parts.length) return null;
-  const relative = parts[0] === "prime-tts" ? parts.slice(1).join("/") : parts.join("/");
-  const allowed = new Set<string>([...BUILTIN_PRIME_TTS_REQUIRED_ASSETS, ...BUILTIN_PRIME_TTS_OPTIONAL_ASSETS].map((asset) => asset.relative));
-  return allowed.has(relative) ? relative : null;
+  const allowed = new Set<string>([...PRIME_TTS_REQUIRED_RELATIVES, ...PRIME_TTS_OPTIONAL_RELATIVES]);
+  const candidates = [
+    parts.join("/"),
+    parts.slice(1).join("/")
+  ].filter(Boolean);
+  for (const relative of candidates) {
+    if (allowed.has(relative)) return relative;
+  }
+  return null;
+}
+
+function primeTtsRequiredAssets(basePath: string): Array<{ relative: string; path: string }> {
+  return PRIME_TTS_REQUIRED_RELATIVES.map((relative) => ({ relative, path: `${basePath}/${relative}` }));
+}
+
+function primeTtsOptionalAssets(basePath: string): Array<{ relative: string; path: string }> {
+  return PRIME_TTS_OPTIONAL_RELATIVES.map((relative) => ({ relative, path: `${basePath}/${relative}` }));
+}
+
+function primeTtsAssetPaths(basePath: string): { encoder: string; decoder: string; vocoder: string; meta: string; symbols: string; ortWasm: string; ortMjs: string } {
+  return {
+    encoder: `${basePath}/acoustic_encoder.onnx`,
+    decoder: `${basePath}/acoustic_decoder.onnx`,
+    vocoder: `${basePath}/vocoder.onnx`,
+    meta: `${basePath}/meta.json`,
+    symbols: `${basePath}/symbol_table.json`,
+    ortWasm: `${basePath}/ort/ort-wasm-simd-threaded.wasm`,
+    ortMjs: `${basePath}/ort/ort-wasm-simd-threaded.mjs`
+  };
+}
+
+function primeTtsPackageSupportsLanguage(pkg: PrimeTtsPackageDefinition, languageCode: string): boolean {
+  const normalized = languageCode.toLowerCase();
+  const base = normalized.split("-")[0];
+  return pkg.languages.some((language) => {
+    const candidate = language.toLowerCase();
+    return candidate === normalized || candidate === base || candidate.split("-")[0] === base;
+  });
+}
+
+function inferPrimeTtsPackageLanguages(basePath: string): string[] {
+  const name = basePath.split("/").pop()?.toLowerCase() ?? "";
+  const inferred = LANGUAGE_VALUES
+    .filter((language) => name.includes(language.toLowerCase()))
+    .map((language) => defaultLocaleForLanguage(language));
+  return inferred.length ? inferred : ["zh-CN", "en-US"];
+}
+
+function defaultLocaleForLanguage(language: Language): string {
+  const map: Record<Language, string> = {
+    zh: "zh-CN",
+    "zh-TW": "zh-TW",
+    en: "en-US",
+    ug: "ug-CN",
+    tr: "tr-TR",
+    ru: "ru-RU",
+    ja: "ja-JP",
+    ko: "ko-KR",
+    es: "es-ES",
+    fr: "fr-FR",
+    de: "de-DE",
+    ar: "ar-SA"
+  };
+  return map[language];
 }
 
 async function extractDocxText(entries: ZipEntry[], bytes: Uint8Array, maxChars: number, warnings: string[]): Promise<string> {
@@ -22677,6 +24991,15 @@ function looksLikeReadableText(input: string): boolean {
   if (text.length < 2) return false;
   const readable = text.replace(/[^\p{L}\p{N}\p{Script=Han}\s.,;:!?，。！？、（）()\-_/]/gu, "");
   return readable.length / Math.max(1, text.length) > 0.45;
+}
+
+function looksLikeReadableExtractedText(input: string): boolean {
+  const text = input.replace(/\s+/g, "");
+  if (text.length < 2) return false;
+  const controls = [...text].filter((char) => /[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFD]/u.test(char)).length;
+  if (controls / Math.max(1, text.length) > 0.02) return false;
+  const readable = text.replace(/[^\p{L}\p{N}\p{Script=Han}.,;:!?，。！？、（）()\-_/]/gu, "");
+  return readable.length / Math.max(1, text.length) > 0.55;
 }
 
 function utf8Decode(bytes: Uint8Array): string {

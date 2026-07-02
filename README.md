@@ -34,7 +34,7 @@ Cancip is a lightweight prototype for managing an Obsidian vault from a mobile-f
 - Codex-style `@` picker for files, folders, Skills, Cancip functions, command bus entries, and real Obsidian commands. Empty `@` shows useful entries like modes/current file/recent files/skills; typed text dynamically filters all categories. Selected mentions are inserted as `@[path]`, `@[action:name]`, `@[command:name]`, or `@[obsidian-command:id]`, while hand-typed `@keyword` still resolves by fuzzy match.
 - Lightweight local versioning under `.cancip/versions/`: manual commits and one daily auto snapshot, without native git and without per-edit history.
 - Built-in local automation templates for non-desktop Codex-style tasks: review-gate package generation, Codex memory import, lightweight local version snapshots, GitHub status checks, vault index refresh, and a daily read-only Vault maintenance/merge-candidate report.
-- Offline TTS can use an optional local PrimeTTS v3_4.6M Chinese/English ONNX package under `tts/prime-tts/` when that folder is already installed beside the plugin files. The official review-clean release still ships only the core plugin files; model/WASM assets are not bundled in the release assets. This restores the old 0.1.207 local WAV synthesis route for Android environments where Web Speech or a native TTS bridge is unavailable.
+- TTS is provider-routed by language. English defaults to Web Speech / system TTS and does not need a local model package. Chinese can auto-download and use the current compact PrimeTTS Chinese/English ONNX package. Other languages use system/Web/custom URL unless a compatible local PrimeTTS package is installed under `tts/<package>/` with a manifest.
 
 ## Build
 
@@ -66,7 +66,19 @@ extras/code-2.png
 
 Then enable `Cancip` in Obsidian.
 
-Optional offline TTS package:
+## TTS packages
+
+Cancip supports multiple TTS routes:
+
+- `auto`: picks a route by language and availability.
+- `web-speech`: browser/WebView speech synthesis, useful for English when Android WebView exposes voices.
+- `android-system`: native/system bridge route, used only when the Obsidian mobile environment exposes one.
+- `builtin-prime-tts`: optional local ONNX package route.
+- `custom-url`: trusted local/private TTS bridge route.
+
+English is intentionally lightweight by default: `auto` tries Web Speech, Android/system, and custom URL before the local package. A local package is not required for ordinary English reading.
+
+Chinese uses the current default downloadable local package when available:
 
 ```text
 tts/prime-tts/acoustic_encoder.onnx
@@ -78,7 +90,44 @@ tts/prime-tts/ort/ort-wasm-simd-threaded.mjs
 tts/prime-tts/ort/ort-wasm-simd-threaded.wasm
 ```
 
-If those files exist in the installed plugin folder, provider `auto` tries `builtin-prime-tts` first, then Web Speech, Android/system bridge, and custom URL routes. If the folder is missing, Cancip reports that in `cancip.tts.probe` instead of pretending a voice is available.
+The official review-clean plugin release ships only the core plugin files. Model/WASM assets are not bundled in the core release. Cancip downloads the default package only when the local install command/button is used, or when `builtin-prime-tts` is selected and the package is missing.
+
+The default downloadable package is:
+
+```text
+https://github.com/arias007/cancip/releases/download/prime-tts/prime-tts.zip
+```
+
+The zip may contain the files at the archive root or inside one top-level folder such as `prime-tts/` or `prime-tts-zh-en/`.
+
+Compatible packages for other languages can be installed as:
+
+```text
+tts/<package-id>/acoustic_encoder.onnx
+tts/<package-id>/acoustic_decoder.onnx
+tts/<package-id>/vocoder.onnx
+tts/<package-id>/meta.json
+tts/<package-id>/symbol_table.json
+tts/<package-id>/ort/ort-wasm-simd-threaded.mjs
+tts/<package-id>/ort/ort-wasm-simd-threaded.wasm
+tts/<package-id>/manifest.json
+```
+
+Manifest example:
+
+```json
+{
+  "engine": "prime-tts",
+  "id": "prime-tts-ja",
+  "label": "PrimeTTS Japanese package",
+  "languages": ["ja-JP", "ja"],
+  "notes": "Compatible ONNX PrimeTTS package."
+}
+```
+
+When Cancip language is Japanese, Russian, Turkish, Uyghur, Korean, Spanish, French, German, Arabic, or another supported UI language, `auto` first checks whether an installed compatible local package declares that language. If not, Cancip falls back to system/Web/custom URL instead of pretending the bundled Chinese package can speak that language.
+
+Use `cancip.tts.probe` to inspect the current route, selected package, installed compatible packages, and fallback reason. If the folder is missing or incomplete, Cancip reports that directly.
 
 ## Config
 
