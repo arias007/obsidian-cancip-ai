@@ -24,7 +24,7 @@ Cancip is a lightweight prototype for managing an Obsidian vault from a mobile-f
 - Context chips can be opened directly: file chips open the file in a tab, folder chips reveal the folder in the file navigator, and the small `x` removes only that context chip.
 - On-demand Vault Search hits are metadata-only source suggestions until the agent explicitly reads selected files. They are not added to the composer chip row or model `contextText` by default. Exports keep the real full session snapshot, so the exported `contextText` is the authoritative record of what was sent as context.
 - Codex-style rounded composer with floating upward icon trays for context, access mode, and model selection; trays overlay from their buttons and close after selection or outside taps.
-- Header mode controls are reduced to a single Codex-style Plan button. The Plan button toggles a planning/todo layer and opens a floating todo panel; it does not change read/write permission.
+- Header controls include a single Codex-style Plan button. The Plan button opens the planning/todo panel; it is not a chat mode and does not change read/write permission.
 - The header includes an OB Review Gate button wired to a programmatic TypeScript builder adapted from `arias007/ob-review-gate-skill`: it scans selected vault files, writes review data under `AI/Cancip/Review/`, and opens it inside a native Cancip audit panel with file lists, structure changes, diffs, old text, and new text.
 - Structured Plan todos are available as `cancip-action` tools, so the agent can set/add/update/remove/list/clear the visible Plan panel during an agent run instead of only describing a plan in prose.
 - The composer keeps the access selector visible and wider for mobile tapping, with a paperclip attachment button beside it for quickly adding file/folder context.
@@ -243,7 +243,7 @@ Use the official API or a trusted self-owned relay; do not send GitHub tokens th
   config, configured project workspaces, GitHub, and plugin build/install
   workflows, but should not control the entire device.
 - Absorb Smart Composer's Obsidian-native chat UX: file chips, current-file context, vault chat, tool visibility, and compact mobile controls.
-- Absorb Codex's frontend interaction model: command bar, access-mode selector, project/session list, plan mode, and action transparency.
+- Absorb Codex's frontend interaction model: command bar, access-mode selector, project/session list, plan feature, and action transparency.
 - Build the backend toward a local-first agent runtime inspired by Codex, Claude Code-style code actions, OpenClaw-style tool routing, and Hermes-style memory/workflow patterns.
 - Support GitHub management from mobile: status, issues, branches, commits,
   pushes, PRs, releases, workflow results, and a safe API acceleration layer
