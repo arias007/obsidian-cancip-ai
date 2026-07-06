@@ -502,11 +502,11 @@ if (-not $Case -or 'programmatic.progress-step-readable-notes'.Contains($Case)) 
       return JSON.stringify({
         id:'programmatic.progress-step-readable-notes',
         elapsedMs:Date.now()-t,
-        liveHasGoal:/\u76ee\u7684|Goal/.test(liveContent),
-        liveHasMethod:/\u505a\u6cd5|Method/.test(liveContent),
+        liveHasReadableNote:/\u4e0a\u4e0b\u6587|\u6700\u5c0f\u5fc5\u8981|Preparing|smallest useful/i.test(liveContent),
+        liveAvoidsPromptishNote:!(/\u76ee\u7684[：:]|\u505a\u6cd5[：:]|Goal:|Method:/i.test(liveContent)),
         liveOpen,
         finalHasDetail:/Step details|步骤详情|<details>/.test(finalContent),
-        finalHasGoal:/\u76ee\u7684|Goal/.test(finalContent)
+        finalHasReadableNote:/\u4e0a\u4e0b\u6587|\u6700\u5c0f\u5fc5\u8981|Preparing|smallest useful/i.test(finalContent)
       });
   } finally {
     v.messages=oldMessages;
@@ -515,11 +515,11 @@ if (-not $Case -or 'programmatic.progress-step-readable-notes'.Contains($Case)) 
 })()
 '@
     $item = Invoke-CancipEval -Code $code -TimeoutSeconds 45
-    if (-not $item.liveHasGoal) { throw 'live progress missing goal note' }
-    if (-not $item.liveHasMethod) { throw 'live progress missing method note' }
+    if (-not $item.liveHasReadableNote) { throw 'live progress missing readable status note' }
+    if (-not $item.liveAvoidsPromptishNote) { throw 'live progress still uses prompt-like goal/method note' }
     if (-not $item.liveOpen) { throw 'live progress timer not active' }
     if (-not $item.finalHasDetail) { throw 'final progress missing folded detail' }
-    if (-not $item.finalHasGoal) { throw 'final progress missing readable goal note' }
+    if (-not $item.finalHasReadableNote) { throw 'final progress missing readable status note' }
     Add-CaseResult -Group 'programmaticCases' -Item @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs }
   } catch {
     Add-CaseResult -Group 'programmaticCases' -Item @{ id = 'programmatic.progress-step-readable-notes'; pass = $false; error = $_.Exception.Message }

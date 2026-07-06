@@ -2850,7 +2850,8 @@ body .obcc-view-tts-action {
   cursor: default;
 }
 
-.obcc-button-edit-bubble {
+.obcc-button-edit-bubble,
+.obcc-selection-send-bubble {
   position: fixed;
   z-index: 100000;
   display: inline-flex;
@@ -2861,13 +2862,23 @@ body .obcc-view-tts-action {
   padding: 0;
   border: 1px solid var(--background-modifier-border);
   border-radius: 999px;
-  background: var(--interactive-accent);
-  color: var(--text-on-accent);
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
   cursor: pointer;
+  touch-action: manipulation;
 }
 
-.obcc-button-edit-bubble svg {
+.obcc-button-edit-bubble {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.obcc-selection-send-bubble {
+  background: var(--background-primary);
+  color: var(--interactive-accent);
+}
+
+.obcc-button-edit-bubble svg,
+.obcc-selection-send-bubble svg {
   width: 18px;
   height: 18px;
 }
@@ -2876,6 +2887,17 @@ body .obcc-view-tts-action {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.obcc-button-edit-sticky-actions {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 6px 0;
+  background: var(--modal-background, var(--background-primary));
 }
 
 .obcc-button-edit-target {
@@ -2898,13 +2920,21 @@ body .obcc-view-tts-action {
 }
 
 .obcc-button-edit-add-section {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
   padding: 8px;
   border: 1px solid var(--background-modifier-border);
   border-radius: 8px;
   background: var(--background-secondary);
+}
+
+.obcc-button-edit-add-section > summary {
+  cursor: pointer;
+}
+
+.obcc-button-edit-add-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
 }
 
 .obcc-button-edit-section-title {
@@ -2990,25 +3020,26 @@ body .obcc-view-tts-action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 34px;
-  height: 34px;
+  width: 28px;
+  height: 28px;
   padding: 0;
   border: 1px solid var(--background-modifier-border);
   border-radius: 999px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.26);
+  box-shadow: 0 7px 18px rgba(0, 0, 0, 0.26);
   pointer-events: auto;
   touch-action: none;
+}
+
+.obcc-ui-sort-handle svg,
+.obcc-ui-sort-done svg {
+  width: 16px;
+  height: 16px;
 }
 
 .obcc-ui-sort-handle {
   background: var(--background-primary);
   color: var(--interactive-accent);
   cursor: grab;
-}
-
-.obcc-ui-sort-handle.is-pending {
-  background: var(--background-modifier-hover);
-  transform: scale(1.06);
 }
 
 .obcc-ui-sort-handle.is-dragging {

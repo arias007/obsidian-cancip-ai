@@ -1173,6 +1173,7 @@ type Settings = {
   autoOpenPlanPanel: boolean;
   showLiveTodos: boolean;
   showManualTodos: boolean;
+  uiButtonManagementEnabled: boolean;
   uiButtonRules: UiButtonRule[];
   pinnedTags: string[];
   hideUnpinnedTagsInRightSidebar: boolean;
@@ -1261,6 +1262,13 @@ class CancipButtonEditModal extends Modal {
   onOpen(): void {
     this.modalEl.addClass("obcc-button-edit-modal");
     this.setTitle(this.plugin.t("buttonEditTitle"));
+    const topActions = this.contentEl.createDiv({ cls: "obcc-button-edit-sticky-actions" });
+    const saveTop = topActions.createEl("button", { text: this.plugin.t("buttonEditSave"), attr: { type: "button" } });
+    saveTop.addClass("mod-cta");
+    saveTop.addEventListener("click", () => {
+      void this.saveRule();
+    });
+
     this.contentEl.createDiv({
       cls: "obcc-button-edit-target",
       text: this.descriptor.label || this.descriptor.selector
@@ -1350,12 +1358,6 @@ class CancipButtonEditModal extends Modal {
         });
       });
     }
-
-    const save = actions.createEl("button", { text: this.plugin.t("buttonEditSave"), attr: { type: "button" } });
-    save.addClass("mod-cta");
-    save.addEventListener("click", () => {
-      void this.saveRule();
-    });
   }
 
   onClose(): void {
@@ -1383,8 +1385,9 @@ class CancipButtonEditModal extends Modal {
   }
 
   private renderAddSiblingSection(): void {
-    const section = this.contentEl.createDiv({ cls: "obcc-button-edit-add-section" });
-    section.createDiv({ cls: "obcc-button-edit-section-title", text: this.plugin.t("buttonEditAddSiblingTitle") });
+    const details = this.contentEl.createEl("details", { cls: "obcc-button-edit-add-section" });
+    details.createEl("summary", { cls: "obcc-button-edit-section-title", text: this.plugin.t("buttonEditAddSiblingTitle") });
+    const section = details.createDiv({ cls: "obcc-button-edit-add-body" });
     section.createDiv({ cls: "obcc-button-edit-section-desc", text: this.plugin.t("buttonEditAddSiblingDesc") });
 
     this.addCommandOptions = this.plugin.uiButtonCommandOptions();
@@ -1601,6 +1604,7 @@ const DEFAULT_SETTINGS: Settings = {
   autoOpenPlanPanel: true,
   showLiveTodos: true,
   showManualTodos: true,
+  uiButtonManagementEnabled: true,
   uiButtonRules: [],
   pinnedTags: [],
   hideUnpinnedTagsInRightSidebar: false,
@@ -1839,7 +1843,7 @@ const EN = {
   tokenUsageEstimated: " estimated",
   processRecord: "Process record",
   finalConclusionFallback: "{summary}",
-  finalAnswerFormatPrompt: "For implementation/change/tool tasks, do not write a \"Final answer\" heading and do not write elapsed time, token counts, or character counts; Cancip appends those programmatically. The visible closeout should be human-readable and concrete: start with a short summary tied to the user's original request, then use concise numbered items for what was done, then include actions performed, changed/read files, verification/results, blockers/reminders when relevant, and memory/rule updates if any. If more tool work is still needed and no real blocker exists, continue with exactly one cancip-action instead of summarizing as done. Generate the final answer and the next-step buttons together in the same reply: append exactly one hidden HTML comment like <!-- cancip-choices {\"choices\":[\"specific action 1\",\"specific action 2\"]} -->. Do not show these choices as visible numbered or bulleted text. Keep tool details folded in process records; do not expose raw action JSON.",
+  finalAnswerFormatPrompt: "For implementation/change/tool tasks, do not write a \"Final answer\" heading and do not write elapsed time, token counts, or character counts; Cancip appends those programmatically. The visible closeout should be human-readable and concrete: start with a short summary tied to the user's original request, then use concise numbered items for what was done, then include actions performed, changed/read files, verification/results, blockers/reminders when relevant, and memory/rule updates if any. If more tool work is still needed and no real blocker exists, continue with exactly one cancip-action instead of summarizing as done. Generate the final answer and exactly three next-step buttons together in the same reply: append exactly one hidden HTML comment like <!-- cancip-choices {\"choices\":[\"specific action 1\",\"specific action 2\",\"specific action 3\"]} -->. Do not show these choices as visible numbered or bulleted text. Keep tool details folded in process records; do not expose raw action JSON.",
   emptyApiReply: "The API returned an empty response.",
   emptyApiReplyWithSuppressedTools: "The API returned tool/action instructions but no visible assistant reply. For simple chat, Cancip does not execute hidden actions.",
   modelContinuationFailed: "Model follow-up failed: {reason}",
@@ -2222,6 +2226,8 @@ const EN = {
   settingsUseVaultSearch: "Use Vault Search by default",
   settingsShowAttachmentButton: "Show attachment button",
   settingsCompactHeader: "Compact header",
+  settingsUiButtonManagement: "Button management",
+  settingsUiButtonManagementDesc: "Long-press buttons to edit, hide, reorder, rename, or add sibling command buttons. Turn off to leave Obsidian and plugin buttons untouched.",
   settingsAutoOpenPlanPanel: "Auto-open Plan panel",
   settingsShowLiveTodos: "Show live todos",
   settingsShowManualTodos: "Show manual todos",
@@ -2499,7 +2505,7 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     tokenUsageEstimated: " 估算",
     processRecord: "过程记录",
     finalConclusionFallback: "{summary}",
-    finalAnswerFormatPrompt: "实现、改动、工具类任务的最终可见回答不要写“最终结论”标题，也不要写耗时、token 数或字数；这些由 Cancip 程序在结束时自动追加。按普通人能直接看懂的结构回答：先用一句短总结对应用户原始问题说这轮干了什么，再按序号精简展开；然后按需写清「动作」「改动/读取的文件」「验证/结果」「提醒/阻塞」「记忆/规则更新」。如果还能继续用工具推进且没有真实阻塞，就不要总结成完成，而是继续输出一个 cancip-action。最终回答和推荐按钮必须同一轮生成：末尾追加且只追加一个隐藏 HTML 注释 <!-- cancip-choices {\"choices\":[\"具体动作1\",\"具体动作2\"]} -->；正文里不要显示推荐序号或推荐列表。工具细节留在折叠过程里，不要暴露原始 action JSON。",
+    finalAnswerFormatPrompt: "实现、改动、工具类任务的最终可见回答不要写“最终结论”标题，也不要写耗时、token 数或字数；这些由 Cancip 程序在结束时自动追加。按普通人能直接看懂的结构回答：先用一句短总结对应用户原始问题说这轮干了什么，再按序号精简展开；然后按需写清「动作」「改动/读取的文件」「验证/结果」「提醒/阻塞」「记忆/规则更新」。如果还能继续用工具推进且没有真实阻塞，就不要总结成完成，而是继续输出一个 cancip-action。最终回答和正好三个推荐按钮必须同一轮生成：末尾追加且只追加一个隐藏 HTML 注释 <!-- cancip-choices {\"choices\":[\"具体动作1\",\"具体动作2\",\"具体动作3\"]} -->；正文里不要显示推荐序号或推荐列表。工具细节留在折叠过程里，不要暴露原始 action JSON。",
     emptyApiReply: "API 返回了空回复。",
     emptyApiReplyWithSuppressedTools: "API 只返回了工具/动作指令，没有给普通可见回复。简单聊天不会执行隐藏动作。",
     modelContinuationFailed: "模型续答失败：{reason}",
@@ -2634,6 +2640,8 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     noSelection: "没有可加入的选中文本",
     sendToAI: "发给 Cancip",
     editButtonSettings: "编辑按钮",
+    settingsUiButtonManagement: "按钮管理",
+    settingsUiButtonManagementDesc: "长按按钮可编辑、隐藏、排序、改名或增加同级命令按钮；关闭后不再接管 Obsidian 和插件按钮。",
     buttonEditTitle: "按钮设置",
     buttonEditName: "名称",
     buttonEditIcon: "图标",
@@ -4716,6 +4724,7 @@ export default class CancipPlugin extends Plugin {
   private buttonEditLongPressTimer: number | null = null;
   private buttonEditLongPressTarget: HTMLElement | null = null;
   private buttonEditBubbleEl: HTMLButtonElement | null = null;
+  private selectionSendBubbleEl: HTMLButtonElement | null = null;
   private uiButtonSortCleanup: (() => void) | null = null;
 
   async onload(): Promise<void> {
@@ -8210,7 +8219,7 @@ Detailed operating rules that should not live in the system prompt. Read this fi
 ## User-facing output
 - Keep the visible final answer focused on the user question: done/not done, changed paths, verification, failure reason, next step.
 - Put commands, code, raw action JSON, large tool results, and process logs in folded details.
-- Recommendation buttons should be 1-3 short next-step actions, not long explanations or paths.
+  - Recommendation buttons should be exactly 3 short, concrete next-step actions tied to the user's request and the final answer, not long explanations or paths.
 - Every turn must end with a visible conclusion if the model stops. Process logs are not a substitute.
 - Do not write elapsed time, token count, or character count in the answer body. The app adds those programmatically.
 - Generate recommendation choices together with the final answer in the hidden cancip-choices HTML comment; do not show numbered recommendation text in the body.
@@ -8368,6 +8377,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
 
   uiButtonCommandOptions(): UiButtonCommandOption[] {
     const api = ((this.app as App & { commands?: ObsidianCommandApi }).commands ?? {});
+    const chinese = isChineseLanguage(this.language());
     const preferred = new Map<string, string>([
       ["cancip:open-chat", "bot"],
       ["cancip:new-chat", "plus"],
@@ -8397,20 +8407,65 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       ["daily-notes", "calendar-days"],
       ["periodic-notes:open-daily-note", "calendar-days"]
     ]);
-    const entries = Object.entries(api.commands ?? {})
+    const commandEntries = Object.entries(api.commands ?? {})
       .map(([id, item]) => ({
-        id,
-        name: typeof item.name === "string" && item.name.trim() ? item.name.trim() : id,
+        id: `obcmd:${id}`,
+        name: `${chinese ? "OB命令" : "Obsidian command"}: ${typeof item.name === "string" && item.name.trim() ? item.name.trim() : id}`,
         icon: typeof item.icon === "string" && item.icon.trim() ? item.icon.trim() : preferred.get(id) ?? guessUiButtonCommandIcon(id, typeof item.name === "string" ? item.name : "")
       }))
       .filter((item) => item.id && item.name);
-    return entries
+    const buttonEntries = this.uiButtonClickActionOptions(chinese);
+    return [...commandEntries, ...buttonEntries]
       .sort((a, b) => {
-        const pa = preferred.has(a.id) ? 0 : 1;
-        const pb = preferred.has(b.id) ? 0 : 1;
+        const rawA = a.id.startsWith("obcmd:") ? a.id.slice("obcmd:".length) : a.id;
+        const rawB = b.id.startsWith("obcmd:") ? b.id.slice("obcmd:".length) : b.id;
+        const pa = preferred.has(rawA) ? 0 : a.id.startsWith("uiclick:") ? 1 : 2;
+        const pb = preferred.has(rawB) ? 0 : b.id.startsWith("uiclick:") ? 1 : 2;
         return pa - pb || a.name.localeCompare(b.name) || a.id.localeCompare(b.id);
       })
-      .slice(0, 800);
+      .slice(0, 1000);
+  }
+
+  private uiButtonClickActionOptions(chinese: boolean): UiButtonCommandOption[] {
+    const root = activeDocument;
+    const selector = [
+      "button",
+      "a[href]",
+      "summary",
+      "[role='button']",
+      "[role='menuitem']",
+      "[role='tab']",
+      "[data-command]",
+      ".clickable-icon",
+      ".menu-item",
+      ".workspace-ribbon-action",
+      ".side-dock-ribbon-action",
+      ".nav-action-button",
+      ".view-action",
+      ".document-search-button",
+      ".pdf-toolbar .clickable-icon",
+      ".pdf-toolbar button"
+    ].join(",");
+    const seen = new Set<string>();
+    const options: UiButtonCommandOption[] = [];
+    for (const target of Array.from(root.querySelectorAll<HTMLElement>(selector))) {
+      if (target.closest(".obcc-button-edit-modal, .obcc-button-edit-bubble, .obcc-selection-send-bubble, .obcc-ui-sort-overlay")) continue;
+      if (target.dataset.cancipUiCustomButton === "true") continue;
+      if (!this.isEditableButtonUiTarget(target) || !this.isVisibleUiButtonSortTarget(target)) continue;
+      const label = uiElementLabel(target);
+      if (!label) continue;
+      const actionSelector = stableSelectorForElement(target);
+      const id = `uiclick:${actionSelector}`;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      options.push({
+        id,
+        name: `${chinese ? "按钮功能" : "Button action"}: ${label}`,
+        icon: guessUiButtonCommandIcon(target.getAttribute("data-command") ?? "", label)
+      });
+      if (options.length >= 300) break;
+    }
+    return options;
   }
 
   async addSiblingUiButton(
@@ -8439,22 +8494,28 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
   }
 
   startUiButtonSortMode(descriptor: UiButtonEditDescriptor): void {
+    if (!this.settings.uiButtonManagementEnabled) return;
     this.stopUiButtonSortMode();
     this.hideButtonEditBubble();
     const liveTarget = descriptor.target?.isConnected ? descriptor.target : null;
     const anchor = liveTarget ?? this.uiRuleElementsBySelector(descriptor.selector, descriptor.scope)[0];
-    const parent = anchor?.parentElement;
-    if (!anchor || !parent) {
+    if (!anchor) {
       new Notice(this.t("buttonEditSortTargetMissing"));
       return;
     }
-    const sortableTargets = () => {
-      const siblings = this.sortableUiButtonSiblings(anchor);
-      if (!siblings.includes(anchor) && anchor.parentElement === parent) return [anchor, ...siblings];
-      return siblings;
-    };
-    const targets = sortableTargets();
-    if (targets.length < 2) {
+    const previousRevealHidden = this.uiButtonRulesRevealHidden;
+    if (!previousRevealHidden) {
+      this.uiButtonRulesRevealHidden = true;
+      this.clearUiRuleMarks();
+      this.applyUiButtonRules();
+    }
+    const groups = this.sortableUiButtonGroups("global");
+    if (!groups.length) {
+      if (!previousRevealHidden) {
+        this.uiButtonRulesRevealHidden = previousRevealHidden;
+        this.clearUiRuleMarks();
+        this.applyUiButtonRules();
+      }
       new Notice(this.t("buttonEditNoSiblings"));
       return;
     }
@@ -8468,18 +8529,13 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     let dragging: HTMLElement | null = null;
     let draggedHandle: HTMLButtonElement | null = null;
     let dragPointerId: number | null = null;
-    let pendingDrag: {
-      target: HTMLElement;
-      handle: HTMLButtonElement;
-      pointerId: number;
-      startX: number;
-      startY: number;
-      timer: number;
-    } | null = null;
 
-    const sortedTargets = () => sortableTargets();
-    const axisForParent = () => {
-      const rects = sortedTargets().map((target) => target.getBoundingClientRect());
+    const sortedTargetsFor = (target: HTMLElement | null): HTMLElement[] => {
+      const parent = target?.parentElement;
+      return parent ? this.sortableUiButtonChildren(parent) : [];
+    };
+    const axisForTargets = (targets: HTMLElement[]) => {
+      const rects = targets.map((target) => target.getBoundingClientRect());
       if (rects.length < 2) return "x" as const;
       const spreadX = Math.max(...rects.map((rect) => rect.right)) - Math.min(...rects.map((rect) => rect.left));
       const spreadY = Math.max(...rects.map((rect) => rect.bottom)) - Math.min(...rects.map((rect) => rect.top));
@@ -8493,21 +8549,29 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
           continue;
         }
         const rect = target.getBoundingClientRect();
+        const left = Math.max(4, Math.min(win.innerWidth - 30, rect.left - 8));
+        const top = Math.max(4, Math.min(win.innerHeight - 30, rect.top - 8));
         handle.setCssStyles({
-          left: `${Math.max(4, rect.left - 10)}px`,
-          top: `${Math.max(4, rect.top - 10)}px`
+          left: `${left}px`,
+          top: `${top}px`
         });
       }
     };
-    const saveOrder = async () => {
-      await this.saveUiButtonSiblingOrder(descriptor.scope, sortedTargets());
+    const saveOrderFor = async (target: HTMLElement | null) => {
+      const targets = sortedTargetsFor(target);
+      if (targets.length < 2) return;
+      const scope = target ? this.inferUiButtonRuleScope(target) : descriptor.scope;
+      await this.saveUiButtonSiblingOrder(scope, targets);
       updateHandles();
     };
     const moveDragging = (event: PointerEvent) => {
       if (!dragging) return;
       event.preventDefault();
-      const siblings = sortedTargets().filter((target) => target !== dragging);
-      const axis = axisForParent();
+      const parent = dragging.parentElement;
+      if (!parent) return;
+      const sortedTargets = sortedTargetsFor(dragging);
+      const siblings = sortedTargets.filter((target) => target !== dragging);
+      const axis = axisForTargets(sortedTargets);
       const pointer = axis === "x" ? event.clientX : event.clientY;
       const before = siblings.find((target) => {
         const rect = target.getBoundingClientRect();
@@ -8518,38 +8582,21 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       else parent.appendChild(dragging);
       updateHandles();
     };
-    const cancelPendingDrag = (event?: PointerEvent) => {
-      if (!pendingDrag) return;
-      win.clearTimeout(pendingDrag.timer);
+    const beginDrag = (target: HTMLElement, handle: HTMLButtonElement, event: PointerEvent) => {
+      if (dragging) return;
+      dragging = target;
+      draggedHandle = handle;
+      dragPointerId = event.pointerId;
+      target.addClass("obcc-ui-sort-dragging");
+      handle.addClass("is-dragging");
       try {
-        pendingDrag.handle.releasePointerCapture(pendingDrag.pointerId);
+        handle.setPointerCapture(event.pointerId);
       } catch {
-        // Pointer capture may already be gone on mobile WebView.
-      }
-      pendingDrag.handle.removeClass("is-pending");
-      pendingDrag = null;
-      if (event) {
-        event.preventDefault();
-        event.stopPropagation();
-      }
-    };
-    const beginPendingDrag = () => {
-      const pending = pendingDrag;
-      if (!pending || dragging) return;
-      pendingDrag = null;
-      dragging = pending.target;
-      draggedHandle = pending.handle;
-      dragPointerId = pending.pointerId;
-      pending.target.addClass("obcc-ui-sort-dragging");
-      pending.handle.removeClass("is-pending");
-      pending.handle.addClass("is-dragging");
-      try {
-        pending.handle.setPointerCapture(pending.pointerId);
-      } catch {
-        // Some mobile WebViews reject capture if the pointer was already released.
+        // Pointer capture is best-effort in mobile WebView.
       }
     };
     const endDrag = (event?: PointerEvent) => {
+      const completedTarget = dragging;
       if (draggedHandle && dragPointerId !== null) {
         try {
           draggedHandle.releasePointerCapture(dragPointerId);
@@ -8563,62 +8610,40 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       draggedHandle = null;
       dragPointerId = null;
       if (event) event.preventDefault();
-      void saveOrder();
+      void saveOrderFor(completedTarget);
     };
     const moveSortHandle = (event: PointerEvent) => {
-      if (dragging) {
-        moveDragging(event);
-        return;
-      }
-      if (!pendingDrag || pendingDrag.pointerId !== event.pointerId) return;
-      const dx = Math.abs(event.clientX - pendingDrag.startX);
-      const dy = Math.abs(event.clientY - pendingDrag.startY);
-      if (dx > 10 || dy > 10) {
-        cancelPendingDrag(event);
-        return;
-      }
-      event.preventDefault();
-      event.stopPropagation();
+      if (!dragging || dragPointerId !== event.pointerId) return;
+      moveDragging(event);
     };
     const releaseSortHandle = (event: PointerEvent) => {
       if (dragging && dragPointerId === event.pointerId) {
         endDrag(event);
         return;
       }
-      cancelPendingDrag(event);
+      event.preventDefault();
+      event.stopPropagation();
     };
 
-    for (const target of targets) {
-      target.addClass("obcc-ui-sort-target");
-      const handle = overlay.createEl("button", {
-        cls: "obcc-ui-sort-handle",
-        attr: { type: "button", title: this.t("buttonEditSortHandle"), "aria-label": this.t("buttonEditSortHandle") }
-      });
-      setIcon(handle, "grip-vertical");
-      handle.addEventListener("pointerdown", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        if (event.button !== 0 && event.pointerType === "mouse") return;
-        cancelPendingDrag();
-        pendingDrag = {
-          target,
-          handle,
-          pointerId: event.pointerId,
-          startX: event.clientX,
-          startY: event.clientY,
-          timer: win.setTimeout(beginPendingDrag, 480)
-        };
-        handle.addClass("is-pending");
-        try {
-          handle.setPointerCapture(event.pointerId);
-        } catch {
-          // Pointer capture is best-effort in mobile WebView.
-        }
-      });
-      handle.addEventListener("pointermove", moveSortHandle);
-      handle.addEventListener("pointerup", releaseSortHandle);
-      handle.addEventListener("pointercancel", releaseSortHandle);
-      handles.set(target, handle);
+    for (const targets of groups) {
+      for (const target of targets) {
+        target.addClass("obcc-ui-sort-target");
+        const handle = overlay.createEl("button", {
+          cls: "obcc-ui-sort-handle",
+          attr: { type: "button", title: this.t("buttonEditSortHandle"), "aria-label": this.t("buttonEditSortHandle") }
+        });
+        setIcon(handle, "grip-vertical");
+        handle.addEventListener("pointerdown", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (event.button !== 0 && event.pointerType === "mouse") return;
+          beginDrag(target, handle, event);
+        });
+        handle.addEventListener("pointermove", moveSortHandle);
+        handle.addEventListener("pointerup", releaseSortHandle);
+        handle.addEventListener("pointercancel", releaseSortHandle);
+        handles.set(target, handle);
+      }
     }
 
     const done = overlay.createEl("button", {
@@ -8627,14 +8652,13 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     });
     setIcon(done, "check");
     done.addEventListener("click", () => {
-      void saveOrder().then(() => this.stopUiButtonSortMode());
+      this.stopUiButtonSortMode();
     });
 
     const updateDone = () => {
-      const rect = anchor.getBoundingClientRect();
       done.setCssStyles({
-        left: `${Math.max(8, Math.min(win.innerWidth - 44, rect.right + 8))}px`,
-        top: `${Math.max(8, Math.min(win.innerHeight - 44, rect.top))}px`
+        left: `${Math.max(8, win.innerWidth - 44)}px`,
+        top: "8px"
       });
     };
     const updateAll = () => {
@@ -8648,11 +8672,16 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     new Notice(this.t("buttonEditSortModeStarted"));
 
     this.uiButtonSortCleanup = () => {
-      cancelPendingDrag();
+      endDrag();
       win.removeEventListener("scroll", scrollOrResize, true);
       win.removeEventListener("resize", scrollOrResize);
       for (const target of handles.keys()) target.removeClass("obcc-ui-sort-target", "obcc-ui-sort-dragging");
       overlay.remove();
+      if (this.uiButtonRulesRevealHidden !== previousRevealHidden) {
+        this.uiButtonRulesRevealHidden = previousRevealHidden;
+        this.clearUiRuleMarks();
+        this.applyUiButtonRules();
+      }
       if (this.uiButtonSortCleanup) this.uiButtonSortCleanup = null;
     };
   }
@@ -8665,13 +8694,106 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
 
   private sortableUiButtonSiblings(anchor: HTMLElement): HTMLElement[] {
     const parent = anchor.parentElement;
-    if (!parent) return [];
+    return parent ? this.sortableUiButtonChildren(parent) : [];
+  }
+
+  private sortableUiButtonChildren(parent: Element): HTMLElement[] {
+    const win = activeDocument.defaultView;
     return Array.from(parent.children).filter((child): child is HTMLElement => {
-      if (!(child instanceof HTMLElement)) return false;
-      if (child.closest(".obcc-ui-sort-overlay, .obcc-button-edit-modal, .obcc-button-edit-bubble")) return false;
+      if (!win || !child.instanceOf(win.HTMLElement)) return false;
+      if (child.closest(".obcc-ui-sort-overlay, .obcc-button-edit-modal, .obcc-button-edit-bubble, .obcc-selection-send-bubble")) return false;
       if (child.dataset.cancipUiHidden === "true") return false;
+      if (!this.isVisibleUiButtonSortTarget(child)) return false;
       return this.isEditableButtonUiTarget(child) || Boolean(this.editableButtonTarget(child));
     });
+  }
+
+  private isVisibleUiButtonSortTarget(target: HTMLElement): boolean {
+    const win = activeDocument.defaultView;
+    if (!win || !target.isConnected) return false;
+    const style = win.getComputedStyle(target);
+    if (style.display === "none" || style.visibility === "hidden" || style.pointerEvents === "none") return false;
+    const rect = target.getBoundingClientRect();
+    if (rect.width < 2 || rect.height < 2) return false;
+    if (rect.bottom < 0 || rect.right < 0 || rect.top > win.innerHeight || rect.left > win.innerWidth) return false;
+    return true;
+  }
+
+  private sortableUiButtonGroups(scope: UiButtonRule["scope"]): HTMLElement[][] {
+    const root = this.uiButtonScopeRoot(scope);
+    const selector = [
+      "button",
+      "a[href]",
+      "summary",
+      "input[type='button']",
+      "input[type='submit']",
+      "input[type='reset']",
+      "input[type='checkbox']",
+      "input[type='radio']",
+      "[role='button']",
+      "[role='menuitem']",
+      "[role='tab']",
+      "[role='checkbox']",
+      "[role='switch']",
+      "[data-command]",
+      ".clickable-icon",
+      ".menu-item",
+      ".workspace-tab-header",
+      ".workspace-tab-header-inner",
+      ".workspace-tab-header-inner-icon",
+      ".workspace-tab-header-status-icon",
+      ".workspace-ribbon-action",
+      ".side-dock-ribbon-action",
+      ".titlebar-button",
+      ".status-bar-item",
+      ".nav-action-button",
+      ".nav-buttons-container > *",
+      ".view-action",
+      ".view-header-icon",
+      ".view-header-title-container",
+      ".view-header-breadcrumb",
+      ".tree-item-self",
+      ".nav-file-title",
+      ".nav-folder-title",
+      ".document-search-button",
+      ".pdf-toolbar .clickable-icon",
+      ".pdf-toolbar button",
+      ".setting-item-control button",
+      ".setting-item-control .clickable-icon",
+      ".setting-item-control select",
+      ".setting-item-control input[type='button']",
+      ".setting-item-control input[type='checkbox']",
+      ".setting-item-control input[type='range']",
+      ".setting-item-control input[type='color']",
+      ".dropdown",
+      "[data-action]",
+      "[data-tooltip-position]",
+      "[data-tooltip-delay]",
+      "[data-icon]",
+      "[tabindex]:not([tabindex='-1'])"
+    ].join(",");
+    const parents = new Set<Element>();
+    for (const candidate of Array.from(root.querySelectorAll<HTMLElement>(selector))) {
+      if (candidate.closest(".obcc-ui-sort-overlay, .obcc-button-edit-modal, .obcc-button-edit-bubble, .obcc-selection-send-bubble")) continue;
+      if (!this.isVisibleUiButtonSortTarget(candidate)) continue;
+      if (!this.isEditableButtonUiTarget(candidate) && !this.editableButtonTarget(candidate)) continue;
+      const parent = candidate.parentElement;
+      if (parent) parents.add(parent);
+    }
+    return Array.from(parents)
+      .map((parent) => this.sortableUiButtonChildren(parent))
+      .filter((children) => children.length >= 2);
+  }
+
+  private uiButtonScopeRoot(scope: UiButtonRule["scope"]): ParentNode {
+    const doc = activeDocument;
+    if (scope === "active") {
+      return (this.activeWorkspaceLeaf()?.view as unknown as { containerEl?: HTMLElement })?.containerEl ?? doc;
+    }
+    if (scope === "cancip") {
+      return (this.app.workspace.getLeavesOfType(VIEW_TYPE)[0]?.view as unknown as { containerEl?: HTMLElement })?.containerEl ?? doc;
+    }
+    return doc;
   }
 
   private async saveUiButtonSiblingOrder(scope: UiButtonRule["scope"], targets: HTMLElement[]): Promise<void> {
@@ -8717,10 +8839,28 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     new Notice(this.t(value ? "buttonEditRevealHiddenOn" : "buttonEditRevealHiddenOff"));
   }
 
+  async setUiButtonManagementEnabled(value: boolean): Promise<void> {
+    this.settings.uiButtonManagementEnabled = value;
+    await this.saveSettings();
+    this.clearButtonEditLongPress();
+    this.hideButtonEditBubble();
+    this.stopUiButtonSortMode();
+    this.clearUiRuleMarks();
+    this.scheduleUiButtonRulesApply(0);
+  }
+
   private installButtonEditLongPress(): void {
     const doc = activeDocument;
     let pointerStart: { x: number; y: number } | null = null;
+    const showSelectionBubbleSoon = (x?: number, y?: number) => {
+      window.setTimeout(() => {
+        const selectionText = this.documentSelectionText();
+        if (selectionText) this.showSelectionSendBubble(selectionText, x, y);
+        else this.hideSelectionSendBubble();
+      }, 0);
+    };
     const start = (event: PointerEvent) => {
+      if (!this.settings.uiButtonManagementEnabled) return;
       if (event.button !== 0 && event.pointerType === "mouse") return;
       if (this.documentSelectionText()) return;
       const target = this.editableButtonTarget(event.target);
@@ -8739,6 +8879,12 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       pointerStart = null;
       this.clearButtonEditLongPress();
     };
+    const end = (event: PointerEvent) => {
+      const x = event.clientX;
+      const y = event.clientY;
+      cancel();
+      showSelectionBubbleSoon(x, y);
+    };
     const move = (event: PointerEvent) => {
       if (!pointerStart) return;
       if (Math.abs(event.clientX - pointerStart.x) > 12 || Math.abs(event.clientY - pointerStart.y) > 12) cancel();
@@ -8746,51 +8892,57 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     const context = (event: MouseEvent) => {
       const selectionText = this.documentSelectionText();
       if (selectionText) {
-        event.preventDefault();
-        const clientX = event.clientX;
-        const clientY = event.clientY;
-        window.setTimeout(() => {
-          if (!this.injectSelectionSendIntoOpenMenu(selectionText)) this.showSelectionSendMenu(selectionText, clientX, clientY);
-        }, 0);
+        this.showSelectionSendBubble(selectionText, event.clientX, event.clientY);
         return;
       }
+      if (!this.settings.uiButtonManagementEnabled) return;
       const target = this.editableButtonTarget(event.target);
       if (!target) return;
-      event.preventDefault();
       this.clearButtonEditLongPress();
       this.hideButtonEditBubble();
-      const clientX = event.clientX;
-      const clientY = event.clientY;
-      this.showButtonEditBubble(target, clientX, clientY);
+      this.showButtonEditBubble(target, event.clientX, event.clientY);
+    };
+    const keyup = () => showSelectionBubbleSoon();
+    const selectionChange = () => {
       window.setTimeout(() => {
-        if (!this.injectButtonEditIntoOpenMenu(target)) this.showButtonEditMenu(target, clientX, clientY);
+        if (!this.documentSelectionText()) this.hideSelectionSendBubble();
       }, 0);
     };
     const outside = (event: PointerEvent) => {
-      if (!this.buttonEditBubbleEl) return;
       const target = event.target;
       const win = doc.defaultView;
-      if (win && target instanceof win.Node && this.buttonEditBubbleEl.contains(target)) return;
-      if (this.editableButtonTarget(target)) return;
-      this.hideButtonEditBubble();
+      if (win && target instanceof win.Node) {
+        if (this.buttonEditBubbleEl?.contains(target)) return;
+        if (this.selectionSendBubbleEl?.contains(target)) return;
+      }
+      if (this.buttonEditBubbleEl) {
+        if (this.settings.uiButtonManagementEnabled && this.editableButtonTarget(target)) return;
+        this.hideButtonEditBubble();
+      }
+      if (this.selectionSendBubbleEl) this.hideSelectionSendBubble();
     };
     doc.addEventListener("pointerdown", start, true);
-    doc.addEventListener("pointerup", cancel, true);
+    doc.addEventListener("pointerup", end, true);
     doc.addEventListener("pointercancel", cancel, true);
     doc.addEventListener("pointermove", move, true);
     doc.addEventListener("scroll", cancel, true);
     doc.addEventListener("contextmenu", context, true);
+    doc.addEventListener("keyup", keyup, true);
+    doc.addEventListener("selectionchange", selectionChange);
     doc.addEventListener("pointerdown", outside, true);
     this.register(() => {
       doc.removeEventListener("pointerdown", start, true);
-      doc.removeEventListener("pointerup", cancel, true);
+      doc.removeEventListener("pointerup", end, true);
       doc.removeEventListener("pointercancel", cancel, true);
       doc.removeEventListener("pointermove", move, true);
       doc.removeEventListener("scroll", cancel, true);
       doc.removeEventListener("contextmenu", context, true);
+      doc.removeEventListener("keyup", keyup, true);
+      doc.removeEventListener("selectionchange", selectionChange);
       doc.removeEventListener("pointerdown", outside, true);
       this.clearButtonEditLongPress();
       this.hideButtonEditBubble();
+      this.hideSelectionSendBubble();
     });
   }
 
@@ -8921,6 +9073,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
   }
 
   private showButtonEditBubble(target: HTMLElement, x: number, y: number): void {
+    if (!this.settings.uiButtonManagementEnabled) return;
     this.hideButtonEditBubble();
     const doc = activeDocument;
     const win = doc.defaultView;
@@ -8955,84 +9108,59 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     this.buttonEditBubbleEl = null;
   }
 
-  private showButtonEditMenu(target: HTMLElement, clientX: number, clientY: number): void {
-    this.hideButtonEditBubble();
-    const menu = new Menu();
-    menu.addItem((item) => {
-      item
-        .setTitle(this.t("editButtonSettings"))
-        .setIcon("settings")
-        .onClick(() => this.openButtonEditModal(target));
-    });
-    menu.showAtPosition({ x: clientX, y: clientY });
-  }
-
-  private showSelectionSendMenu(selectionText: string, clientX: number, clientY: number): void {
-    const menu = new Menu();
-    menu.addItem((item) => {
-      item
-        .setTitle(this.t("sendToAI"))
-        .setIcon("bot")
-        .onClick(() => {
-          void this.addDocumentSelectionToCancip(selectionText);
-        });
-    });
-    menu.showAtPosition({ x: clientX, y: clientY });
-  }
-
-  private injectButtonEditIntoOpenMenu(target: HTMLElement): boolean {
+  private showSelectionSendBubble(selectionText: string, x?: number, y?: number): void {
+    const text = selectionText.trim();
+    if (!text) {
+      this.hideSelectionSendBubble();
+      return;
+    }
+    this.hideSelectionSendBubble();
     const doc = activeDocument;
-    const menus = Array.from(doc.querySelectorAll<HTMLElement>(".menu"))
-      .filter((menu) => menu.offsetParent !== null && !menu.querySelector(".obcc-button-edit-menu-item"));
-    const menuEl = menus[menus.length - 1];
-    if (!menuEl) return false;
-    if (this.openMenuHasTitle(menuEl, this.t("editButtonSettings"))) return true;
-    const row = doc.createElement("div");
-    row.addClass("menu-item", "obcc-button-edit-menu-item");
-    row.setAttr("role", "menuitem");
-    const icon = row.createDiv({ cls: "menu-item-icon" });
-    setIcon(icon, "settings");
-    row.createDiv({ cls: "menu-item-title", text: this.t("editButtonSettings") });
-    row.addEventListener("click", (event) => {
+    const win = doc.defaultView;
+    if (!win) return;
+    const bubble = doc.body.createEl("button", {
+      cls: "obcc-selection-send-bubble",
+      attr: {
+        type: "button",
+        title: this.t("sendToAI"),
+        "aria-label": this.t("sendToAI")
+      }
+    });
+    setIcon(bubble, "bot");
+    const point = this.selectionSendBubblePoint(x, y);
+    const left = Math.max(8, Math.min(win.innerWidth - 44, point.x - 18));
+    const top = Math.max(8, Math.min(win.innerHeight - 44, point.y + 8));
+    bubble.setCssStyles({ left: `${left}px`, top: `${top}px` });
+    const send = (event: Event) => {
       event.preventDefault();
       event.stopPropagation();
-      menuEl.remove();
-      this.openButtonEditModal(target);
-    });
-    menuEl.insertBefore(row, menuEl.firstChild);
-    return true;
+      this.hideSelectionSendBubble();
+      void this.addDocumentSelectionToCancip(text);
+    };
+    bubble.addEventListener("pointerdown", send);
+    bubble.addEventListener("click", send);
+    this.selectionSendBubbleEl = bubble;
   }
 
-  private injectSelectionSendIntoOpenMenu(selectionText: string): boolean {
-    const doc = activeDocument;
-    const menus = Array.from(doc.querySelectorAll<HTMLElement>(".menu"))
-      .filter((menu) => menu.offsetParent !== null && !menu.querySelector(".obcc-send-selection-menu-item"));
-    const menuEl = menus[menus.length - 1];
-    if (!menuEl) return false;
-    if (this.openMenuHasTitle(menuEl, this.t("sendToAI"))) return true;
-    const row = doc.createElement("div");
-    row.addClass("menu-item", "obcc-send-selection-menu-item");
-    row.setAttr("role", "menuitem");
-    const icon = row.createDiv({ cls: "menu-item-icon" });
-    setIcon(icon, "bot");
-    row.createDiv({ cls: "menu-item-title", text: this.t("sendToAI") });
-    row.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      menuEl.remove();
-      void this.addDocumentSelectionToCancip(selectionText);
-    });
-    menuEl.insertBefore(row, menuEl.firstChild);
-    return true;
+  private selectionSendBubblePoint(x?: number, y?: number): { x: number; y: number } {
+    const selection = activeDocument.defaultView?.getSelection();
+    if (selection && selection.rangeCount > 0) {
+      const rect = selection.getRangeAt(0).getBoundingClientRect();
+      if (rect.width || rect.height) return { x: rect.left + rect.width / 2, y: rect.bottom };
+    }
+    if (Number.isFinite(x) && Number.isFinite(y) && (x ?? 0) > 0 && (y ?? 0) > 0) {
+      return { x: x ?? 0, y: y ?? 0 };
+    }
+    return { x: window.innerWidth / 2, y: window.innerHeight / 2 };
   }
 
-  private openMenuHasTitle(menuEl: HTMLElement, title: string): boolean {
-    const normalized = title.trim();
-    return Array.from(menuEl.querySelectorAll<HTMLElement>(".menu-item-title"))
-      .some((item) => item.textContent?.trim() === normalized);
+  private hideSelectionSendBubble(): void {
+    this.selectionSendBubbleEl?.remove();
+    this.selectionSendBubbleEl = null;
   }
 
   private openButtonEditModal(target: HTMLElement): void {
+    if (!this.settings.uiButtonManagementEnabled) return;
     const descriptor = this.describeUiButtonEditTarget(target);
     new CancipButtonEditModal(this.app, this, descriptor, async () => {
       const view = await this.activateView();
@@ -9171,7 +9299,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     this.uiButtonRuleObserver?.disconnect();
     const observer = new MutationObserver((mutations) => {
       if (this.uiButtonRuleApplying) return;
-      if (!this.settings.uiButtonRules.length && !this.settings.hideUnpinnedTagsInRightSidebar) return;
+      if ((!this.settings.uiButtonManagementEnabled || !this.settings.uiButtonRules.length) && !this.settings.hideUnpinnedTagsInRightSidebar) return;
       const meaningful = mutations.some((mutation) => {
         if (mutation.type === "childList") return mutation.addedNodes.length > 0 || mutation.removedNodes.length > 0;
         if (mutation.type !== "attributes") return false;
@@ -9205,13 +9333,15 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     };
     try {
       this.clearUiRuleMarks();
-      const rules = this.settings.uiButtonRules.filter((rule) =>
-        rule.kind === "custom" ||
-        rule.hidden ||
-        (Number.isFinite(rule.order) && rule.order !== 0) ||
-        Boolean(rule.title?.trim()) ||
-        Boolean(rule.icon?.trim())
-      );
+      const rules = this.settings.uiButtonManagementEnabled
+        ? this.settings.uiButtonRules.filter((rule) =>
+          rule.kind === "custom" ||
+          rule.hidden ||
+          (Number.isFinite(rule.order) && rule.order !== 0) ||
+          Boolean(rule.title?.trim()) ||
+          Boolean(rule.icon?.trim())
+        )
+        : [];
       let applied = false;
       let frameId: number | null = null;
       let fallbackId: number | null = null;
@@ -9348,11 +9478,16 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       setIcon(button, icon);
       button.addClass("clickable-icon");
     }
+    let lastRunAt = 0;
     const run = (event: Event) => {
       event.preventDefault();
       event.stopPropagation();
+      const now = Date.now();
+      if (now - lastRunAt < 350) return;
+      lastRunAt = now;
       void this.executeCustomUiButtonRule(rule);
     };
+    button.addEventListener("pointerup", run);
     button.addEventListener("click", run);
     button.addEventListener("keydown", (event: KeyboardEvent) => {
       if (event.key !== "Enter" && event.key !== " ") return;
@@ -9362,11 +9497,31 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
   }
 
   private async executeCustomUiButtonRule(rule: UiButtonRule): Promise<void> {
-    const commandId = rule.commandId?.trim() ?? "";
-    if (!commandId) {
+    const actionId = rule.commandId?.trim() ?? "";
+    if (!actionId) {
       new Notice(this.t("buttonEditNoCommand"));
       return;
     }
+    if (actionId.startsWith("uiclick:")) {
+      const selector = actionId.slice("uiclick:".length).trim();
+      const target = selector ? this.uiRuleElementsBySelector(selector, rule.scope)[0] ?? this.uiRuleElementsBySelector(selector, "global")[0] : null;
+      if (!target) {
+        new Notice(this.t("buttonEditCommandMissing", { command: rule.commandName || selector || actionId }));
+        return;
+      }
+      if (target.dataset.cancipUiCustomButtonId === rule.id) {
+        new Notice(this.t("buttonEditCommandFailed", { command: rule.commandName || actionId }));
+        return;
+      }
+      try {
+        target.click();
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        new Notice(this.t("buttonEditCommandFailed", { command: `${rule.commandName || selector}: ${reason}` }));
+      }
+      return;
+    }
+    const commandId = actionId.startsWith("obcmd:") ? actionId.slice("obcmd:".length).trim() : actionId;
     const api = ((this.app as App & { commands?: ObsidianCommandApi }).commands ?? {});
     const command = api.commands?.[commandId];
     if (!command || !api.executeCommandById) {
@@ -9978,7 +10133,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       const label = normalizeUiButtonLabel(uiElementLabel(el));
       return label && (label.includes(wanted) || wanted.includes(label));
     });
-    return contains.length ? contains : elements;
+    return contains.length ? contains : [];
   }
 
   async maybeRunDueAutomations(): Promise<void> {
@@ -11568,6 +11723,7 @@ class CancipView extends ItemView {
   private toolRunTimers = new Map<string, number>();
   private detailsOpenState = new Map<string, boolean>();
   private readOnlyActionCache = new Map<string, ReadOnlyActionCacheEntry>();
+  private resolvedActionPathAliases = new Map<string, string>();
   private vaultAttachmentTextCache = new Map<string, VaultAttachmentParseCacheEntry>();
   private skillCache: { at: number; skills: CancipSkill[] } | null = null;
   private userPinnedScroll = false;
@@ -15367,27 +15523,27 @@ class CancipView extends ItemView {
     const failed = status === this.t("toolRunFailed") || /(failed|失败|失敗|错误|錯誤|timed out|timeout)/i.test(text);
     if (failed) {
       return zh
-        ? "- 目的：记录这一步的失败点，避免后续重复同一路径。\n- 做法：保留错误原因，并让下一步基于最新工具结果修正路线。"
-        : "- Goal: record the failure point so the next step does not repeat the same path.\n- Method: keep the error reason and continue from the latest tool result.";
+        ? "这一步失败了；错误会保留在过程记录里，下一步应换更小的动作或改路线。"
+        : "This step failed; the error is kept in the process record so the next step can use a smaller action or a corrected route.";
     }
     if (text.includes(this.t("preparingContext")) || /(prepar|context|上下文|上下文|脉络|語境|contexto|kontext|contexte)/i.test(lower)) {
       return zh
-        ? "- 目的：整理本轮要用的最小必要上下文。\n- 做法：保留用户原始问题、任务目标、必要记忆/计划/上一步结果，避免把无关历史整包发送。"
-        : "- Goal: assemble the smallest useful context for this turn.\n- Method: keep the original request, task goal, required memory/plan/previous result, and avoid sending unrelated history.";
+        ? "正在准备本轮最小必要上下文：原始问题、任务目标、必要记忆/计划和上一步结果。"
+        : "Preparing the smallest useful context for this turn: request, task goal, needed memory/plan, and previous result.";
     }
     if (text.includes(this.t("toolContinueStatus")) || /(tool result|continu|工具结果|继续|繼續|根据工具|根據工具)/i.test(lower)) {
       return zh
-        ? "- 目的：根据刚才的工具结果继续推进，而不是重新泛搜或套话总结。\n- 做法：读取成功/失败状态，决定继续动作、验证结果，或给出需要用户介入的明确结论。"
-        : "- Goal: continue from the latest tool result instead of restarting broad search or filler summaries.\n- Method: read success/failure state, choose the next action, verify, or report the exact user intervention needed.";
+        ? "正在根据最新工具结果继续推进：判断成功/失败、补下一步动作或收口结论。"
+        : "Continuing from the latest tool result: check success/failure, choose the next action, or close out.";
     }
     if (text.includes(this.t("generating")) || /(generat|model|api|receiv|发送|接收|模型|生成|api)/i.test(lower)) {
       return zh
-        ? "- 目的：让模型基于当前证据给出回答或下一步可执行动作。\n- 做法：实时统计发送/接收字符，过滤思考和原始动作块，把可追溯细节收进过程记录。"
-        : "- Goal: let the model produce either an answer or the next executable action from current evidence.\n- Method: track sent/received characters live, filter reasoning/raw action blocks, and keep trace details in the process record.";
+        ? "模型正在基于当前证据生成回答或下一步可执行动作；收发统计会实时更新。"
+        : "The model is generating an answer or next executable action from current evidence; traffic stats update live.";
     }
     return zh
-      ? "- 目的：推进当前任务的一个可追溯步骤。\n- 做法：执行当前阶段、记录依据和结果，完成后归入过程记录供回看。"
-      : "- Goal: advance one traceable step of the current task.\n- Method: run this stage, record evidence and result, then fold it into the process record for review.";
+      ? "正在推进当前任务的一个可追溯步骤；完成后会归入过程记录。"
+      : "Advancing one traceable step of the current task; it will be folded into the process record afterward.";
   }
 
   private livePlanAndChangedFilesSummary(extraRuns: ToolRun[] = []): string {
@@ -20496,7 +20652,9 @@ class CancipView extends ItemView {
     const replaceVisible = visibleAfterTools && hasFinalConclusion(visibleAfterTools.content) && this.shouldReplaceFinalConclusion(visibleAfterTools, result);
     const replaceActionOnlyFallback = visibleAfterTools && this.isActionOnlyFallbackMessage(visibleAfterTools.content);
     if (visibleAfterTools && !replaceVisible && !replaceActionOnlyFallback) {
-      visibleAfterTools.content = this.appendFinalRunStats(visibleAfterTools.content, startedAt);
+      const enriched = this.ensureFinalAnswerAuditSections(visibleAfterTools.content, result.runs, originalPrompt);
+      visibleAfterTools.content = this.withInlineChoiceMetadata(this.appendFinalRunStats(enriched, startedAt), originalPrompt || enriched);
+      visibleAfterTools.changedFileRuns = this.finalConclusionChangedFileRuns(result.runs);
       void this.saveCurrentSession();
       this.renderMessages();
       return;
@@ -20513,6 +20671,61 @@ class CancipView extends ItemView {
     message.changedFileRuns = this.finalConclusionChangedFileRuns(result.runs);
     void this.saveCurrentSession();
     this.renderMessages();
+  }
+
+  private ensureFinalAnswerAuditSections(content: string, runs: ToolRun[], originalPrompt = ""): string {
+    if (!runs.length) return content;
+    const base = stripStructuredChoices(stripProgrammaticRunStats(content).content).trim();
+    const visible = prepareMessageDisplay(redactSensitiveText(base)).visibleContent;
+    const sections: string[] = [];
+    if (!/(改动\/读取的文件|改动文件|读取\/检查|Changed files|Files changed|Read\/checked)/i.test(visible)) {
+      const fileLines = this.finalAnswerFileSectionLines(runs);
+      if (fileLines.length) sections.push(["改动/读取的文件：", ...fileLines].join("\n"));
+    }
+    if (!/(验证\/结果|验证|结果|Verification|Result)/i.test(visible)) {
+      sections.push(["验证/结果：", ...this.finalAnswerVerificationLines(runs, originalPrompt)].join("\n"));
+    }
+    if (!sections.length) return base || content;
+    return [base || this.humanFinalConclusion(runs, false, originalPrompt), ...sections].filter(Boolean).join("\n\n");
+  }
+
+  private finalAnswerFileSectionLines(runs: ToolRun[]): string[] {
+    const writeRuns = runs.filter((run) => run.status !== "rejected" && run.status !== "blocked" && this.isFileChangeAction(run.action));
+    const readRuns = runs.filter((run) =>
+      run.status === "executed"
+      && !this.isFileChangeAction(run.action)
+      && !this.isWriteLikeAction(run.action)
+      && !this.isEffectfulNonFileAction(run.action)
+    );
+    const changed = this.finalConclusionChangedFileLinks(writeRuns);
+    const readPaths = uniqueStrings(readRuns.map((run) => this.actionPrimaryPath(run.action)).filter(Boolean)).slice(0, 8);
+    return [
+      changed.length ? `改动：${changed.join("；")}` : "改动：无",
+      readPaths.length ? `读取/检查：${readPaths.map((path) => vaultPathWikilink(path)).join("；")}` : ""
+    ].filter(Boolean);
+  }
+
+  private finalAnswerVerificationLines(runs: ToolRun[], originalPrompt = ""): string[] {
+    const failed = runs.filter((run) => run.status === "failed" || run.status === "blocked" || run.status === "rejected");
+    const pending = runs.filter((run) => run.status === "pending");
+    const executed = runs.filter((run) => run.status === "executed");
+    const writes = executed.filter((run) => this.isFileChangeAction(run.action));
+    const effects = executed.filter((run) => !this.isFileChangeAction(run.action) && (this.isWriteLikeAction(run.action) || this.isEffectfulNonFileAction(run.action)));
+    const reads = executed.filter((run) => !this.isFileChangeAction(run.action) && !this.isWriteLikeAction(run.action) && !this.isEffectfulNonFileAction(run.action));
+    if (pending.some((run) => run.reviewRequired)) return [`等待审核：${pending.filter((run) => run.reviewRequired).length} 个笔记改动需要在审核面板处理。`];
+    if (pending.length) return [`等待确认：${pending.length} 个动作还没运行，需批准或拒绝后继续。`];
+    if (failed.length) {
+      const first = failed[0];
+      return [`有失败/阻塞：${trimContext(redactSensitiveText(first.error || first.summary), 220)}`];
+    }
+    if (writes.length) return ["写入/修改动作已返回成功；涉及笔记内容的改动会进入审核面板，插件/配置类改动按工具结果为准。"];
+    if (effects.length) return ["命令/界面类动作已返回成功；如果界面无明显变化，需要用当前视图或命令结果再核对。"];
+    if (reads.length) {
+      return [shouldExpectToolActionForPrompt(originalPrompt)
+        ? "本轮只完成读取/检查，尚未产生实际改动。"
+        : "只读检查已返回结果，没有改动文件。"];
+    }
+    return ["没有可验证的工具结果。"];
   }
 
   private isActionOnlyFallbackMessage(content: string): boolean {
@@ -20532,15 +20745,10 @@ class CancipView extends ItemView {
   }
 
   private withInlineChoiceMetadata(content: string, sourceHint = ""): string {
-    const body = content.trim();
+    const body = stripStructuredChoices(content).trim();
     if (!body) return content;
-    const existing = this.mergeChoiceOptions([...finalChoiceOptions(body), ...finalChoiceOptions(sourceHint)]);
-    if (existing.length >= 2 && hasSpecificChoiceOptions(existing)) return content;
-    const choices = this.mergeChoiceOptions([
-      ...this.fallbackChoiceOptions(`${body}\n${sourceHint}`),
-      ...this.genericChoiceOptions()
-    ]).slice(0, 3);
-    if (choices.length < 2) return content;
+    const existing = this.mergeChoiceOptions([...finalChoiceOptions(content), ...finalChoiceOptions(sourceHint)]);
+    const choices = this.completeChoiceOptions(existing, `${body}\n${sourceHint}`);
     const metadata = `<!-- cancip-choices ${JSON.stringify({ choices: choices.map((choice) => choice.text) })} -->`;
     return `${body}\n\n${metadata}`;
   }
@@ -21582,6 +21790,7 @@ class CancipView extends ItemView {
 
     if (action.type === "read") {
       const readPath = await this.resolveActionExistingPath(path);
+      this.rememberResolvedActionPath(path, readPath);
       action.path = readPath;
       const abstractFile = this.app.vault.getAbstractFileByPath(readPath);
       if (abstractFile instanceof TFolder) {
@@ -21759,6 +21968,8 @@ class CancipView extends ItemView {
   private async resolveActionExistingPath(path: string): Promise<string> {
     const adapter = this.app.vault.adapter;
     const normalized = normalizeActionPath(path);
+    const cached = this.resolvedActionPathAliases.get(normalized.toLowerCase());
+    if (cached && await adapter.exists(cached)) return cached;
     if (await adapter.exists(normalized)) return normalized;
 
     const withMd = normalized.includes(".") ? normalized : `${normalized}.md`;
@@ -21769,17 +21980,35 @@ class CancipView extends ItemView {
     const loaded = this.app.vault.getAllLoadedFiles()
       .map((file) => normalizePath(file.path))
       .find((candidate) => candidate.toLowerCase() === lower || candidate.toLowerCase() === lowerWithMd);
-    if (loaded && await adapter.exists(loaded)) return loaded;
+    if (loaded && await adapter.exists(loaded)) {
+      this.rememberResolvedActionPath(normalized, loaded);
+      return loaded;
+    }
 
     const candidates = await this.rankedExistingPathCandidates(normalized, withMd);
     const best = candidates[0];
     const second = candidates[1];
     if (best && (best.score >= 900 || (best.score >= 88 && best.score - (second?.score ?? 0) >= 8)) && await adapter.exists(best.path)) {
+      this.rememberResolvedActionPath(normalized, best.path);
       return best.path;
     }
 
     const suggestions = candidates.slice(0, 5).map((item, index) => `${index + 1}. ${item.path} [score ${item.score}]`).join("\n");
     throw new Error(`target not found: ${path}${suggestions ? `\nSimilar paths:\n${suggestions}` : ""}`);
+  }
+
+  private rememberResolvedActionPath(inputPath: string, resolvedPath: string): void {
+    const input = normalizeActionPath(inputPath);
+    const resolved = normalizeActionPath(resolvedPath);
+    if (!input || !resolved || input === resolved) return;
+    this.resolvedActionPathAliases.set(input.toLowerCase(), resolved);
+    if (!input.includes(".") && resolved.toLowerCase().endsWith(".md")) {
+      this.resolvedActionPathAliases.set(`${input}.md`.toLowerCase(), resolved);
+    }
+    if (this.resolvedActionPathAliases.size > 100) {
+      const first = this.resolvedActionPathAliases.keys().next().value;
+      if (first) this.resolvedActionPathAliases.delete(first);
+    }
   }
 
   private async rankedExistingPathCandidates(normalized: string, withMd: string): Promise<Array<{ path: string; score: number }>> {
@@ -22017,7 +22246,7 @@ class CancipView extends ItemView {
           createdAt: now
         }))
         .filter((item) => item.text);
-      this.manualTodos = [...this.manualTodos.filter((todo) => todo.source !== "programmatic"), ...nextAgentTodos];
+      this.manualTodos = dedupeManualTodos([...this.manualTodos.filter((todo) => todo.source !== "programmatic"), ...nextAgentTodos]);
       this.refreshPlanPanelIfOpen();
       return this.t("todoActionResult", { summary: this.planTodosSummary() });
     }
@@ -22030,6 +22259,7 @@ class CancipView extends ItemView {
       for (const line of text.split(/\r?\n/).map((item) => item.trim()).filter(Boolean)) {
         this.manualTodos.push({ id: crypto.randomUUID(), text: line, done: Boolean(action.done), sendToModel, source: "programmatic", createdAt: now });
       }
+      this.manualTodos = dedupeManualTodos(this.manualTodos);
       this.refreshPlanPanelIfOpen();
       return this.t("todoActionResult", { summary: this.planTodosSummary() });
     }
@@ -22046,6 +22276,7 @@ class CancipView extends ItemView {
           this.manualTodos.push({ id: crypto.randomUUID(), text: fallbackText, done: Boolean(action.done), sendToModel: action.items?.some((item) => item.sendToModel === false) ? false : true, source: "programmatic", createdAt: new Date().toISOString() });
         }
       }
+      this.manualTodos = dedupeManualTodos(this.manualTodos);
       this.refreshPlanPanelIfOpen();
       return this.t("todoActionResult", { summary: this.planTodosSummary() });
     }
@@ -24405,7 +24636,9 @@ class CancipView extends ItemView {
     };
 
     for (const item of rendered) {
-      const shouldGroupProcess = item.message.role === "assistant" && item.index < finalAssistantIndex && (item.display.processOnly || item.display.hasProcessFold);
+      const shouldGroupProcess = item.message.role === "assistant"
+        && (item.display.processOnly || item.display.hasProcessFold)
+        && (item.index < finalAssistantIndex || finalAssistantIndex < 0 || Boolean(this.activeRequest));
       if (shouldGroupProcess) {
         processGroup.push(item);
         continue;
@@ -24803,8 +25036,7 @@ class CancipView extends ItemView {
     if (!isFinalAssistant || this.activeRequest) return;
     const choiceContent = [message.choiceSourceText, content].filter(Boolean).join("\n\n");
     const localChoices = this.choiceOptionsForMessage(choiceContent);
-    const safeChoices = this.mergeChoiceOptions([...(message.choiceOptions ?? []), ...localChoices]).slice(0, 3);
-    if (!safeChoices.length) return;
+    const safeChoices = this.completeChoiceOptions([...(message.choiceOptions ?? []), ...localChoices], choiceContent);
     const wrap = parent.createDiv({ cls: "obcc-choice-cards" });
     for (const choice of safeChoices) {
       const button = wrap.createEl("button", {
@@ -24824,7 +25056,7 @@ class CancipView extends ItemView {
 
   private choiceOptionsForMessage(content: string): ChoiceOption[] {
     const extracted = finalChoiceOptions(content);
-    return this.mergeChoiceOptions(extracted).slice(0, 3);
+    return this.completeChoiceOptions(extracted, content);
   }
 
   private mergeChoiceOptions(choices: ChoiceOption[]): ChoiceOption[] {
@@ -24840,11 +25072,19 @@ class CancipView extends ItemView {
       .map((choice, index) => ({ ...choice, prefix: String(index + 1) }));
   }
 
+  private completeChoiceOptions(choices: ChoiceOption[], content: string): ChoiceOption[] {
+    return this.mergeChoiceOptions([
+      ...choices,
+      ...this.fallbackChoiceOptions(content),
+      ...this.genericChoiceOptions(content)
+    ]).slice(0, 3);
+  }
+
   private shouldGenerateModelChoiceOptions(message: ChatMessage, content: string): boolean {
     if (message.choiceOptionsStatus === "loading" || message.choiceOptionsStatus === "failed") return false;
     if (prepareMessageDisplay(redactSensitiveText(content)).processOnly) return false;
     const existing = this.mergeChoiceOptions([...(message.choiceOptions ?? []), ...finalChoiceOptions(content)]);
-    if (existing.length >= 2 && hasSpecificChoiceOptions(existing)) return false;
+    if (existing.length >= 3 && hasSpecificChoiceOptions(existing)) return false;
     const profile = this.plugin.activeApiProfile();
     return Boolean(profile.apiUrl && profile.apiKey && profile.model);
   }
@@ -24862,12 +25102,11 @@ class CancipView extends ItemView {
         "choice suggestion timed out"
       );
       const modelChoices = choiceOptionsFromTexts(parseChoiceSuggestionResponse(raw));
-      const merged = this.mergeChoiceOptions([...modelChoices, ...this.choiceOptionsForMessage(content)]);
-      message.choiceOptions = merged.slice(0, 3);
-      message.choiceOptionsStatus = message.choiceOptions.length ? "ready" : "failed";
+      message.choiceOptions = this.completeChoiceOptions([...modelChoices, ...this.choiceOptionsForMessage(content)], content);
+      message.choiceOptionsStatus = "ready";
     } catch {
-      message.choiceOptions = this.choiceOptionsForMessage(content);
-      message.choiceOptionsStatus = message.choiceOptions.length ? "ready" : "failed";
+      message.choiceOptions = this.completeChoiceOptions(this.choiceOptionsForMessage(content), content);
+      message.choiceOptionsStatus = "ready";
     } finally {
       this.renderMessages();
       void this.saveCurrentSession();
@@ -24955,9 +25194,13 @@ class CancipView extends ItemView {
     return unique.slice(0, 3).map((text, index) => ({ prefix: String(index + 1), text }));
   }
 
-  private genericChoiceOptions(): ChoiceOption[] {
+  private genericChoiceOptions(content = ""): ChoiceOption[] {
     const chinese = isChineseLanguage(this.plugin.language());
-    const options = chinese ? ["继续执行任务", "读取相关记忆", "验证当前结果"] : ["Continue task", "Read related memory", "Verify result"];
+    const lastUser = [...this.messages].reverse().find((message) => message.role === "user")?.content.trim() ?? "";
+    const subject = choiceSubjectFromPrompt(lastUser, content, chinese);
+    const options = chinese
+      ? [`继续修${subject}`, `验证${subject}`, `查看${subject}结果`]
+      : [`Continue ${subject}`, `Verify ${subject}`, `Review ${subject}`];
     return options.map((text, index) => ({ prefix: String(index + 1), text }));
   }
 
@@ -25632,6 +25875,9 @@ class CancipSettingTab extends PluginSettingTab {
       await this.plugin.saveSettings();
       this.plugin.refreshOpenViews();
     });
+    this.addToggleSetting(parent, "settingsUiButtonManagement", this.plugin.settings.uiButtonManagementEnabled, async (value) => {
+      await this.plugin.setUiButtonManagementEnabled(value);
+    }, "settingsUiButtonManagementDesc");
   }
 
   private displayContextSettings(parent: HTMLElement): void {
@@ -29121,14 +29367,7 @@ function resumableTaskFromRawMessages(messages: Record<string, unknown>[], reaso
 }
 
 function isProcessOnlySessionContent(content: string): boolean {
-  const normalized = content.replace(/<!--[\s\S]*?-->/g, "").replace(/\s+/g, "");
-  return normalized.includes("执行中·")
-    || normalized.includes("已执行·")
-    || normalized.includes("工具反馈：")
-    || normalized.includes("工具执行结果：")
-    || normalized.includes("正在根据工具结果继续")
-    || normalized.includes("模型生成中")
-    || normalized.includes("正在准备上下文");
+  return isLegacyProgressStatusMessage(content);
 }
 
 function extractReadableToolRunsFromMessages(messages: Record<string, unknown>[]): ToolRun[] {
@@ -30750,6 +30989,7 @@ function normalizeSettings(input: Partial<Settings>): Settings {
     autoOpenPlanPanel: typeof merged.autoOpenPlanPanel === "boolean" ? merged.autoOpenPlanPanel : DEFAULT_SETTINGS.autoOpenPlanPanel,
     showLiveTodos: typeof merged.showLiveTodos === "boolean" ? merged.showLiveTodos : DEFAULT_SETTINGS.showLiveTodos,
     showManualTodos: typeof merged.showManualTodos === "boolean" ? merged.showManualTodos : DEFAULT_SETTINGS.showManualTodos,
+    uiButtonManagementEnabled: typeof merged.uiButtonManagementEnabled === "boolean" ? merged.uiButtonManagementEnabled : DEFAULT_SETTINGS.uiButtonManagementEnabled,
     uiButtonRules: normalizeUiButtonRules(merged.uiButtonRules),
     pinnedTags: normalizeTagList(merged.pinnedTags),
     hideUnpinnedTagsInRightSidebar: typeof merged.hideUnpinnedTagsInRightSidebar === "boolean" ? merged.hideUnpinnedTagsInRightSidebar : DEFAULT_SETTINGS.hideUnpinnedTagsInRightSidebar,
@@ -30836,6 +31076,7 @@ function settingsToCancipConfig(settings: Settings): Record<string, unknown> {
     autoOpenPlanPanel: settings.autoOpenPlanPanel,
     showLiveTodos: settings.showLiveTodos,
     showManualTodos: settings.showManualTodos,
+    uiButtonManagementEnabled: settings.uiButtonManagementEnabled,
     uiButtonRules: settings.uiButtonRules,
     pinnedTags: settings.pinnedTags,
     hideUnpinnedTagsInRightSidebar: settings.hideUnpinnedTagsInRightSidebar,
@@ -30933,6 +31174,7 @@ function parseCancipConfig(raw: unknown): Partial<Settings> {
   if (typeof raw.autoOpenPlanPanel === "boolean") config.autoOpenPlanPanel = raw.autoOpenPlanPanel;
   if (typeof raw.showLiveTodos === "boolean") config.showLiveTodos = raw.showLiveTodos;
   if (typeof raw.showManualTodos === "boolean") config.showManualTodos = raw.showManualTodos;
+  if (typeof raw.uiButtonManagementEnabled === "boolean") config.uiButtonManagementEnabled = raw.uiButtonManagementEnabled;
   if (Array.isArray(raw.uiButtonRules)) config.uiButtonRules = raw.uiButtonRules;
   if (Array.isArray(raw.pinnedTags)) config.pinnedTags = raw.pinnedTags;
   if (typeof raw.hideUnpinnedTagsInRightSidebar === "boolean") config.hideUnpinnedTagsInRightSidebar = raw.hideUnpinnedTagsInRightSidebar;
@@ -31050,6 +31292,7 @@ const CANCIP_CONFIG_BOOLEAN_KEYS = new Set([
   "autoOpenPlanPanel",
   "showLiveTodos",
   "showManualTodos",
+  "uiButtonManagementEnabled",
   "hideUnpinnedTagsInRightSidebar",
   "commandBusEnabled",
   "executeObsidianCommands",
@@ -31442,7 +31685,7 @@ function normalizeSessionApiProfile(raw: Record<string, unknown>): ChatMessage["
 
 function normalizeManualTodos(raw: unknown): ManualTodo[] {
   if (!Array.isArray(raw)) return [];
-  return raw
+  return dedupeManualTodos(raw
     .filter(isRecord)
     .map((item) => ({
       id: typeof item.id === "string" && item.id ? item.id : crypto.randomUUID(),
@@ -31452,7 +31695,21 @@ function normalizeManualTodos(raw: unknown): ManualTodo[] {
       source: item.source === "programmatic" ? "programmatic" as const : "manual" as const,
       createdAt: typeof item.createdAt === "string" ? item.createdAt : new Date().toISOString()
     }))
-    .filter((item) => item.text);
+    .filter((item) => item.text));
+}
+
+function dedupeManualTodos(todos: ManualTodo[]): ManualTodo[] {
+  const seen = new Set<string>();
+  const next: ManualTodo[] = [];
+  for (const todo of todos) {
+    const text = todo.text.trim();
+    if (!text) continue;
+    const key = normalizeUiButtonLabel(text);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    next.push({ ...todo, text });
+  }
+  return next;
 }
 
 function isProgrammaticPlanTemplateTodo(todo: ManualTodo): boolean {
@@ -31547,7 +31804,10 @@ function prepareMessageDisplay(content: string): MessageDisplay {
   const programmaticStats = stripProgrammaticRunStats(content);
   const baseContent = programmaticStats.content;
   const hiddenToolBlocks: FoldedMessageBlock[] = [];
-  const processOnly = isProgressMessage(baseContent) || isToolFeedbackMessage(baseContent) || baseContent.includes(PROCESS_MESSAGE_MARKER);
+  const processOnly = isProgressMessage(baseContent)
+    || isToolFeedbackMessage(baseContent)
+    || baseContent.includes(PROCESS_MESSAGE_MARKER)
+    || isLegacyProgressStatusMessage(baseContent);
   let visibleContent = stripModelRunStatsLines(baseContent).replace(/```([^\n`]*)\n?([\s\S]*?)```/g, (full: string, rawLang: string, body: string) => {
     const lang = rawLang.trim().toLowerCase();
     const trimmed = body.trim();
@@ -31612,6 +31872,18 @@ function emptyMessageDisplay(content: string): MessageDisplay {
 
 function isProgressMessage(content: string): boolean {
   return content.includes(PROGRESS_STEP_MARKER);
+}
+
+function isLegacyProgressStatusMessage(content: string): boolean {
+  const normalized = content.replace(/<!--[\s\S]*?-->/g, "").replace(/\s+/g, "");
+  return normalized.includes("执行中·")
+    || normalized.includes("已执行·")
+    || normalized.includes("工具反馈：")
+    || normalized.includes("工具执行结果：")
+    || normalized.includes("正在根据工具结果继续")
+    || normalized.includes("模型生成中")
+    || normalized.includes("正在准备上下文")
+    || (/^(?:执行中|已执行)[：:]/.test(normalized) && /(?:目的[：:]|做法[：:]|改动文件|字数发送|tokens?发送|耗时)/i.test(normalized));
 }
 
 function isToolFeedbackMessage(content: string): boolean {
@@ -33057,7 +33329,7 @@ function isOnlyRunStatsText(text: string): boolean {
 function buildChoiceSuggestionPrompt(userPrompt: string, currentConclusion: string, previousConclusion: string, chinese: boolean): string {
   const languageRule = chinese ? "Use concise Simplified Chinese." : "Use concise English.";
   return [
-    "Generate 2-3 next-step button labels for this assistant reply.",
+    "Generate exactly 3 next-step button labels for this assistant reply.",
     languageRule,
     "Rules:",
     "- Each label must be a concrete next action based on the user's actual request and the assistant's actual answer, not a status sentence.",
@@ -33065,7 +33337,7 @@ function buildChoiceSuggestionPrompt(userPrompt: string, currentConclusion: stri
     "- No numbering, no markdown, no code, no file paths unless the user explicitly asked for a path action.",
     "- Chinese labels should be 2-10 characters when possible and never exceed 16 Chinese characters.",
     "- English labels should be 2-5 words.",
-    "- Avoid generic filler such as continue, add details, ask another unless there is truly no specific next action.",
+    "- Avoid generic filler such as continue, add details, ask another; infer specific next actions from the actual task/result.",
     '- Return only JSON: {"choices":["...","...","..."]}',
     "",
     `User request: ${trimContext(userPrompt.replace(/\s+/g, " "), 500) || "(empty)"}`,
@@ -33444,7 +33716,8 @@ function formatDomActionResult(result: DomActionResult): string {
 }
 
 function uiElementLabel(el: HTMLElement): string {
-  return (el.getAttribute("aria-label") || el.getAttribute("title") || el.innerText || el.textContent || el.className || el.tagName).toString().replace(/\s+/g, " ").trim();
+  const labelEl = el.querySelector<HTMLElement>(".menu-item-title, .view-action-title, .nav-action-title, .setting-item-name, .workspace-tab-header-inner-title");
+  return (el.getAttribute("aria-label") || el.getAttribute("title") || labelEl?.textContent || el.innerText || el.textContent || el.className || el.tagName).toString().replace(/\s+/g, " ").trim();
 }
 
 function normalizeUiButtonLabel(value: string): string {
@@ -33513,22 +33786,6 @@ function stableSelectorForElement(el: HTMLElement): string {
 function looseSelectorForUiButtonRule(el: HTMLElement): string {
   const customButtonId = el.dataset.cancipUiCustomButtonId;
   if (customButtonId) return `[data-cancip-ui-custom-button-id="${cssEscapeAttr(customButtonId)}"]`;
-  const id = el.getAttribute("id");
-  if (id) return `${el.tagName.toLowerCase()}#${cssClassEscape(id)}`;
-  const command = el.getAttribute("data-command");
-  if (command) return `${el.tagName.toLowerCase()}[data-command="${cssEscapeAttr(command)}"]`;
-  const href = el.getAttribute("href");
-  if (href && el.tagName.toLowerCase() === "a") return `a[href="${cssEscapeAttr(href)}"]`;
-  const aria = el.getAttribute("aria-label");
-  if (aria) return `${el.tagName.toLowerCase()}[aria-label="${cssEscapeAttr(aria)}"]`;
-  const title = el.getAttribute("title");
-  if (title) return `${el.tagName.toLowerCase()}[title="${cssEscapeAttr(title)}"]`;
-  const cls = String(el.className || "")
-    .split(/\s+/)
-    .filter(Boolean)
-    .filter((item) => !/^is-|^mod-|^has-|^obcc-ui-sort/.test(item))
-    .slice(0, 3);
-  if (cls.length) return `${el.tagName.toLowerCase()}.${cls.map(cssClassEscape).join(".")}`;
   return stableSelectorForElement(el);
 }
 
@@ -35564,6 +35821,7 @@ function safeJsonishDisplay(value: unknown): string {
   if (typeof value === "string") return value;
   if (value === undefined) return "undefined";
   const seen = new WeakSet<object>();
+  const win = activeDocument.defaultView;
   try {
     const json = JSON.stringify(value, (_key, item: unknown) => {
       if (typeof item === "function") return `[Function ${item.name || "anonymous"}]`;
@@ -35573,12 +35831,13 @@ function safeJsonishDisplay(value: unknown): string {
         if (item instanceof TFile) return { type: "TFile", path: item.path, basename: item.basename, extension: item.extension };
         if (item instanceof TFolder) return { type: "TFolder", path: item.path, children: item.children.length };
         if (item instanceof Error) return { name: item.name, message: item.message, stack: item.stack };
-        if (item instanceof HTMLElement) {
+        const element = item as HTMLElement;
+        if (win && element.instanceOf(win.HTMLElement)) {
           return {
             type: "HTMLElement",
-            tag: item.tagName.toLowerCase(),
-            text: trimContext((item.innerText || item.textContent || "").replace(/\s+/g, " ").trim(), 160),
-            classes: String(item.className || "").trim()
+            tag: element.tagName.toLowerCase(),
+            text: trimContext((element.innerText || element.textContent || "").replace(/\s+/g, " ").trim(), 160),
+            classes: String(element.className || "").trim()
           };
         }
       }
