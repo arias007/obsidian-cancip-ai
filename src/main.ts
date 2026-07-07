@@ -8739,11 +8739,21 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
           handles.delete(target);
           continue;
         }
-        if (!this.isVisibleUiButtonSortHandleTarget(target)) {
+        const inlineSortHandle = handle.hasClass("obcc-ui-sort-inline-handle");
+        if (!inlineSortHandle && !this.isVisibleUiButtonSortHandleTarget(target)) {
           handle.setCssStyles({ display: "none" });
           continue;
         }
         handle.setCssStyles({ display: "" });
+        if (inlineSortHandle) {
+          const size = Math.max(16, Math.round(20 * sortFrameScale));
+          handle.style.setProperty("--obcc-ui-sort-handle-size", `${size}px`);
+          handle.style.removeProperty("left");
+          handle.style.removeProperty("top");
+          target.style.setProperty("--obcc-ui-sort-outline-width", `${Math.max(1, sortFrameScale)}px`);
+          target.style.setProperty("--obcc-ui-sort-outline-offset", `${Math.max(1, 2 * sortFrameScale)}px`);
+          continue;
+        }
         const rect = target.getBoundingClientRect();
         const size = Math.max(16, Math.round(20 * sortFrameScale));
         const inset = Math.max(1, Math.round(2 * sortFrameScale));
@@ -8856,8 +8866,10 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     for (const targets of groups) {
       for (const target of targets) {
         target.addClass("obcc-ui-sort-target");
-        const handle = overlay.createEl("button", {
-          cls: "obcc-ui-sort-handle",
+        const inlineHandle = Boolean(target.closest(".obcc-ui-sort-snapshot-stage"));
+        const handleParent = inlineHandle ? target : overlay;
+        const handle = handleParent.createEl("button", {
+          cls: `obcc-ui-sort-handle${inlineHandle ? " obcc-ui-sort-inline-handle" : ""}`,
           attr: { type: "button", title: this.t("buttonEditSortHandle"), "aria-label": this.t("buttonEditSortHandle") }
         });
         setIcon(handle, "grip-vertical");
@@ -8963,17 +8975,29 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       updateControls();
     };
     const scrollOrResize = () => updateAll();
-    const mutationObserver = new MutationObserver(() => updateAll());
+    let updateQueued = false;
+    const queueUpdateAll = () => {
+      if (updateQueued) return;
+      updateQueued = true;
+      win.requestAnimationFrame(() => {
+        updateQueued = false;
+        updateAll();
+      });
+    };
+    const mutationObserver = new MutationObserver((mutations) => {
+      const hasExternalChange = mutations.some((mutation) => {
+        const target = mutation.target;
+        return !(target instanceof win.Element) || !target.closest(".obcc-ui-sort-overlay, .obcc-ui-sort-snapshot-stage");
+      });
+      if (hasExternalChange) queueUpdateAll();
+    });
     mutationObserver.observe(doc.body, {
       childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ["class", "style", "hidden", "aria-hidden", "data-cancip-ui-hidden"]
+      subtree: true
     });
     const followTimer = win.setInterval(updateAll, 350);
     win.addEventListener("scroll", scrollOrResize, true);
     win.addEventListener("resize", scrollOrResize);
-    snapshotStage?.stage.addEventListener("scroll", scrollOrResize);
     updateAll();
     updateSortControlStates();
     new Notice(this.t("buttonEditSortModeStarted"));
@@ -8984,7 +9008,6 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       win.clearInterval(followTimer);
       win.removeEventListener("scroll", scrollOrResize, true);
       win.removeEventListener("resize", scrollOrResize);
-      snapshotStage?.stage.removeEventListener("scroll", scrollOrResize);
       for (const target of handles.keys()) {
         target.removeClass("obcc-ui-sort-target", "obcc-ui-sort-dragging");
         target.style.removeProperty("--obcc-ui-sort-outline-width");

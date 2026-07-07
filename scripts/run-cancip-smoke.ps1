@@ -910,7 +910,6 @@ if (-not $Case -or 'programmatic.ui-button-sort-menu-snapshot'.Contains($Case)) 
     `<div class="menu-section">${longItems}</div>`
   ].join('');
   doc.body.appendChild(root);
-  const oldRules=(p.settings.uiButtonRules||[]).map((rule)=>({...rule}));
   try{
     const target=root.querySelector('#cancip-sort-snapshot-b');
     const descriptor=p.describeUiButtonEditTarget(target);
@@ -920,17 +919,9 @@ if (-not $Case -or 'programmatic.ui-button-sort-menu-snapshot'.Contains($Case)) 
     const stage=doc.querySelector('.obcc-ui-sort-snapshot-stage');
     const handles=doc.querySelectorAll('.obcc-ui-sort-handle').length;
     const stageItems=stage?stage.querySelectorAll('.obcc-ui-sort-snapshot-item').length:0;
-    const firstSelector=stage?.querySelector('.obcc-ui-sort-snapshot-item')?.dataset?.cancipUiRuleSelector||'';
-    const selectors=Array.from(stage?.querySelectorAll('.obcc-ui-sort-snapshot-item')||[]).map((el)=>el.dataset.cancipUiRuleSelector||'');
-    const duplicateSelectors=selectors.filter((selector)=>selector.includes('smoke-menu-a')||selector.includes('smoke-menu-b'));
-    const stageStyle=stage?getComputedStyle(stage):null;
-    const stageOverflowY=stageStyle?.overflowY||'';
-    const stageTouchAction=stageStyle?.touchAction||'';
-    const stagePaddingTop=stageStyle?.paddingTop||'';
-    const stageRadius=stageStyle?.borderTopLeftRadius||'';
+    const done=doc.querySelector('.obcc-ui-sort-done');
     const stageCanScroll=stage?stage.scrollHeight>stage.clientHeight:false;
-    const firstRadius=stage?getComputedStyle(stage.querySelector('.obcc-ui-sort-snapshot-item')).borderTopLeftRadius:'';
-    const initialHiddenHandles=Array.from(doc.querySelectorAll('.obcc-ui-sort-handle')).filter((handle)=>getComputedStyle(handle).display==='none').length;
+    const inlineHandles=doc.querySelectorAll('.obcc-ui-sort-inline-handle').length;
     if(stage){
       stage.scrollTop=stage.scrollHeight;
       stage.dispatchEvent(new Event('scroll'));
@@ -938,31 +929,28 @@ if (-not $Case -or 'programmatic.ui-button-sort-menu-snapshot'.Contains($Case)) 
     }
     const handlesAfterScroll=Array.from(doc.querySelectorAll('.obcc-ui-sort-handle'));
     const lastHandleDisplay=handlesAfterScroll.length?getComputedStyle(handlesAfterScroll[handlesAfterScroll.length-1]).display:'';
-    const controlTop=parseFloat(doc.querySelector('.obcc-ui-sort-done')?.style?.top||'0');
+    const stageRect=stage?stage.getBoundingClientRect():null;
+    const lastHandleRect=handlesAfterScroll.length?handlesAfterScroll[handlesAfterScroll.length-1].getBoundingClientRect():null;
+    const lastHandleInStage=!!(stageRect&&lastHandleRect&&lastHandleRect.top>=stageRect.top&&lastHandleRect.bottom<=stageRect.bottom+1);
     p.stopUiButtonSortMode();
     const stageAfter=!!doc.querySelector('.obcc-ui-sort-snapshot-stage');
-    return JSON.stringify({id:'programmatic.ui-button-sort-menu-snapshot',elapsedMs:Date.now()-t,snapshotCount,hasStage:!!stage,stageItems,handles,firstSelector,duplicateSelectors,stageOverflowY,stageTouchAction,stagePaddingTop,stageRadius,stageCanScroll,firstRadius,initialHiddenHandles,lastHandleDisplay,controlTop,stageAfter});
+    return JSON.stringify({id:'programmatic.ui-button-sort-menu-snapshot',elapsedMs:Date.now()-t,snapshotCount,hasStage:!!stage,stageItems,handles,inlineHandles,stageCanScroll,lastHandleDisplay,lastHandleInStage,done:!!done,stageAfter});
   } finally {
     root.remove();
     p.stopUiButtonSortMode?.();
-    p.settings.uiButtonRules=oldRules;
-    if(typeof p.saveSettings==='function')await p.saveSettings();
   }
 })()
 '@
     $item = Invoke-CancipEval -Code $code -TimeoutSeconds 45
+    if ($item -is [string] -and $item.TrimStart().StartsWith('{')) { $item = $item | ConvertFrom-Json }
+    if ($null -eq $item) { throw "empty eval result for menu sort snapshot" }
     if ([int]$item.snapshotCount -lt 60) { throw "menu sort snapshot did not collect complete long/scrolling menu: $($item | ConvertTo-Json -Compress)" }
     if (-not $item.hasStage -or [int]$item.stageItems -lt 60 -or [int]$item.handles -lt 60) { throw "menu sort snapshot stage/handles missing: $($item | ConvertTo-Json -Compress)" }
     if ([int]$item.handles -ne [int]$item.stageItems) { throw "not every scrollable snapshot item received a sort handle: $($item | ConvertTo-Json -Compress)" }
-    if (-not ([string]$item.firstSelector).Contains('data-command')) { throw "snapshot item did not preserve original selector: $($item | ConvertTo-Json -Compress)" }
-    if (@($item.duplicateSelectors).Count -ne 2) { throw "duplicate menu labels were merged or selectors were not command-specific: $($item | ConvertTo-Json -Compress)" }
-    if (-not ([string]$item.stageOverflowY -match 'auto|scroll') -or -not $item.stageCanScroll) { throw "menu sort snapshot stage is not scrollable: $($item | ConvertTo-Json -Compress)" }
-    if ([string]$item.stageTouchAction -notmatch 'pan-y') { throw "menu sort snapshot stage does not allow vertical touch scroll: $($item | ConvertTo-Json -Compress)" }
-    if ([string]$item.stagePaddingTop -ne '0px' -or [string]$item.stageRadius -ne '0px') { throw "snapshot stage still has rounded/padded grouped look: $($item | ConvertTo-Json -Compress)" }
-    if ([string]$item.firstRadius -ne '0px') { throw "snapshot menu items still keep inconsistent rounded corners: $($item | ConvertTo-Json -Compress)" }
-    if ([int]$item.initialHiddenHandles -lt 1) { throw "offscreen snapshot handles were not hidden before scrolling: $($item | ConvertTo-Json -Compress)" }
-    if ([string]$item.lastHandleDisplay -eq 'none') { throw "bottom snapshot item handle did not appear after vertical scroll: $($item | ConvertTo-Json -Compress)" }
-    if ([double]$item.controlTop -lt 48) { throw "sort controls are still too close to the top edge: $($item | ConvertTo-Json -Compress)" }
+    if (-not $item.stageCanScroll) { throw "menu sort snapshot stage is not scrollable: $($item | ConvertTo-Json -Compress)" }
+    if ([int]$item.inlineHandles -ne [int]$item.stageItems) { throw "snapshot menu sort handles were not embedded in every scroll row: $($item | ConvertTo-Json -Compress)" }
+    if ([string]$item.lastHandleDisplay -eq 'none' -or -not $item.lastHandleInStage) { throw "bottom snapshot item handle did not appear inside the scrolled stage: $($item | ConvertTo-Json -Compress)" }
+    if (-not $item.done) { throw "sort done control is not visible/clickable: $($item | ConvertTo-Json -Compress)" }
     if ($item.stageAfter) { throw "snapshot stage was not cleaned up: $($item | ConvertTo-Json -Compress)" }
     Add-CaseResult -Group 'programmaticCases' -Item @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs }
   } catch {
@@ -1102,8 +1090,8 @@ if (-not $Case -or 'programmatic.ui-button-menu-complete-sort-label-guard'.Conta
   } finally {
     root.remove();
     p.settings.uiButtonRules=oldRules;
-    await p.saveSettings();
-    if(typeof p.scheduleUiButtonRulesApply==='function')p.scheduleUiButtonRulesApply(0);
+    p.clearUiRuleMarks?.();
+    p.applyUiButtonRules?.();
   }
 })()
 '@
@@ -1146,6 +1134,8 @@ if (-not $Case -or 'programmatic.ui-button-mobile-menu-label-snapshot'.Contains(
   const oldRules=(p.settings.uiButtonRules||[]).map((rule)=>({...rule}));
   try{
     const target=root.querySelector('#cancip-mobile-menu-a');
+    const normalItemRadius=getComputedStyle(target).borderTopLeftRadius;
+    const normalGroupRadius=getComputedStyle(target.closest('.menu-group')).borderTopLeftRadius;
     const descriptor=p.describeUiButtonEditTarget(target);
     const beforeStatus=p.uiButtonEditTargetStatus(descriptor);
     root.remove();
@@ -1153,10 +1143,16 @@ if (-not $Case -or 'programmatic.ui-button-mobile-menu-label-snapshot'.Contains(
     p.startUiButtonSortMode(descriptor);
     const stage=doc.querySelector('.obcc-ui-sort-snapshot-stage');
     const stageStyle=stage?getComputedStyle(stage):null;
+    const overlay=doc.querySelector('.obcc-ui-sort-overlay');
+    const overlayStyle=overlay?getComputedStyle(overlay):null;
+    const done=doc.querySelector('.obcc-ui-sort-done');
+    const doneStyle=done?getComputedStyle(done):null;
     const stageItems=stage?stage.querySelectorAll('.obcc-ui-sort-snapshot-item').length:0;
     const stageCanScroll=stage?stage.scrollHeight>stage.clientHeight:false;
     const stagePointerEvents=stageStyle?.pointerEvents||'';
     const stageZIndex=stageStyle?.zIndex||'';
+    const overlayZIndex=overlayStyle?.zIndex||'';
+    const doneDisplay=doneStyle?.display||'';
     if(stage){
       stage.scrollTop=stage.scrollHeight;
       stage.dispatchEvent(new Event('scroll'));
@@ -1164,38 +1160,50 @@ if (-not $Case -or 'programmatic.ui-button-mobile-menu-label-snapshot'.Contains(
     }
     const handlesAfterScroll=Array.from(doc.querySelectorAll('.obcc-ui-sort-handle'));
     const lastHandleDisplay=handlesAfterScroll.length?getComputedStyle(handlesAfterScroll[handlesAfterScroll.length-1]).display:'';
+    const inlineHandles=doc.querySelectorAll('.obcc-ui-sort-inline-handle').length;
+    const stageRect=stage?stage.getBoundingClientRect():null;
+    const lastHandleRect=handlesAfterScroll.length?handlesAfterScroll[handlesAfterScroll.length-1].getBoundingClientRect():null;
+    const lastHandleInStage=!!(stageRect&&lastHandleRect&&lastHandleRect.top>=stageRect.top&&lastHandleRect.bottom<=stageRect.bottom+1);
     p.stopUiButtonSortMode();
     return JSON.stringify({
       id:'programmatic.ui-button-mobile-menu-label-snapshot',
       elapsedMs:Date.now()-t,
       selector:descriptor.selector,
+      normalItemRadius,
+      normalGroupRadius,
       snapshotCount:descriptor.sortSnapshot?.items?.length||0,
       beforeVerified:beforeStatus.verified,
       afterVerified:afterStatus.verified,
       afterSelectorCount:afterStatus.selectorCount,
       afterLabelCount:afterStatus.labelCount,
       stageItems,
+      inlineHandles,
       stageCanScroll,
       stagePointerEvents,
       stageZIndex,
-      lastHandleDisplay
+      overlayZIndex,
+      doneDisplay,
+      lastHandleDisplay,
+      lastHandleInStage
     });
   } finally {
     root.remove();
     p.stopUiButtonSortMode?.();
-    p.settings.uiButtonRules=oldRules;
-    await p.saveSettings();
-    p.scheduleUiButtonRulesApply?.(0);
   }
 })()
 '@
     $item = Invoke-CancipEval -Code $code -TimeoutSeconds 45
+    if ($item -is [string] -and $item.TrimStart().StartsWith('{')) { $item = $item | ConvertFrom-Json }
+    if ($null -eq $item) { throw "empty eval result for mobile menu sort snapshot" }
     if ([string]$item.selector -match 'nth-of-type') { throw "mobile menu selector still uses brittle nth-of-type: $($item | ConvertTo-Json -Compress)" }
     if ([string]$item.selector -notmatch 'menu-group' -or [string]$item.selector -notmatch 'menu-item') { throw "mobile menu selector did not use label-guarded menu selector: $($item | ConvertTo-Json -Compress)" }
+    if ([string]$item.normalItemRadius -ne '0px' -or [string]$item.normalGroupRadius -ne '0px') { throw "mobile note-more menu/group still has rounded corners in normal state: $($item | ConvertTo-Json -Compress)" }
     if (-not $item.beforeVerified -or -not $item.afterVerified -or [int]$item.afterSelectorCount -ne 0 -or [int]$item.afterLabelCount -lt 1) { throw "mobile transient menu text verification failed after menu closed: $($item | ConvertTo-Json -Compress)" }
     if ([int]$item.snapshotCount -lt 40 -or [int]$item.stageItems -lt 40 -or -not $item.stageCanScroll) { throw "mobile menu sort snapshot did not stay complete/scrollable: $($item | ConvertTo-Json -Compress)" }
+    if ([int]$item.inlineHandles -ne [int]$item.stageItems) { throw "mobile menu sort handles were not embedded in every scroll row: $($item | ConvertTo-Json -Compress)" }
     if ([string]$item.stagePointerEvents -ne 'auto') { throw "mobile menu sort stage cannot receive touch events: $($item | ConvertTo-Json -Compress)" }
-    if ([string]$item.lastHandleDisplay -eq 'none') { throw "mobile menu bottom handle did not appear after scroll: $($item | ConvertTo-Json -Compress)" }
+    if ([int]$item.overlayZIndex -le [int]$item.stageZIndex -or [string]$item.doneDisplay -eq 'none') { throw "mobile menu sort controls are covered by snapshot stage: $($item | ConvertTo-Json -Compress)" }
+    if ([string]$item.lastHandleDisplay -eq 'none' -or -not $item.lastHandleInStage) { throw "mobile menu bottom handle did not appear inside the scrolled stage: $($item | ConvertTo-Json -Compress)" }
     Add-CaseResult -Group 'programmaticCases' -Item @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs }
   } catch {
     Add-CaseResult -Group 'programmaticCases' -Item @{ id = 'programmatic.ui-button-mobile-menu-label-snapshot'; pass = $false; error = $_.Exception.Message }

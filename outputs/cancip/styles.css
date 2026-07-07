@@ -927,23 +927,45 @@
 }
 
 .menu.obcc-ui-rule-flex-parent,
-.menu .obcc-ui-rule-flex-parent {
+.menu .obcc-ui-rule-flex-parent,
+.menu-group.obcc-ui-rule-flex-parent,
+.menu-group .obcc-ui-rule-flex-parent,
+.menu-section.obcc-ui-rule-flex-parent,
+.menu-section .obcc-ui-rule-flex-parent {
   flex-direction: column;
   align-items: stretch;
   gap: 0;
   border-radius: 0;
 }
 
-.menu .menu-item,
-.menu .menu-item:hover,
-.menu .menu-item.is-selected,
-.menu-group .menu-item,
-.menu-group .menu-item:hover,
-.menu-group .menu-item.is-selected {
+.menu,
+.menu-group,
+.menu-section {
   border-radius: 0;
 }
 
-.menu.obcc-ui-rule-menu-complete-sort-parent {
+.menu .menu-item,
+.menu .menu-item:hover,
+.menu .menu-item.is-selected,
+.menu .menu-section .menu-item,
+.menu .menu-section .menu-item:hover,
+.menu .menu-section .menu-item.is-selected,
+.menu-group .menu-item,
+.menu-group .menu-item:hover,
+.menu-group .menu-item.is-selected,
+.menu-group .menu-item.tappable,
+.menu-group .menu-item.tappable:hover,
+.menu-group .menu-item.tappable.is-selected,
+body.is-mobile .menu .menu-item,
+body.is-mobile .menu-group .menu-item,
+body.is-phone .menu .menu-item,
+body.is-phone .menu-group .menu-item {
+  border-radius: 0;
+}
+
+.menu.obcc-ui-rule-menu-complete-sort-parent,
+.menu-group.obcc-ui-rule-menu-complete-sort-parent,
+.menu-section.obcc-ui-rule-menu-complete-sort-parent {
   gap: 0;
   border-radius: 0;
 }
@@ -951,7 +973,11 @@
 .menu.obcc-ui-rule-flex-parent > .menu-section,
 .menu.obcc-ui-rule-menu-complete-sort-parent > .menu-section,
 .menu.obcc-ui-rule-flex-parent > .obcc-ui-rule-menu-section-contents,
-.menu.obcc-ui-rule-menu-complete-sort-parent > .obcc-ui-rule-menu-section-contents {
+.menu.obcc-ui-rule-menu-complete-sort-parent > .obcc-ui-rule-menu-section-contents,
+.menu-group.obcc-ui-rule-flex-parent > .menu-section,
+.menu-group.obcc-ui-rule-menu-complete-sort-parent > .menu-section,
+.menu-group.obcc-ui-rule-flex-parent > .obcc-ui-rule-menu-section-contents,
+.menu-group.obcc-ui-rule-menu-complete-sort-parent > .obcc-ui-rule-menu-section-contents {
   display: contents;
   margin: 0;
   padding: 0;
@@ -960,7 +986,9 @@
 }
 
 .menu.obcc-ui-rule-flex-parent > .menu-separator,
-.menu.obcc-ui-rule-menu-complete-sort-parent > .menu-separator {
+.menu.obcc-ui-rule-menu-complete-sort-parent > .menu-separator,
+.menu-group.obcc-ui-rule-flex-parent > .menu-separator,
+.menu-group.obcc-ui-rule-menu-complete-sort-parent > .menu-separator {
   display: none;
 }
 
@@ -969,7 +997,13 @@
 .menu.obcc-ui-rule-flex-parent .menu-item.is-selected,
 .menu.obcc-ui-rule-menu-complete-sort-parent .menu-item,
 .menu.obcc-ui-rule-menu-complete-sort-parent .menu-item:hover,
-.menu.obcc-ui-rule-menu-complete-sort-parent .menu-item.is-selected {
+.menu.obcc-ui-rule-menu-complete-sort-parent .menu-item.is-selected,
+.menu-group.obcc-ui-rule-flex-parent .menu-item,
+.menu-group.obcc-ui-rule-flex-parent .menu-item:hover,
+.menu-group.obcc-ui-rule-flex-parent .menu-item.is-selected,
+.menu-group.obcc-ui-rule-menu-complete-sort-parent .menu-item,
+.menu-group.obcc-ui-rule-menu-complete-sort-parent .menu-item:hover,
+.menu-group.obcc-ui-rule-menu-complete-sort-parent .menu-item.is-selected {
   margin: 0;
   border-radius: 0;
   box-shadow: none;
@@ -3229,7 +3263,7 @@ body .obcc-view-tts-action {
 .obcc-ui-sort-overlay {
   position: fixed;
   inset: 0;
-  z-index: 100001;
+  z-index: 100006;
   pointer-events: none;
 }
 
@@ -3241,7 +3275,7 @@ body .obcc-view-tts-action {
 .obcc-ui-sort-cancel,
 .obcc-ui-sort-done {
   position: fixed;
-  z-index: 100004;
+  z-index: 100007;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -3320,7 +3354,7 @@ body .obcc-view-tts-action {
   inset-inline-start: max(8px, env(safe-area-inset-left));
   top: calc(46px + env(safe-area-inset-top));
   bottom: calc(72px + env(safe-area-inset-bottom));
-  z-index: 100003;
+  z-index: 100005;
   display: flex;
   flex-direction: column;
   width: min(340px, calc(100vw - 16px - env(safe-area-inset-left) - env(safe-area-inset-right)));
@@ -3344,11 +3378,22 @@ body .obcc-view-tts-action {
 .menu.obcc-ui-sort-snapshot-stage .menu-item.is-selected,
 .menu.obcc-ui-sort-snapshot-stage .menu-item:first-child,
 .menu.obcc-ui-sort-snapshot-stage .menu-item:last-child {
+  position: relative;
   flex: 0 0 auto;
   min-height: 32px;
   margin: 0;
+  padding-inline-end: 34px;
   border-radius: 0;
   box-shadow: none;
+}
+
+.obcc-ui-sort-snapshot-stage .obcc-ui-sort-inline-handle {
+  position: absolute;
+  inset-inline-end: 4px;
+  top: 50%;
+  left: auto;
+  transform: translateY(-50%);
+  z-index: 2;
 }
 
 .obcc-ui-sort-snapshot-stage .menu-item-icon {
