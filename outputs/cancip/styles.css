@@ -941,9 +941,18 @@
 .menu,
 .menu-group,
 .menu-section {
+  --radius-s: 0px;
+  --radius-m: 0px;
+  --radius-l: 0px;
+  --radius-xl: 0px;
+  --button-radius: 0px;
+  --input-radius: 0px;
   border-radius: 0;
 }
 
+body .menu-item,
+body .menu-item.tappable,
+body [role="menuitem"],
 .menu .menu-item,
 .menu .menu-item:hover,
 .menu .menu-item.is-selected,
@@ -958,8 +967,25 @@
 .menu-group .menu-item.tappable.is-selected,
 body.is-mobile .menu .menu-item,
 body.is-mobile .menu-group .menu-item,
+body.is-mobile .menu-item,
+body.is-mobile .menu-item.tappable,
+body.is-mobile [role="menuitem"],
 body.is-phone .menu .menu-item,
-body.is-phone .menu-group .menu-item {
+body.is-phone .menu-group .menu-item,
+body.is-phone .menu-item,
+body.is-phone .menu-item.tappable,
+body.is-phone [role="menuitem"] {
+  border-radius: 0;
+}
+
+body .menu-item::before,
+body .menu-item::after,
+body .menu-item.tappable::before,
+body .menu-item.tappable::after,
+body .menu .menu-item > *,
+body .menu-group .menu-item > *,
+body.is-mobile .menu-item > *,
+body.is-phone .menu-item > * {
   border-radius: 0;
 }
 
@@ -3371,6 +3397,8 @@ body .obcc-view-tts-action {
   border-radius: 0;
   box-shadow: 0 14px 34px rgba(0, 0, 0, 0.28);
   background: var(--background-primary);
+  contain: layout paint;
+  scrollbar-gutter: stable;
 }
 
 .menu.obcc-ui-sort-snapshot-stage .menu-item,
@@ -3385,6 +3413,7 @@ body .obcc-view-tts-action {
   padding-inline-end: 34px;
   border-radius: 0;
   box-shadow: none;
+  touch-action: pan-y;
 }
 
 .obcc-ui-sort-snapshot-stage .obcc-ui-sort-inline-handle {

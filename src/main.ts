@@ -8974,7 +8974,6 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       updateHandles();
       updateControls();
     };
-    const scrollOrResize = () => updateAll();
     let updateQueued = false;
     const queueUpdateAll = () => {
       if (updateQueued) return;
@@ -8983,6 +8982,11 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
         updateQueued = false;
         updateAll();
       });
+    };
+    const scrollOrResize = (event?: Event) => {
+      const target = event?.target;
+      if (snapshotStage && target instanceof win.Node && snapshotStage.stage.contains(target)) return;
+      queueUpdateAll();
     };
     const mutationObserver = new MutationObserver((mutations) => {
       const hasExternalChange = mutations.some((mutation) => {
@@ -9058,6 +9062,16 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     const stage = doc.body.createDiv({ cls: "obcc-ui-sort-snapshot-stage menu" });
     stage.dataset.cancipUiSortSnapshotStage = "true";
     stage.setAttr("role", "menu");
+    stage.setCssStyles({
+      display: "flex",
+      flexDirection: "column",
+      maxHeight: "none",
+      overflowX: "hidden",
+      overflowY: "auto",
+      pointerEvents: "auto",
+      touchAction: "pan-y"
+    });
+    stage.style.setProperty("-webkit-overflow-scrolling", "touch");
     let anchor: HTMLElement | null = null;
     for (const item of snapshot.items) {
       const row = stage.createDiv({ cls: "menu-item obcc-ui-sort-snapshot-item" });
@@ -9073,6 +9087,53 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       row.createDiv({ cls: "menu-item-title", text: item.label });
       if (item.selector === snapshot.anchorSelector) anchor = row;
     }
+    let scrollPan: { pointerId: number; y: number; scrollTop: number; moved: boolean } | null = null;
+    const beginStagePan = (event: PointerEvent) => {
+      if (event.button !== 0 && event.pointerType === "mouse") return;
+      const win = doc.defaultView;
+      const rawTarget = event.target;
+      if (win && rawTarget instanceof win.Element && rawTarget.closest(".obcc-ui-sort-handle")) return;
+      scrollPan = { pointerId: event.pointerId, y: event.clientY, scrollTop: stage.scrollTop, moved: false };
+      try {
+        stage.setPointerCapture(event.pointerId);
+      } catch {
+        // Pointer capture is optional in Android WebView.
+      }
+    };
+    const moveStagePan = (event: PointerEvent) => {
+      if (!scrollPan || scrollPan.pointerId !== event.pointerId) return;
+      const delta = scrollPan.y - event.clientY;
+      if (Math.abs(delta) < 2) return;
+      scrollPan.moved = true;
+      stage.scrollTop = scrollPan.scrollTop + delta;
+      event.preventDefault();
+      event.stopPropagation();
+    };
+    const endStagePan = (event: PointerEvent) => {
+      if (!scrollPan || scrollPan.pointerId !== event.pointerId) return;
+      const moved = scrollPan.moved;
+      try {
+        stage.releasePointerCapture(event.pointerId);
+      } catch {
+        // Pointer capture may already be released.
+      }
+      scrollPan = null;
+      if (moved) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    };
+    const wheelStage = (event: WheelEvent) => {
+      if (!event.deltaY) return;
+      stage.scrollTop += event.deltaY;
+      event.preventDefault();
+      event.stopPropagation();
+    };
+    stage.addEventListener("pointerdown", beginStagePan);
+    stage.addEventListener("pointermove", moveStagePan);
+    stage.addEventListener("pointerup", endStagePan);
+    stage.addEventListener("pointercancel", endStagePan);
+    stage.addEventListener("wheel", wheelStage, { passive: false });
     return {
       anchor: anchor ?? stage.querySelector<HTMLElement>(".obcc-ui-sort-snapshot-item") ?? stage,
       stage,
