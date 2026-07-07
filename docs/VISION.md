@@ -81,6 +81,28 @@ super-tool:
 - `rag`: local lightweight indexing and retrieval.
 - `audit`: record actions, approvals, diffs, and outputs.
 
+## Self-Improvement Loop
+
+Cancip should grow toward solving most ordinary Obsidian problems on its own.
+The practical target is that roughly 80% of vault management, plugin command,
+search, memory, attachment, review, automation, and source-editing requests can
+be routed, attempted, verified, and summarized without handing the task back to
+another desktop agent.
+
+That requires a closed loop, not just more prompt text:
+
+- Keep reusable smoke/regression cases for prompt economy, memory routing,
+  command execution, plugin discovery, approvals, review-gate behavior, and
+  mobile UI paths.
+- Treat `npm run verify` as the core gate before committing runtime or prompt
+  changes.
+- Keep heavy mobile UI/button tests isolated from the core gate so one
+  WebView/eval timeout does not hide unrelated regressions.
+- Write a latest machine-readable smoke report so Cancip, a subagent, or a
+  desktop agent can resume from the smallest failing case.
+- When a failure repeats, turn the fix into a programmatic case instead of
+  relying only on memory or instructions.
+
 ## GitHub Scope
 
 Cancip should manage GitHub from the phone when configured:

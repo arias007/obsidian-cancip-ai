@@ -1,6 +1,7 @@
 param(
   [switch]$Full,
   [switch]$Write,
+  [switch]$DirectEval,
   [string]$Case = '',
   [switch]$VerboseReport,
   [switch]$FailFast
@@ -10,12 +11,15 @@ $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $PSScriptRoot
 $CasesPath = Join-Path $Root 'tests/cancip-regression-cases.json'
 $ObqPath = 'C:/Users/35007/Documents/Codex/tools/ob-cli-queue/obq.ps1'
+$ObsidianCliPath = 'C:/Program Files/Obsidian/Obsidian.com'
 $OutDir = Join-Path $Root 'reports'
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $Script:OriginalSessionId = ''
 $Script:SmokeSessionId = ''
+$Script:SkipSmokeSessionRestore = $false
 
 $AllCases = Get-Content -Raw -LiteralPath $CasesPath -Encoding UTF8 | ConvertFrom-Json
+$RunProfile = if ($Case -like '*ui-button*') { 'ui-button' } elseif ($Write) { 'write' } elseif ($Full) { 'full' } else { 'core' }
 $DefaultCommandIds = @(
   'command.tools.index',
   'command.memory.read.profile',
@@ -51,12 +55,17 @@ $Report = [ordered]@{
   promptHead = ''
   writeEnabled = [bool]$Write
   full = [bool]$Full
+  directEval = [bool]$DirectEval
   caseFilter = $Case
+  runProfile = $RunProfile
   probe = $null
   promptCases = @()
   commandCases = @()
   programmaticCases = @()
   writeCases = @()
+  failures = @()
+  failureCountByGroup = [ordered]@{}
+  recommendations = @()
   totals = [ordered]@{ pass = 0; fail = 0; skip = 0; elapsedMs = 0 }
 }
 $Started = Get-Date
@@ -71,26 +80,61 @@ function Invoke-CancipEval {
     [string]$Code,
     [int]$TimeoutSeconds = 25
   )
-  $out = & $ObqPath `
-    -CommandTimeoutSeconds $TimeoutSeconds `
-    -WaitTimeoutSeconds ([Math]::Max(80, $TimeoutSeconds + 45)) `
-    eval "code=$Code" 2>&1
-  if ($LASTEXITCODE -ne 0) {
-    throw "obq exited $LASTEXITCODE`: $($out -join "`n")"
+  $attempts = @()
+  if ($DirectEval -and (Test-Path -LiteralPath $ObsidianCliPath) -and $Code.Length -lt 24000) {
+    $attempts += @{ name = 'direct' }
   }
-  $raw = ($out -join "`n")
-  $matches = [regex]::Matches($raw, '(?m)^=>\s*(.+?)\s*$')
-  if ($matches.Count -gt 0) {
-    $text = $matches[$matches.Count - 1].Groups[1].Value.Trim()
-  } else {
-    $text = $raw.Trim() -replace '^=>\s*', ''
+  if (Test-Path -LiteralPath $ObqPath) {
+    $attempts += @{ name = 'queue' }
   }
-  try {
-    return $text | ConvertFrom-Json
-  } catch {
-    $preview = if ($text.Length -gt 1200) { $text.Substring(0, 1200) + "`n...[truncated]" } else { $text }
-    throw "invalid eval JSON: $preview"
+  if (-not $attempts.Count) { throw 'No Obsidian eval transport is available' }
+
+  $errors = @()
+  foreach ($attempt in $attempts) {
+    try {
+      $out = @()
+      if ($attempt.name -eq 'direct') {
+        $out = & $ObsidianCliPath eval "code=$Code" 2>&1
+        $exitCode = $LASTEXITCODE
+      } else {
+        $out = & $ObqPath `
+          -CommandTimeoutSeconds $TimeoutSeconds `
+          -WaitTimeoutSeconds ([Math]::Max(45, $TimeoutSeconds + 25)) `
+          eval "code=$Code" 2>&1
+        $exitCode = $LASTEXITCODE
+      }
+      $raw = ($out -join "`n").Trim()
+      if ($exitCode -ne 0) { throw "$($attempt.name) exited $exitCode`: $raw" }
+      if ($raw -match 'CLI is unable to find Obsidian|unable to find Obsidian|Please make sure Obsidian is running') {
+        throw "$($attempt.name) cannot connect to Obsidian: $raw"
+      }
+      if ($raw -match '(?im)^(error|failed|exception)\b' -and $raw -notmatch '(?m)^=>\s*') {
+        throw "$($attempt.name) returned error text: $raw"
+      }
+      $matches = [regex]::Matches($raw, '(?m)^=>\s*(.+?)\s*$')
+      if ($matches.Count -gt 0) {
+        $text = $matches[$matches.Count - 1].Groups[1].Value.Trim()
+      } else {
+        $text = $raw.Trim() -replace '^=>\s*', ''
+      }
+      if (-not $text) { throw "$($attempt.name) returned an empty eval response" }
+      try {
+        return $text | ConvertFrom-Json
+      } catch {
+        $preview = if ($text.Length -gt 1200) { $text.Substring(0, 1200) + "`n...[truncated]" } else { $text }
+        throw "$($attempt.name) returned invalid eval JSON: $preview"
+      }
+    } catch {
+      $errors += "$($attempt.name): $($_.Exception.Message)"
+    }
   }
+  throw "All Obsidian eval transports failed:`n$($errors -join "`n")"
+}
+
+function Should-RunProgrammaticCase {
+  param([string]$Id)
+  if ($Case) { return $Id.Contains($Case) }
+  return -not ($Id -like 'programmatic.ui-button-*')
 }
 
 function Select-CaseList {
@@ -133,9 +177,50 @@ function Add-CaseResult {
   }
   $Report.ok = $false
   $Report.totals.fail++
+  $Report.failures += @([ordered]@{
+    group = $Group
+    id = [string]$Item.id
+    error = [string]$Item.error
+    recommendation = Get-SmokeRecommendation -Group $Group -Id ([string]$Item.id) -Error ([string]$Item.error)
+  })
   Write-Host "$Group/$($Item.id) ... FAIL $($Item.error)"
   if ($VerboseReport -and $Item.debug) { Write-Host $Item.debug }
+  if ($RunProfile -eq 'ui-button' -and (Is-FatalSmokeTransportFailure ([string]$Item.error))) {
+    $Script:SkipSmokeSessionRestore = $true
+    Write-FinalReport 1
+  }
   if ($FailFast) { Write-FinalReport 1 }
+}
+
+function Is-FatalSmokeTransportFailure {
+  param([string]$Error)
+  return $Error -match 'Timed out after \d+ seconds|empty eval response|returned an empty eval response|cannot connect to Obsidian|unable to find Obsidian|Obsidian plugin/view is not loaded|No Obsidian eval transport is available'
+}
+
+function Get-SmokeRecommendation {
+  param([string]$Group, [string]$Id, [string]$Error)
+  if ($Error -match 'unable to find Obsidian|cannot connect to Obsidian|Obsidian plugin/view is not loaded') {
+    return 'Restart Obsidian, verify Cancip is enabled, then rerun the same focused smoke case.'
+  }
+  if ($Error -match 'Timed out after \d+ seconds') {
+    return 'Rerun the smallest focused case; split or shrink the eval body if it still times out.'
+  }
+  if ($Error -match 'empty eval response|returned an empty eval response') {
+    return 'Rerun the smallest focused case with direct eval or split the UI eval so a missing return cannot stall the queue.'
+  }
+  if ($Id -like 'programmatic.ui-button-*') {
+    return 'Keep this in npm run smoke:ui; inspect the UI button management path without blocking core smoke.'
+  }
+  if ($Group -eq 'promptCases') {
+    return 'Inspect promptPayloadPolicy/buildContext routing and keep always-sent prompt/context under the case budget.'
+  }
+  if ($Group -eq 'commandCases') {
+    return 'Inspect command bus registration/execution and add a generic route or help text before changing the prompt.'
+  }
+  if ($Group -eq 'writeCases') {
+    return 'Inspect approval/write execution and cleanup behavior under .cancip/test-lab.'
+  }
+  return 'Open reports/cancip-smoke-latest.json and rerun with -Case plus -VerboseReport for the smallest repro.'
 }
 
 function Assert-PromptCase {
@@ -181,16 +266,32 @@ function Write-FinalReport {
   Restore-CancipSessionAfterSmoke
   $Report.finishedAt = (Get-Date).ToUniversalTime().ToString('o')
   $Report.totals.elapsedMs = [int]((Get-Date) - $Started).TotalMilliseconds
+  $counts = [ordered]@{}
+  foreach ($failure in @($Report.failures)) {
+    $group = [string]$failure.group
+    if (-not $counts.Contains($group)) { $counts[$group] = 0 }
+    $counts[$group]++
+  }
+  $Report.failureCountByGroup = $counts
+  $Report.recommendations = @($Report.failures | ForEach-Object { $_.recommendation } | Select-Object -Unique)
   $stamp = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH-mm-ss-fffZ')
   $path = Join-Path $OutDir "cancip-smoke-$stamp.json"
-  $Report | ConvertTo-Json -Depth 50 | Set-Content -LiteralPath $path -Encoding UTF8
+  $latestPath = Join-Path $OutDir 'cancip-smoke-latest.json'
+  $json = $Report | ConvertTo-Json -Depth 50
+  $json | Set-Content -LiteralPath $path -Encoding UTF8
+  $json | Set-Content -LiteralPath $latestPath -Encoding UTF8
   $status = if ($Report.ok) { 'PASS' } else { 'FAIL' }
   Write-Host "Cancip smoke $status / version $($Report.version) / pass $($Report.totals.pass) / fail $($Report.totals.fail) / skip $($Report.totals.skip) / $($Report.totals.elapsedMs)ms"
   Write-Host "Report: $path"
+  Write-Host "Latest: $latestPath"
   exit $Code
 }
 
 function Restore-CancipSessionAfterSmoke {
+  if ($Script:SkipSmokeSessionRestore) {
+    Write-Host 'Smoke cleanup skipped after fatal Obsidian eval transport failure.'
+    return
+  }
   if (-not $Script:OriginalSessionId) { return }
   try {
     $sessionId = $Script:OriginalSessionId.Replace("'", "\'")
@@ -830,7 +931,7 @@ if (-not $Case -or 'programmatic.choice-cards-render-at-message-bottom'.Contains
   }
 }
 
-if (-not $Case -or 'programmatic.ui-button-sort-filters'.Contains($Case)) {
+if (Should-RunProgrammaticCase 'programmatic.ui-button-sort-filters') {
   try {
     $code = @'
 (()=>{
@@ -885,7 +986,7 @@ if (-not $Case -or 'programmatic.ui-button-sort-filters'.Contains($Case)) {
   }
 }
 
-if (-not $Case -or 'programmatic.ui-button-sort-menu-snapshot'.Contains($Case)) {
+if (Should-RunProgrammaticCase 'programmatic.ui-button-sort-menu-snapshot') {
   try {
     $code = @'
 (async()=>{
@@ -988,7 +1089,7 @@ if (-not $Case -or 'programmatic.ui-button-sort-menu-snapshot'.Contains($Case)) 
   }
 }
 
-if (-not $Case -or 'programmatic.ui-button-rule-reset-list'.Contains($Case)) {
+if (Should-RunProgrammaticCase 'programmatic.ui-button-rule-reset-list') {
   try {
     $code = @'
 (async()=>{
@@ -1033,7 +1134,7 @@ if (-not $Case -or 'programmatic.ui-button-rule-reset-list'.Contains($Case)) {
   }
 }
 
-if (-not $Case -or 'programmatic.ui-button-rule-broad-selector-isolated'.Contains($Case)) {
+if (Should-RunProgrammaticCase 'programmatic.ui-button-rule-broad-selector-isolated') {
   try {
     $code = @'
 (async()=>{
@@ -1065,7 +1166,7 @@ if (-not $Case -or 'programmatic.ui-button-rule-broad-selector-isolated'.Contain
   }
 }
 
-if (-not $Case -or 'programmatic.ui-button-menu-complete-sort-label-guard'.Contains($Case)) {
+if (Should-RunProgrammaticCase 'programmatic.ui-button-menu-complete-sort-label-guard') {
   try {
     $code = @'
 (async()=>{
@@ -1138,7 +1239,7 @@ if (-not $Case -or 'programmatic.ui-button-menu-complete-sort-label-guard'.Conta
   }
 }
 
-if (-not $Case -or 'programmatic.ui-button-mobile-menu-label-snapshot'.Contains($Case)) {
+if (Should-RunProgrammaticCase 'programmatic.ui-button-mobile-menu-label-snapshot') {
   try {
     $code = @'
 (async()=>{
@@ -1279,7 +1380,7 @@ if (-not $Case -or 'programmatic.ui-button-mobile-menu-label-snapshot'.Contains(
   }
 }
 
-if (-not $Case -or 'programmatic.ui-button-context-actionable'.Contains($Case)) {
+if (Should-RunProgrammaticCase 'programmatic.ui-button-context-actionable') {
   try {
     $code = @'
 (async()=>{

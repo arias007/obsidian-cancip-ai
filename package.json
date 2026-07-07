@@ -6,8 +6,11 @@
   "scripts": {
     "build": "tsc --noEmit --skipLibCheck && node scripts/prepare-release-output.mjs && node esbuild.config.mjs production",
     "check": "tsc --noEmit --skipLibCheck",
+    "verify": "npm run check && npm run smoke",
     "smoke": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-cancip-smoke.ps1",
     "smoke:full": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-cancip-smoke.ps1 -Full",
+    "smoke:ui": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-cancip-smoke.ps1 -Full -Case ui-button -FailFast",
+    "smoke:direct": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-cancip-smoke.ps1 -DirectEval",
     "smoke:write": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-cancip-smoke.ps1 -Write"
   },
   "devDependencies": {
