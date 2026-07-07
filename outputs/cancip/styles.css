@@ -926,6 +926,32 @@
   display: inline-flex;
 }
 
+.menu.obcc-ui-rule-flex-parent,
+.menu .obcc-ui-rule-flex-parent {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.menu.obcc-ui-rule-flex-parent > .obcc-ui-rule-menu-section-contents,
+.menu.obcc-ui-rule-menu-complete-sort-parent > .obcc-ui-rule-menu-section-contents {
+  display: contents;
+}
+
+.menu.obcc-ui-rule-flex-parent > .menu-separator,
+.menu.obcc-ui-rule-menu-complete-sort-parent > .menu-separator {
+  display: none;
+}
+
+.menu.obcc-ui-rule-flex-parent .menu-item,
+.menu.obcc-ui-rule-flex-parent .menu-item:hover,
+.menu.obcc-ui-rule-flex-parent .menu-item.is-selected,
+.menu.obcc-ui-rule-menu-complete-sort-parent .menu-item,
+.menu.obcc-ui-rule-menu-complete-sort-parent .menu-item:hover,
+.menu.obcc-ui-rule-menu-complete-sort-parent .menu-item.is-selected {
+  margin: 0;
+  border-radius: 0;
+}
+
 body .obcc-ui-rule-hidden,
 body [data-cancip-ui-hidden="true"],
 body [data-cancip-tag-hidden="true"] {
@@ -2887,17 +2913,31 @@ body .obcc-view-tts-action {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  position: relative;
 }
 
 .obcc-button-edit-sticky-actions {
   position: sticky;
-  top: 0;
-  z-index: 2;
+  top: -1px;
+  z-index: 12;
   display: flex;
+  align-self: stretch;
   justify-content: flex-end;
   gap: 8px;
-  padding: 6px 0;
+  margin: -10px -16px 0;
+  padding: 12px 16px 8px;
   background: var(--modal-background, var(--background-primary));
+  box-shadow: 0 1px 0 var(--background-modifier-border);
+}
+
+.obcc-button-edit-sticky-actions::before {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  top: -28px;
+  height: 28px;
+  background: inherit;
+  pointer-events: none;
 }
 
 .obcc-button-edit-target {
@@ -2992,6 +3032,120 @@ body .obcc-view-tts-action {
   margin-top: 4px;
 }
 
+.obcc-ui-button-rules-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 8px 0 12px;
+  padding: 10px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-secondary);
+}
+
+.obcc-ui-button-rules-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.obcc-ui-button-rules-title {
+  min-width: 0;
+}
+
+.obcc-ui-button-rules-name {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.obcc-ui-button-rules-desc,
+.obcc-ui-button-rules-empty,
+.obcc-ui-button-rule-detail {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.obcc-ui-button-rules-reset-all,
+.obcc-ui-button-rule-reset {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--background-primary);
+  color: var(--text-normal);
+}
+
+.obcc-ui-button-rules-reset-all svg,
+.obcc-ui-button-rule-reset svg {
+  width: 15px;
+  height: 15px;
+}
+
+.obcc-ui-button-rule-items {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.obcc-ui-button-rule-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 7px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 7px;
+  background: var(--background-primary);
+}
+
+.obcc-ui-button-rule-main {
+  min-width: 0;
+}
+
+.obcc-ui-button-rule-label {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.obcc-ui-button-rule-detail {
+  overflow: hidden;
+  margin-top: 2px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.obcc-ui-button-rule-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 5px;
+}
+
+.obcc-ui-button-rule-tags span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--background-modifier-hover);
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.3;
+}
+
 .obcc-ui-custom-button {
   flex: 0 0 auto;
   min-width: var(--clickable-icon-size, 32px);
@@ -3014,6 +3168,11 @@ body .obcc-view-tts-action {
 }
 
 .obcc-ui-sort-handle,
+.obcc-ui-sort-zoom-out,
+.obcc-ui-sort-zoom-in,
+.obcc-ui-sort-undo,
+.obcc-ui-sort-redo,
+.obcc-ui-sort-cancel,
 .obcc-ui-sort-done {
   position: fixed;
   z-index: 100002;
@@ -3031,15 +3190,28 @@ body .obcc-view-tts-action {
 }
 
 .obcc-ui-sort-handle svg,
+.obcc-ui-sort-zoom-out svg,
+.obcc-ui-sort-zoom-in svg,
+.obcc-ui-sort-undo svg,
+.obcc-ui-sort-redo svg,
+.obcc-ui-sort-cancel svg,
 .obcc-ui-sort-done svg {
   width: 16px;
   height: 16px;
 }
 
 .obcc-ui-sort-handle {
-  background: var(--background-primary);
+  width: var(--obcc-ui-sort-handle-size, 20px);
+  height: var(--obcc-ui-sort-handle-size, 20px);
+  background: color-mix(in srgb, var(--background-primary) 88%, transparent);
   color: var(--interactive-accent);
   cursor: grab;
+  backdrop-filter: blur(2px);
+}
+
+.obcc-ui-sort-handle svg {
+  width: 12px;
+  height: 12px;
 }
 
 .obcc-ui-sort-handle.is-dragging {
@@ -3048,18 +3220,81 @@ body .obcc-view-tts-action {
   color: var(--text-on-accent);
 }
 
+.obcc-ui-sort-undo,
+.obcc-ui-sort-redo,
+.obcc-ui-sort-zoom-out,
+.obcc-ui-sort-zoom-in,
+.obcc-ui-sort-cancel {
+  background: var(--background-primary);
+  color: var(--text-normal);
+}
+
+.obcc-ui-sort-undo:disabled,
+.obcc-ui-sort-redo:disabled {
+  opacity: 0.38;
+  pointer-events: none;
+}
+
 .obcc-ui-sort-done {
   background: var(--interactive-accent);
   color: var(--text-on-accent);
 }
 
 .obcc-ui-sort-target {
-  outline: 1px dashed var(--interactive-accent);
-  outline-offset: 2px;
+  outline: var(--obcc-ui-sort-outline-width, 1px) dashed var(--interactive-accent);
+  outline-offset: var(--obcc-ui-sort-outline-offset, 2px);
 }
 
 .obcc-ui-sort-dragging {
   opacity: 0.72;
+}
+
+.obcc-ui-sort-snapshot-stage {
+  position: fixed;
+  inset-inline-start: max(8px, env(safe-area-inset-left));
+  top: calc(46px + env(safe-area-inset-top));
+  bottom: calc(72px + env(safe-area-inset-bottom));
+  z-index: 100000;
+  display: flex;
+  flex-direction: column;
+  width: min(340px, calc(100vw - 16px - env(safe-area-inset-left) - env(safe-area-inset-right)));
+  max-height: none;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  scroll-padding-block: 8px 24px;
+  padding: 6px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.28);
+  background: var(--background-primary);
+}
+
+.obcc-ui-sort-snapshot-stage .menu-item {
+  flex: 0 0 auto;
+  min-height: 32px;
+  margin: 0;
+  border-radius: 0;
+}
+
+.obcc-ui-sort-snapshot-stage .menu-item:hover,
+.obcc-ui-sort-snapshot-stage .menu-item.is-selected,
+.obcc-ui-sort-snapshot-stage .menu-item:first-child,
+.obcc-ui-sort-snapshot-stage .menu-item:last-child {
+  border-radius: 0;
+}
+
+.obcc-ui-sort-snapshot-stage .menu-item-icon {
+  flex: 0 0 20px;
+}
+
+.obcc-ui-sort-snapshot-stage .menu-item-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .obcc-ui-custom-button-label {

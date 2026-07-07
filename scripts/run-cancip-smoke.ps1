@@ -34,8 +34,11 @@ $DefaultCommandIds = @(
   'command.obsidian.resolveCommand.dataview-refresh',
   'command.skills.list',
   'command.plugins.capabilities.notedraw',
+  'command.plugins.capabilities.pdftion',
   'command.plugins.route.notedraw',
   'command.annotate.help',
+  'command.annotate.note.status',
+  'command.annotate.pdf.status',
   'command.study.help',
   'command.automation.templates',
   'command.attachment.help'
@@ -245,7 +248,7 @@ foreach ($test in $CommandCases) {
 if (-not $Case -or 'programmatic.vault-state-sync-classifier'.Contains($Case)) {
   try {
     $code = @'
-(()=>{
+(async()=>{
   const t=Date.now();
   const p=app.plugins.plugins.cancip;
   if(!p||typeof p.classifyCancipVaultSyncPath!=='function')throw new Error('missing vault sync classifier');
@@ -396,7 +399,7 @@ if (-not $Case -or 'programmatic.approval-run-continues-final'.Contains($Case)) 
 if (-not $Case -or 'programmatic.config-read-routing'.Contains($Case)) {
   try {
     $code = @'
-(()=>{
+(async()=>{
   const t=Date.now();
   const p=app.plugins.plugins.cancip;
   const leaves=app.workspace.getLeavesOfType('cancip-view');
@@ -482,7 +485,7 @@ if (-not $Case -or 'programmatic.plugin-manifest-read-routing'.Contains($Case)) 
   }
 }
 
-if (-not $Case -or 'programmatic.progress-step-readable-notes'.Contains($Case)) {
+if (-not $Case -or 'programmatic.progress-step-compact-no-prompt-leak'.Contains($Case)) {
   try {
     $code = @'
 (()=>{
@@ -499,14 +502,24 @@ if (-not $Case -or 'programmatic.progress-step-readable-notes'.Contains($Case)) 
     v.updateProgressStep(msg,v.t('preparingContext'),v.formatContextAuditDetail('progress smoke','progress smoke','progress smoke',{system:'system',contextText:'ctx',searchHits:[],images:[]}));
     const finalContent=String(msg.content||'');
     if(typeof v.stopProgressStepTimer==='function')v.stopProgressStepTimer(msg.id);
+    const legacyContent=[
+      '<!-- cancip-progress-step -->',
+      '<!-- cancip-process-message -->',
+      '\u5df2\u6267\u884c \u00b7 \u6b63\u5728\u51c6\u5907\u4e0a\u4e0b\u6587... \u00b7 \u8017\u65f6 150ms',
+      '\u6b63\u5728\u51c6\u5907\u672c\u8f6e\u6700\u5c0f\u5fc5\u8981\u4e0a\u4e0b\u6587\uff1a\u539f\u59cb\u95ee\u9898\u3001\u4efb\u52a1\u76ee\u6807\u3001\u5fc5\u8981\u8bb0\u5fc6/\u8ba1\u5212\u548c\u4e0a\u4e00\u6b65\u7ed3\u679c\u3002'
+    ].join('\n');
+    v.messages=[{id:'smoke-legacy-progress',role:'assistant',content:legacyContent,createdAt:Date.now()}];
+    if(typeof v.renderMessages==='function')v.renderMessages();
+    const rendered=String(v.messagesEl?.textContent||'');
       return JSON.stringify({
-        id:'programmatic.progress-step-readable-notes',
+        id:'programmatic.progress-step-compact-no-prompt-leak',
         elapsedMs:Date.now()-t,
-        liveHasReadableNote:/\u4e0a\u4e0b\u6587|\u6700\u5c0f\u5fc5\u8981|Preparing|smallest useful/i.test(liveContent),
-        liveAvoidsPromptishNote:!(/\u76ee\u7684[：:]|\u505a\u6cd5[：:]|Goal:|Method:/i.test(liveContent)),
+        liveHasCompactStatus:/\u6b63\u5728\u51c6\u5907\u4e0a\u4e0b\u6587|Preparing context/i.test(liveContent),
+        liveLeaksPromptishNote:/\u6700\u5c0f\u5fc5\u8981|smallest useful|System prompt sent|User input sent|Raw model reply|Model prompt for this turn|\u76ee\u7684[：:]|\u505a\u6cd5[：:]|Goal:|Method:/i.test(liveContent),
         liveOpen,
         finalHasDetail:/Step details|步骤详情|<details>/.test(finalContent),
-        finalHasReadableNote:/\u4e0a\u4e0b\u6587|\u6700\u5c0f\u5fc5\u8981|Preparing|smallest useful/i.test(finalContent)
+        finalLeaksPrompt:/\u6700\u5c0f\u5fc5\u8981|smallest useful|System prompt sent|User input sent|Raw model reply|Model prompt for this turn|User prompt|Resolved task goal/i.test(finalContent),
+        legacyRenderedLeaks:/\u6700\u5c0f\u5fc5\u8981|smallest useful|System prompt sent|User input sent|Raw model reply/i.test(rendered)
       });
   } finally {
     v.messages=oldMessages;
@@ -515,14 +528,649 @@ if (-not $Case -or 'programmatic.progress-step-readable-notes'.Contains($Case)) 
 })()
 '@
     $item = Invoke-CancipEval -Code $code -TimeoutSeconds 45
-    if (-not $item.liveHasReadableNote) { throw 'live progress missing readable status note' }
-    if (-not $item.liveAvoidsPromptishNote) { throw 'live progress still uses prompt-like goal/method note' }
+    if (-not $item.liveHasCompactStatus) { throw 'live progress missing compact status line' }
+    if ($item.liveLeaksPromptishNote) { throw 'live progress still leaks prompt-like note' }
     if (-not $item.liveOpen) { throw 'live progress timer not active' }
     if (-not $item.finalHasDetail) { throw 'final progress missing folded detail' }
-    if (-not $item.finalHasReadableNote) { throw 'final progress missing readable status note' }
+    if ($item.finalLeaksPrompt) { throw 'final progress detail still leaks prompt text' }
+    if ($item.legacyRenderedLeaks) { throw 'legacy progress render still leaks prompt-like note' }
     Add-CaseResult -Group 'programmaticCases' -Item @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs }
   } catch {
-    Add-CaseResult -Group 'programmaticCases' -Item @{ id = 'programmatic.progress-step-readable-notes'; pass = $false; error = $_.Exception.Message }
+    Add-CaseResult -Group 'programmaticCases' -Item @{ id = 'programmatic.progress-step-compact-no-prompt-leak'; pass = $false; error = $_.Exception.Message }
+  }
+}
+
+if (-not $Case -or 'programmatic.render-scheduler-coalesces'.Contains($Case)) {
+  try {
+    $code = @'
+(async()=>{
+  const t=Date.now();
+  const p=app.plugins.plugins.cancip;
+  const v=p&&typeof p.activateView==='function'?await p.activateView():app.workspace.getLeavesOfType('cancip-view')[0]?.view??null;
+  if(!v)throw new Error('Cancip view unavailable');
+  if(typeof v.scheduleRenderMessages!=='function')throw new Error('scheduleRenderMessages missing');
+  const original=v.renderMessages;
+  let renders=0;
+  try{
+    v.renderMessages=function(){renders++; return original.apply(this,arguments);};
+    for(let i=0;i<24;i++)v.scheduleRenderMessages();
+    await new Promise((resolve)=>setTimeout(resolve,420));
+    return JSON.stringify({id:'programmatic.render-scheduler-coalesces',elapsedMs:Date.now()-t,renders,hasFrameField:'messageRenderFrame' in v});
+  } finally {
+    v.renderMessages=original;
+    if(typeof v.cancelScheduledMessageRender==='function')v.cancelScheduledMessageRender();
+  }
+})()
+'@
+    $item = Invoke-CancipEval -Code $code -TimeoutSeconds 45
+    if ([int]$item.renders -lt 1) { throw "scheduled render never flushed: $($item | ConvertTo-Json -Compress)" }
+    if ([int]$item.renders -gt 4) { throw "scheduled render did not coalesce enough: $($item | ConvertTo-Json -Compress)" }
+    if (-not $item.hasFrameField) { throw 'render scheduler runtime field missing' }
+    Add-CaseResult -Group 'programmaticCases' -Item @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs; renders = $item.renders }
+  } catch {
+    Add-CaseResult -Group 'programmaticCases' -Item @{ id = 'programmatic.render-scheduler-coalesces'; pass = $false; error = $_.Exception.Message }
+  }
+}
+
+if (-not $Case -or 'programmatic.session-history-cache-dedupes'.Contains($Case)) {
+  try {
+    $code = @'
+(async()=>{
+  const t=Date.now();
+  const p=app.plugins.plugins.cancip;
+  const v=p&&typeof p.activateView==='function'?await p.activateView():app.workspace.getLeavesOfType('cancip-view')[0]?.view??null;
+  if(!v)throw new Error('Cancip view unavailable');
+  if(typeof v.readSessionHistoryIndex!=='function'||typeof v.readSessionHistoryIndexUncached!=='function')throw new Error('history cache methods unavailable');
+  const original=v.readSessionHistoryIndexUncached;
+  let uncachedCalls=0;
+  try{
+    v.sessionHistoryCache=null;
+    v.sessionHistoryReadPromise=null;
+    v.readSessionHistoryIndexUncached=function(){uncachedCalls++; return original.apply(this,arguments);};
+    await Promise.all([v.readSessionHistoryIndex(),v.readSessionHistoryIndex(),v.readSessionHistoryIndex()]);
+    const afterConcurrent=uncachedCalls;
+    await v.readSessionHistoryIndex();
+    return JSON.stringify({id:'programmatic.session-history-cache-dedupes',elapsedMs:Date.now()-t,afterConcurrent,afterCached:uncachedCalls,cache:!!v.sessionHistoryCache});
+  } finally {
+    v.readSessionHistoryIndexUncached=original;
+    v.sessionHistoryReadPromise=null;
+  }
+})()
+'@
+    $item = Invoke-CancipEval -Code $code -TimeoutSeconds 45
+    if ([int]$item.afterConcurrent -ne 1) { throw "concurrent history reads were not deduped: $($item | ConvertTo-Json -Compress)" }
+    if ([int]$item.afterCached -ne 1 -or -not $item.cache) { throw "cached history read missed cache: $($item | ConvertTo-Json -Compress)" }
+    Add-CaseResult -Group 'programmaticCases' -Item @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs }
+  } catch {
+    Add-CaseResult -Group 'programmaticCases' -Item @{ id = 'programmatic.session-history-cache-dedupes'; pass = $false; error = $_.Exception.Message }
+  }
+}
+
+if (-not $Case -or 'programmatic.tool-run-estimated-line-delta'.Contains($Case)) {
+  try {
+    $code = @'
+(()=>{
+  const t=Date.now();
+  const p=app.plugins.plugins.cancip;
+  const v=app.workspace.getLeavesOfType('cancip-view')[0]?.view;
+  if(!p||!v)throw new Error('Cancip view unavailable');
+  const run=v.createToolRun({type:'patch',path:'Notes/Delta-Smoke.md',find:'old\nline',replace:'new\nline\nplus'});
+  const delta=(run.lineDeltas||[])[0]||null;
+  const summary=v.changedFileSummaryForRun(run,'Notes/Delta-Smoke.md');
+  return JSON.stringify({id:'programmatic.tool-run-estimated-line-delta',elapsedMs:Date.now()-t,delta,summary});
+})()
+'@
+    $item = Invoke-CancipEval -Code $code -TimeoutSeconds 45
+    if (-not $item.delta) { throw 'tool run missing immediate line delta' }
+    if ([int]$item.delta.added -lt 3 -or [int]$item.delta.removed -lt 2) { throw "unexpected line delta: $($item | ConvertTo-Json -Compress)" }
+    if (-not ([string]$item.summary).Contains('+') -or -not ([string]$item.summary).Contains('-')) { throw "changed file summary missing delta label: $($item.summary)" }
+    Add-CaseResult -Group 'programmaticCases' -Item @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs; summary = $item.summary }
+  } catch {
+    Add-CaseResult -Group 'programmaticCases' -Item @{ id = 'programmatic.tool-run-estimated-line-delta'; pass = $false; error = $_.Exception.Message }
+  }
+}
+
+if (-not $Case -or 'programmatic.model-retry-progress-visible'.Contains($Case)) {
+  try {
+    $code = @'
+(async()=>{
+  const t=Date.now();
+  const p=app.plugins.plugins.cancip;
+  const v=p&&typeof p.activateView==='function'?await p.activateView():app.workspace.getLeavesOfType('cancip-view')[0]?.view??null;
+  if(!v)throw new Error('Cancip view unavailable');
+  const oldCall=v.callModel;
+  const oldMessages=(v.messages||[]).slice();
+  let calls=0;
+  try{
+    v.messages=[];
+    v.primeModelCharStats('retry prompt',{system:'system',contextText:'context'},'retry prompt');
+    const step=v.addProgressStep(v.modelCharProgressSummary(v.t('generating')));
+    v.callModel=async()=>{calls++; if(calls===1)return ''; if(calls===2)throw new Error('synthetic retry failure'); return 'retry success';};
+    const answer=await v.callModelWithRetries('retry prompt',{system:'system',contextText:'context'},'retry prompt','retry timeout',2000,v.modelRetryProgressUpdater(step,v.t('generating')));
+    const content=String(step.content||'');
+    if(typeof v.stopProgressStepTimer==='function')v.stopProgressStepTimer(step.id);
+    return JSON.stringify({id:'programmatic.model-retry-progress-visible',elapsedMs:Date.now()-t,calls,answer,content});
+  } finally {
+    v.callModel=oldCall;
+    v.messages=oldMessages;
+    if(typeof v.renderMessages==='function')v.renderMessages();
+  }
+})()
+'@
+    $item = Invoke-CancipEval -Code $code -TimeoutSeconds 45
+    if ([int]$item.calls -ne 3) { throw "retry call count expected 3 got $($item.calls)" }
+    if ($item.answer -ne 'retry success') { throw "retry answer mismatch: $($item.answer)" }
+    if (-not ([string]$item.content).Contains('2/5') -and -not ([string]$item.content).Contains('3/5')) { throw "retry progress did not show attempts: $($item.content)" }
+    Add-CaseResult -Group 'programmaticCases' -Item @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs; calls = $item.calls }
+  } catch {
+    Add-CaseResult -Group 'programmaticCases' -Item @{ id = 'programmatic.model-retry-progress-visible'; pass = $false; error = $_.Exception.Message }
+  }
+}
+
+if (-not $Case -or 'programmatic.final-answer-keeps-numbered-sections'.Contains($Case)) {
+  try {
+    $finalNumberedContent = @'
+已完成重命名：`Cancip测试-审核流程.md` -> `Cancip测试 审核流程2.md`。
+
+1. 动作
+已执行 Vault 文件重命名。
+
+2. 改动的文件
+- 原文件：`Cancip测试-审核流程.md`
+- 新文件：`Cancip测试 审核流程2.md`
+
+3. 验证/结果
+工具返回重命名成功。
+
+<!-- cancip-choices {"choices":["查看本次审核记录","继续重命名另一个测试文件","打开新文件核对"]} -->
+'@
+    $finalNumberedBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($finalNumberedContent))
+    $code = @'
+(async()=>{
+  const t=Date.now();
+  const p=app.plugins.plugins.cancip;
+  const v=p&&typeof p.activateView==='function'?await p.activateView():app.workspace.getLeavesOfType('cancip-view')[0]?.view??null;
+  if(!v)throw new Error('Cancip view unavailable');
+  const oldMessages=(v.messages||[]).slice();
+  const oldActive=v.activeRequest;
+  try{
+    v.activeRequest=null;
+    const finalContent=new TextDecoder().decode(Uint8Array.from(atob('__FINAL_NUMBERED_CONTENT_BASE64__'),(char)=>char.charCodeAt(0)));
+    v.messages=[
+      {id:'smoke-user-final-numbered',role:'user',content:'rename smoke',createdAt:Date.now()-1000},
+      {id:'smoke-assistant-final-numbered',role:'assistant',createdAt:Date.now(),content:finalContent}
+    ];
+    if(v.detailsOpenState instanceof Map)v.detailsOpenState.clear();
+    v.renderMessages();
+    const text=String(v.messagesEl?.textContent||'');
+    const processDetails=v.messagesEl?.querySelectorAll('.obcc-tool-json,.obcc-process-summary').length||0;
+    const choices=v.messagesEl?.querySelectorAll('.obcc-choice-card').length||0;
+    const numberedLineBreak=new RegExp('\\r?\\n');
+    const numberedLines=finalContent.split(numberedLineBreak).map((line)=>line.trim()).filter((line)=>{
+      const first=line.charAt(0);
+      const second=line.charAt(1);
+      return (first==='1'||first==='2'||first==='3')&&(second==='.'||second===')'||second.charCodeAt(0)===12289);
+    });
+    const numberedVisible=numberedLines.map((line)=>line.slice(2).trim()).every((label)=>label&&text.includes(label));
+    return JSON.stringify({id:'programmatic.final-answer-keeps-numbered-sections',elapsedMs:Date.now()-t,numberedLines:numberedLines.length,numberedVisible,processDetails,choices});
+  } finally {
+    v.messages=oldMessages;
+    v.activeRequest=oldActive;
+    if(typeof v.renderMessages==='function')v.renderMessages();
+  }
+})()
+'@
+    $code = $code.Replace('__FINAL_NUMBERED_CONTENT_BASE64__', $finalNumberedBase64)
+    $item = Invoke-CancipEval -Code $code -TimeoutSeconds 45
+    if ([int]$item.numberedLines -ne 3) { throw "final numbered source did not contain expected sections: $($item | ConvertTo-Json -Compress)" }
+    if ([int]$item.processDetails -ne 0) { throw "final answer still rendered process/details folds: $($item | ConvertTo-Json -Compress)" }
+    if ([int]$item.choices -ne 3) { throw "final choices missing or not exactly three: $($item | ConvertTo-Json -Compress)" }
+    Add-CaseResult -Group 'programmaticCases' -Item @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs }
+  } catch {
+    Add-CaseResult -Group 'programmaticCases' -Item @{ id = 'programmatic.final-answer-keeps-numbered-sections'; pass = $false; error = $_.Exception.Message }
+  }
+}
+
+if (-not $Case -or 'programmatic.process-record-live-open-final-collapsed'.Contains($Case)) {
+  try {
+    $processFinalContent = @'
+已完成读取。
+
+<!-- cancip-choices {"choices":["打开结果","继续核对","查看过程"]} -->
+'@
+    $processFinalJson = $processFinalContent | ConvertTo-Json -Compress
+    $code = @'
+(async()=>{
+  const t=Date.now();
+  const p=app.plugins.plugins.cancip;
+  const v=p&&typeof p.activateView==='function'?await p.activateView():app.workspace.getLeavesOfType('cancip-view')[0]?.view??null;
+  if(!v)throw new Error('Cancip view unavailable');
+  const oldMessages=(v.messages||[]).slice();
+  const oldActive=v.activeRequest;
+  const oldDetails=v.detailsOpenState instanceof Map?new Map(v.detailsOpenState):null;
+  try{
+    const progress='<!-- cancip-progress-step -->\\n<!-- cancip-process-message -->\\n已执行 · 正在读取文件...';
+    v.messages=[{id:'smoke-process-live',role:'assistant',createdAt:Date.now(),content:progress}];
+    v.activeRequest={};
+    if(v.detailsOpenState instanceof Map)v.detailsOpenState.clear();
+    v.renderMessages();
+    const liveOpen=!!v.messagesEl?.querySelector('.obcc-process-record-details')?.open;
+    v.messages=[
+      {id:'smoke-process-live',role:'assistant',createdAt:Date.now()-1000,content:progress},
+      {id:'smoke-process-final',role:'assistant',createdAt:Date.now(),content:__PROCESS_FINAL_CONTENT__}
+    ];
+    v.activeRequest=null;
+    if(v.detailsOpenState instanceof Map)v.detailsOpenState.set('process-record:smoke-process-live',true);
+    v.renderMessages();
+    const finalOpen=!!v.messagesEl?.querySelector('.obcc-process-record-details')?.open;
+    return JSON.stringify({id:'programmatic.process-record-live-open-final-collapsed',elapsedMs:Date.now()-t,liveOpen,finalOpen});
+  } finally {
+    v.messages=oldMessages;
+    v.activeRequest=oldActive;
+    if(oldDetails)v.detailsOpenState=oldDetails;
+    if(typeof v.renderMessages==='function')v.renderMessages();
+  }
+})()
+'@
+    $code = $code.Replace('__PROCESS_FINAL_CONTENT__', $processFinalJson)
+    $item = Invoke-CancipEval -Code $code -TimeoutSeconds 45
+    if (-not $item.liveOpen) { throw "live process record did not open one level: $($item | ConvertTo-Json -Compress)" }
+    if ($item.finalOpen) { throw "process record did not auto-collapse after final answer: $($item | ConvertTo-Json -Compress)" }
+    Add-CaseResult -Group 'programmaticCases' -Item @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs }
+  } catch {
+    Add-CaseResult -Group 'programmaticCases' -Item @{ id = 'programmatic.process-record-live-open-final-collapsed'; pass = $false; error = $_.Exception.Message }
+  }
+}
+
+if (-not $Case -or 'programmatic.choice-cards-render-at-message-bottom'.Contains($Case)) {
+  try {
+    $choiceBottomContent = @'
+已完成测试。
+
+```json
+{"type":"read","path":"Smoke.md"}
+```
+
+<!-- cancip-choices {"choices":["查看测试结果","继续测试布局","检查过程记录"]} -->
+'@
+    $choiceBottomJson = $choiceBottomContent | ConvertTo-Json -Compress
+    $code = @'
+(async()=>{
+  const t=Date.now();
+  const p=app.plugins.plugins.cancip;
+  const v=p&&typeof p.activateView==='function'?await p.activateView():app.workspace.getLeavesOfType('cancip-view')[0]?.view??null;
+  if(!v)throw new Error('Cancip view unavailable');
+  const oldMessages=(v.messages||[]).slice();
+  const oldActive=v.activeRequest;
+  try{
+    v.activeRequest=null;
+    const choiceContent=__CHOICE_BOTTOM_CONTENT__;
+    v.messages=[{id:'smoke-choice-bottom',role:'assistant',createdAt:Date.now(),content:choiceContent}];
+    v.renderMessages();
+    const tool=v.messagesEl?.querySelector('.obcc-tool-json');
+    const choices=v.messagesEl?.querySelector('.obcc-choice-cards');
+    const follows=!!(tool&&choices&&(tool.compareDocumentPosition(choices)&Node.DOCUMENT_POSITION_FOLLOWING));
+    const lastClass=v.messagesEl?.querySelector('.obcc-message')?.lastElementChild?.className||'';
+    return JSON.stringify({id:'programmatic.choice-cards-render-at-message-bottom',elapsedMs:Date.now()-t,hasTool:!!tool,hasChoices:!!choices,follows,lastClass:String(lastClass)});
+  } finally {
+    v.messages=oldMessages;
+    v.activeRequest=oldActive;
+    if(typeof v.renderMessages==='function')v.renderMessages();
+  }
+})()
+'@
+    $code = $code.Replace('__CHOICE_BOTTOM_CONTENT__', $choiceBottomJson)
+    $item = Invoke-CancipEval -Code $code -TimeoutSeconds 45
+    if (-not $item.hasTool -or -not $item.hasChoices) { throw "test did not render both folded detail and choices: $($item | ConvertTo-Json -Compress)" }
+    if (-not $item.follows) { throw "choice cards are not after folded details: $($item | ConvertTo-Json -Compress)" }
+    if ([string]$item.lastClass -notmatch 'obcc-choice-cards') { throw "choice cards are not the last block in the message: $($item | ConvertTo-Json -Compress)" }
+    Add-CaseResult -Group 'programmaticCases' -Item @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs }
+  } catch {
+    Add-CaseResult -Group 'programmaticCases' -Item @{ id = 'programmatic.choice-cards-render-at-message-bottom'; pass = $false; error = $_.Exception.Message }
+  }
+}
+
+if (-not $Case -or 'programmatic.ui-button-sort-filters'.Contains($Case)) {
+  try {
+    $code = @'
+(()=>{
+  const t=Date.now();
+  const p=app.plugins.plugins.cancip;
+  if(!p)throw new Error('Cancip plugin unavailable');
+  const doc=activeDocument;
+  const root=doc.createElement('div');
+  root.setAttribute('data-cancip-smoke','sort-filter');
+  root.style.position='fixed';
+  root.style.left='8px';
+  root.style.top='8px';
+  root.style.zIndex='-1';
+  root.innerHTML=[
+    '<div class="cancip-smoke-persistent"><button id="cancip-sort-smoke-a">A</button><button id="cancip-sort-smoke-b">B</button></div>',
+    '<div class="markdown-embed"><div class="markdown-embed-content"><button id="cancip-sort-smoke-embed-a">EA</button><button id="cancip-sort-smoke-embed-b">EB</button></div></div>',
+    '<div class="obcc-history-popover is-more"><div class="obcc-management-body"><button id="cancip-sort-smoke-more-a">MA</button><button id="cancip-sort-smoke-more-b">MB</button></div></div>',
+    '<div class="obcc-history-popover is-history"><button id="cancip-sort-smoke-history-a">HA</button><button id="cancip-sort-smoke-history-b">HB</button></div>',
+    '<div class="menu"><div class="menu-item" data-command="smoke-native-a" id="cancip-sort-smoke-native-menu-a"><div class="menu-item-title">NMA</div></div><div class="menu-item" data-command="smoke-native-b" id="cancip-sort-smoke-native-menu-b"><div class="menu-item-title">NMB</div></div></div>'
+  ].join('');
+  doc.body.appendChild(root);
+  try{
+    const persistent=root.querySelector('.cancip-smoke-persistent');
+    const embed=root.querySelector('.markdown-embed-content');
+    const more=root.querySelector('.obcc-history-popover.is-more .obcc-management-body');
+    const history=root.querySelector('.obcc-history-popover.is-history');
+    const nativeMenu=root.querySelector('.menu');
+    const persistentChildren=p.sortableUiButtonChildren(persistent).length;
+    const embedChildren=p.sortableUiButtonChildren(embed).length;
+    const moreChildren=p.sortableUiButtonChildren(more).length;
+    const historyChildren=p.sortableUiButtonChildren(history).length;
+    const nativeMenuChildren=p.sortableUiButtonChildren(nativeMenu).length;
+    const embedExcluded=p.isUiButtonSortExcludedTarget(root.querySelector('#cancip-sort-smoke-embed-a'));
+    const moreExcluded=p.isUiButtonSortExcludedTarget(root.querySelector('#cancip-sort-smoke-more-a'));
+    const historyExcluded=p.isUiButtonSortExcludedTarget(root.querySelector('#cancip-sort-smoke-history-a'));
+    const nativeMenuExcluded=p.isUiButtonSortExcludedTarget(root.querySelector('#cancip-sort-smoke-native-menu-a'));
+    return JSON.stringify({id:'programmatic.ui-button-sort-filters',elapsedMs:Date.now()-t,persistentChildren,embedChildren,moreChildren,historyChildren,nativeMenuChildren,embedExcluded,moreExcluded,historyExcluded,nativeMenuExcluded});
+  } finally {
+    root.remove();
+  }
+})()
+'@
+    $item = Invoke-CancipEval -Code $code -TimeoutSeconds 45
+    if ([int]$item.persistentChildren -lt 2) { throw "persistent sibling buttons were not sortable: $($item | ConvertTo-Json -Compress)" }
+    if ([int]$item.embedChildren -ne 0 -or -not $item.embedExcluded) { throw "file embed buttons are still sortable: $($item | ConvertTo-Json -Compress)" }
+    if ([int]$item.moreChildren -lt 2 -or $item.moreExcluded) { throw "more-panel buttons were not sortable: $($item | ConvertTo-Json -Compress)" }
+    if ([int]$item.historyChildren -ne 0 -or -not $item.historyExcluded) { throw "history-panel buttons are still sortable: $($item | ConvertTo-Json -Compress)" }
+    if ([int]$item.nativeMenuChildren -lt 2 -or $item.nativeMenuExcluded) { throw "native note-more menu items were not sortable: $($item | ConvertTo-Json -Compress)" }
+    Add-CaseResult -Group 'programmaticCases' -Item @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs }
+  } catch {
+    Add-CaseResult -Group 'programmaticCases' -Item @{ id = 'programmatic.ui-button-sort-filters'; pass = $false; error = $_.Exception.Message }
+  }
+}
+
+if (-not $Case -or 'programmatic.ui-button-sort-menu-snapshot'.Contains($Case)) {
+  try {
+    $code = @'
+(async()=>{
+  const t=Date.now();
+  const p=app.plugins.plugins.cancip;
+  if(!p)throw new Error('Cancip plugin unavailable');
+  const doc=activeDocument;
+  const root=doc.createElement('div');
+  root.className='menu';
+  root.style.position='fixed';
+  root.style.left='12px';
+  root.style.top='12px';
+  root.style.zIndex='1000';
+  const longItems=Array.from({length:30},(_,i)=>`<div class="menu-item" data-command="smoke-menu-extra-${i}" id="cancip-sort-snapshot-extra-${i}"><div class="menu-item-title">Extra item ${i}</div></div>`).join('');
+  root.innerHTML=[
+    '<div class="menu-section"><div class="menu-item" data-command="smoke-menu-a" id="cancip-sort-snapshot-a"><div class="menu-item-title">Duplicate Snapshot</div></div><div class="menu-item" data-command="smoke-menu-b" id="cancip-sort-snapshot-b"><div class="menu-item-title">Duplicate Snapshot</div></div></div>',
+    '<div class="menu-separator"></div>',
+    '<div class="menu-section"><div class="menu-item" data-command="smoke-menu-c" id="cancip-sort-snapshot-c"><div class="menu-item-title">Snapshot C</div></div><div class="menu-item" data-command="smoke-menu-d" id="cancip-sort-snapshot-d"><div class="menu-item-title">Snapshot D</div></div></div>',
+    `<div class="menu-section">${longItems}</div>`
+  ].join('');
+  doc.body.appendChild(root);
+  const oldRules=(p.settings.uiButtonRules||[]).map((rule)=>({...rule}));
+  try{
+    const target=root.querySelector('#cancip-sort-snapshot-b');
+    const descriptor=p.describeUiButtonEditTarget(target);
+    const snapshotCount=descriptor.sortSnapshot?.items?.length||0;
+    root.remove();
+    p.startUiButtonSortMode(descriptor);
+    const stage=doc.querySelector('.obcc-ui-sort-snapshot-stage');
+    const handles=doc.querySelectorAll('.obcc-ui-sort-handle').length;
+    const stageItems=stage?stage.querySelectorAll('.obcc-ui-sort-snapshot-item').length:0;
+    const firstSelector=stage?.querySelector('.obcc-ui-sort-snapshot-item')?.dataset?.cancipUiRuleSelector||'';
+    const selectors=Array.from(stage?.querySelectorAll('.obcc-ui-sort-snapshot-item')||[]).map((el)=>el.dataset.cancipUiRuleSelector||'');
+    const duplicateSelectors=selectors.filter((selector)=>selector.includes('smoke-menu-a')||selector.includes('smoke-menu-b'));
+    const stageStyle=stage?getComputedStyle(stage):null;
+    const stageOverflowY=stageStyle?.overflowY||'';
+    const stageTouchAction=stageStyle?.touchAction||'';
+    const stageCanScroll=stage?stage.scrollHeight>stage.clientHeight:false;
+    const firstRadius=stage?getComputedStyle(stage.querySelector('.obcc-ui-sort-snapshot-item')).borderTopLeftRadius:'';
+    const initialHiddenHandles=Array.from(doc.querySelectorAll('.obcc-ui-sort-handle')).filter((handle)=>getComputedStyle(handle).display==='none').length;
+    if(stage){
+      stage.scrollTop=stage.scrollHeight;
+      stage.dispatchEvent(new Event('scroll'));
+      await new Promise((resolve)=>setTimeout(resolve,420));
+    }
+    const handlesAfterScroll=Array.from(doc.querySelectorAll('.obcc-ui-sort-handle'));
+    const lastHandleDisplay=handlesAfterScroll.length?getComputedStyle(handlesAfterScroll[handlesAfterScroll.length-1]).display:'';
+    const controlTop=parseFloat(doc.querySelector('.obcc-ui-sort-done')?.style?.top||'0');
+    p.stopUiButtonSortMode();
+    const stageAfter=!!doc.querySelector('.obcc-ui-sort-snapshot-stage');
+    return JSON.stringify({id:'programmatic.ui-button-sort-menu-snapshot',elapsedMs:Date.now()-t,snapshotCount,hasStage:!!stage,stageItems,handles,firstSelector,duplicateSelectors,stageOverflowY,stageTouchAction,stageCanScroll,firstRadius,initialHiddenHandles,lastHandleDisplay,controlTop,stageAfter});
+  } finally {
+    root.remove();
+    p.stopUiButtonSortMode?.();
+    p.settings.uiButtonRules=oldRules;
+    if(typeof p.saveSettings==='function')await p.saveSettings();
+  }
+})()
+'@
+    $item = Invoke-CancipEval -Code $code -TimeoutSeconds 45
+    if ([int]$item.snapshotCount -lt 4) { throw "menu sort snapshot did not flatten grouped siblings: $($item | ConvertTo-Json -Compress)" }
+    if (-not $item.hasStage -or [int]$item.stageItems -lt 4 -or [int]$item.handles -lt 4) { throw "menu sort snapshot stage/handles missing: $($item | ConvertTo-Json -Compress)" }
+    if ([int]$item.handles -ne [int]$item.stageItems) { throw "not every scrollable snapshot item received a sort handle: $($item | ConvertTo-Json -Compress)" }
+    if (-not ([string]$item.firstSelector).Contains('data-command')) { throw "snapshot item did not preserve original selector: $($item | ConvertTo-Json -Compress)" }
+    if (@($item.duplicateSelectors).Count -ne 2) { throw "duplicate menu labels were merged or selectors were not command-specific: $($item | ConvertTo-Json -Compress)" }
+    if (-not ([string]$item.stageOverflowY -match 'auto|scroll') -or -not $item.stageCanScroll) { throw "menu sort snapshot stage is not scrollable: $($item | ConvertTo-Json -Compress)" }
+    if ([string]$item.stageTouchAction -notmatch 'pan-y') { throw "menu sort snapshot stage does not allow vertical touch scroll: $($item | ConvertTo-Json -Compress)" }
+    if ([string]$item.firstRadius -ne '0px') { throw "snapshot menu items still keep inconsistent rounded corners: $($item | ConvertTo-Json -Compress)" }
+    if ([int]$item.initialHiddenHandles -lt 1) { throw "offscreen snapshot handles were not hidden before scrolling: $($item | ConvertTo-Json -Compress)" }
+    if ([string]$item.lastHandleDisplay -eq 'none') { throw "bottom snapshot item handle did not appear after vertical scroll: $($item | ConvertTo-Json -Compress)" }
+    if ([double]$item.controlTop -lt 48) { throw "sort controls are still too close to the top edge: $($item | ConvertTo-Json -Compress)" }
+    if ($item.stageAfter) { throw "snapshot stage was not cleaned up: $($item | ConvertTo-Json -Compress)" }
+    Add-CaseResult -Group 'programmaticCases' -Item @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs }
+  } catch {
+    Add-CaseResult -Group 'programmaticCases' -Item @{ id = 'programmatic.ui-button-sort-menu-snapshot'; pass = $false; error = $_.Exception.Message }
+  }
+}
+
+if (-not $Case -or 'programmatic.ui-button-rule-reset-list'.Contains($Case)) {
+  try {
+    $code = @'
+(async()=>{
+  const t=Date.now();
+  const p=app.plugins.plugins.cancip;
+  if(!p)throw new Error('Cancip plugin unavailable');
+  const oldRules=(p.settings.uiButtonRules||[]).map((rule)=>({...rule}));
+  const smokeRules=[
+    {id:'smoke-reset-hidden',selector:'#cancip-smoke-hidden',label:'Hidden Smoke',hidden:true,order:0,scope:'global'},
+    {id:'smoke-reset-order',selector:'#cancip-smoke-order',label:'Order Smoke',hidden:false,order:20,scope:'global'},
+    {id:'smoke-reset-custom',kind:'custom',selector:'[data-cancip-ui-custom-button-id="smoke-reset-custom"]',anchorSelector:'#cancip-smoke-anchor',label:'Custom Smoke',title:'Custom Smoke',icon:'bot',hidden:false,order:0,scope:'global',commandId:'app:go-back',commandName:'Back'}
+  ];
+  try{
+    p.settings.uiButtonRules=smokeRules;
+    const beforeIds=p.modifiedUiButtonRules().map((rule)=>rule.id).sort();
+    const orderRule=p.settings.uiButtonRules.find((rule)=>rule.id==='smoke-reset-order');
+    const orderLabelCount=orderRule?p.uiButtonRuleChangeLabels(orderRule).length:0;
+    const removed=await p.resetUiButtonRule('smoke-reset-hidden');
+    const afterOneIds=p.modifiedUiButtonRules().map((rule)=>rule.id).sort();
+    const resetAllCount=await p.resetAllUiButtonRules();
+    const afterAllCount=p.modifiedUiButtonRules().length;
+    return JSON.stringify({id:'programmatic.ui-button-rule-reset-list',elapsedMs:Date.now()-t,beforeIds,orderLabelCount,removed,afterOneIds,resetAllCount,afterAllCount});
+  } finally {
+    p.settings.uiButtonRules=oldRules;
+    await p.saveSettings();
+    if(typeof p.scheduleUiButtonRulesApply==='function')p.scheduleUiButtonRulesApply(0);
+  }
+})()
+'@
+    $item = Invoke-CancipEval -Code $code -TimeoutSeconds 45
+    $beforeIds = @($item.beforeIds)
+    $afterOneIds = @($item.afterOneIds)
+    if ($beforeIds.Count -ne 3) { throw "changed button list expected 3 got $($item | ConvertTo-Json -Compress)" }
+    if ([int]$item.orderLabelCount -lt 1) { throw "change labels were empty: $($item | ConvertTo-Json -Compress)" }
+    if (-not $item.removed) { throw "single reset did not report removal: $($item | ConvertTo-Json -Compress)" }
+    if ($afterOneIds -contains 'smoke-reset-hidden') { throw "single reset left hidden rule: $($item | ConvertTo-Json -Compress)" }
+    if (-not ($afterOneIds -contains 'smoke-reset-order') -or -not ($afterOneIds -contains 'smoke-reset-custom')) { throw "single reset removed wrong rules: $($item | ConvertTo-Json -Compress)" }
+    if ([int]$item.resetAllCount -ne 2 -or [int]$item.afterAllCount -ne 0) { throw "reset all mismatch: $($item | ConvertTo-Json -Compress)" }
+    Add-CaseResult -Group 'programmaticCases' -Item @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs }
+  } catch {
+    Add-CaseResult -Group 'programmaticCases' -Item @{ id = 'programmatic.ui-button-rule-reset-list'; pass = $false; error = $_.Exception.Message }
+  }
+}
+
+if (-not $Case -or 'programmatic.ui-button-rule-broad-selector-isolated'.Contains($Case)) {
+  try {
+    $code = @'
+(async()=>{
+  const t=Date.now();
+  const p=app.plugins.plugins.cancip;
+  if(!p)throw new Error('Cancip plugin unavailable');
+  const oldRules=(p.settings.uiButtonRules||[]).map((rule)=>({...rule}));
+  try{
+    p.settings.uiButtonRules=[];
+    await p.upsertUiButtonRule({id:'smoke-menu-alpha',selector:'.menu .menu-item',label:'Alpha action',hidden:true,order:0,scope:'global'});
+    await p.upsertUiButtonRule({id:'smoke-menu-beta',selector:'.menu .menu-item',label:'Beta action',hidden:true,order:0,scope:'global'});
+    const rules=(p.settings.uiButtonRules||[]).filter((rule)=>rule.selector==='.menu .menu-item').map((rule)=>({id:rule.id,label:rule.label,hidden:rule.hidden}));
+    return JSON.stringify({id:'programmatic.ui-button-rule-broad-selector-isolated',elapsedMs:Date.now()-t,rules});
+  } finally {
+    p.settings.uiButtonRules=oldRules;
+    await p.saveSettings();
+    if(typeof p.scheduleUiButtonRulesApply==='function')p.scheduleUiButtonRulesApply(0);
+  }
+})()
+'@
+    $item = Invoke-CancipEval -Code $code -TimeoutSeconds 45
+    $rules = @($item.rules)
+    if ($rules.Count -ne 2) { throw "broad menu item rules overwrote each other: $($item | ConvertTo-Json -Compress)" }
+    $labels = @($rules | ForEach-Object { [string]$_.label })
+    if (-not ($labels -contains 'Alpha action') -or -not ($labels -contains 'Beta action')) { throw "broad selector labels were not preserved: $($item | ConvertTo-Json -Compress)" }
+    Add-CaseResult -Group 'programmaticCases' -Item @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs }
+  } catch {
+    Add-CaseResult -Group 'programmaticCases' -Item @{ id = 'programmatic.ui-button-rule-broad-selector-isolated'; pass = $false; error = $_.Exception.Message }
+  }
+}
+
+if (-not $Case -or 'programmatic.ui-button-menu-complete-sort-label-guard'.Contains($Case)) {
+  try {
+    $code = @'
+(async()=>{
+  const t=Date.now();
+  const p=app.plugins.plugins.cancip;
+  if(!p)throw new Error('Cancip plugin unavailable');
+  const doc=activeDocument;
+  const root=doc.createElement('div');
+  root.className='menu';
+  root.style.position='fixed';
+  root.style.left='10px';
+  root.style.top='10px';
+  root.style.zIndex='1000';
+  root.innerHTML=[
+    '<div class="menu-section"><div class="menu-item" data-command="smoke-complete-a" id="cancip-complete-a"><div class="menu-item-title">Alpha Button</div></div></div>',
+    '<div class="menu-separator"></div>',
+    '<div class="menu-section"><div class="menu-item" data-command="smoke-complete-b" id="cancip-complete-b"><div class="menu-item-title">Beta Button</div></div><div class="menu-item" data-command="smoke-complete-c" id="cancip-complete-c"><div class="menu-item-title">Gamma Button</div></div></div>'
+  ].join('');
+  doc.body.appendChild(root);
+  const oldRules=(p.settings.uiButtonRules||[]).map((rule)=>({...rule}));
+  try{
+    p.settings.uiButtonRules=[
+      {id:'smoke-complete-beta',selector:'.menu .menu-item[data-command="smoke-complete-b"]',label:'Beta Button',hidden:false,order:10,scope:'global'},
+      {id:'smoke-complete-alpha',selector:'.menu .menu-item[data-command="smoke-complete-a"]',label:'Alpha Button',hidden:false,order:20,scope:'global'},
+      {id:'smoke-complete-gamma-wrong-label',selector:'.menu .menu-item[data-command="smoke-complete-c"]',label:'Wrong Gamma',hidden:true,order:30,scope:'global'}
+    ];
+    p.applyUiButtonRules();
+    await new Promise((resolve)=>setTimeout(resolve,140));
+    const alpha=root.querySelector('#cancip-complete-a');
+    const beta=root.querySelector('#cancip-complete-b');
+    const gamma=root.querySelector('#cancip-complete-c');
+    const firstSection=root.querySelector('.menu-section');
+    const separator=root.querySelector('.menu-separator');
+    const rootStyle=getComputedStyle(root);
+    const sectionStyle=getComputedStyle(firstSection);
+    const separatorStyle=getComputedStyle(separator);
+    const betaStyle=getComputedStyle(beta);
+    const alphaOrder=alpha?.style?.order||'';
+    const betaOrder=beta?.style?.order||'';
+    const gammaHidden=gamma?.dataset?.cancipUiHidden==='true'||gamma?.classList?.contains('obcc-ui-rule-hidden')||false;
+    return JSON.stringify({
+      id:'programmatic.ui-button-menu-complete-sort-label-guard',
+      elapsedMs:Date.now()-t,
+      rootDisplay:rootStyle.display,
+      sectionDisplay:sectionStyle.display,
+      separatorDisplay:separatorStyle.display,
+      betaRadius:betaStyle.borderTopLeftRadius,
+      alphaOrder,
+      betaOrder,
+      gammaHidden
+    });
+  } finally {
+    root.remove();
+    p.settings.uiButtonRules=oldRules;
+    await p.saveSettings();
+    if(typeof p.scheduleUiButtonRulesApply==='function')p.scheduleUiButtonRulesApply(0);
+  }
+})()
+'@
+    $item = Invoke-CancipEval -Code $code -TimeoutSeconds 45
+    if ([string]$item.rootDisplay -ne 'flex') { throw "sorted menu root was not flattened into one flex list: $($item | ConvertTo-Json -Compress)" }
+    if ([string]$item.sectionDisplay -ne 'contents') { throw "menu sections were not flattened for complete sorting: $($item | ConvertTo-Json -Compress)" }
+    if ([string]$item.separatorDisplay -ne 'none') { throw "menu separators still split sorted chunks: $($item | ConvertTo-Json -Compress)" }
+    if ([string]$item.betaRadius -ne '0px') { throw "sorted menu item rounded corners were not normalized: $($item | ConvertTo-Json -Compress)" }
+    if ([string]$item.betaOrder -ne '10' -or [string]$item.alphaOrder -ne '20') { throw "cross-section menu order was not applied: $($item | ConvertTo-Json -Compress)" }
+    if ($item.gammaHidden) { throw "label guard failed; mismatched visible name still hid a menu item: $($item | ConvertTo-Json -Compress)" }
+    Add-CaseResult -Group 'programmaticCases' -Item @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs }
+  } catch {
+    Add-CaseResult -Group 'programmaticCases' -Item @{ id = 'programmatic.ui-button-menu-complete-sort-label-guard'; pass = $false; error = $_.Exception.Message }
+  }
+}
+
+if (-not $Case -or 'programmatic.ui-button-context-actionable'.Contains($Case)) {
+  try {
+    $code = @'
+(async()=>{
+  const t=Date.now();
+  const p=app.plugins.plugins.cancip;
+  const v=p&&typeof p.activateView==='function'?await p.activateView():app.workspace.getLeavesOfType('cancip-view')[0]?.view??null;
+  if(!p||!v)throw new Error('Cancip plugin/view unavailable');
+  const doc=activeDocument;
+  const root=doc.createElement('div');
+  root.style.position='fixed';
+  root.style.left='10px';
+  root.style.top='10px';
+  root.style.zIndex='-1';
+  root.innerHTML='<button id="cancip-button-context-smoke" title="Smoke Button" aria-label="Smoke Button">Smoke</button>';
+  doc.body.appendChild(root);
+  const oldContext=(v.draftContext||[]).map((item)=>({...item}));
+  const oldRules=(p.settings.uiButtonRules||[]).map((rule)=>({...rule}));
+  try{
+    const button=root.querySelector('#cancip-button-context-smoke');
+    v.draftContext=[];
+    v.addElementContext(button);
+    const context=v.draftContext[v.draftContext.length-1]||{};
+    const content=String(context.content||'');
+    p.settings.uiButtonRules=[
+      {id:'smoke-context-target',selector:'button#cancip-button-context-smoke',label:'Smoke Button',hidden:true,order:30,scope:'global'},
+      {id:'smoke-context-other',selector:'button#cancip-button-context-other',label:'Other Button',hidden:true,order:40,scope:'global'}
+    ];
+    const result=await v.applyUiButtonRulesCommand({reset:[{selector:'button#cancip-button-context-smoke',scope:'global',label:'Smoke Button'}]});
+    const remaining=(p.settings.uiButtonRules||[]).map((rule)=>rule.id).sort();
+    return JSON.stringify({
+      id:'programmatic.ui-button-context-actionable',
+      elapsedMs:Date.now()-t,
+      label:context.label||'',
+      hasActionable:/Cancip UI Button Context/.test(content),
+      hasCommand:/obsidian\.ui\.applyButtonRules/.test(content),
+      hasSelector:/button#cancip-button-context-smoke/.test(content),
+      hasReset:/Reset this button rule|\"reset\"/.test(content),
+      remaining,
+      result
+    });
+  } finally {
+    root.remove();
+    v.draftContext=oldContext;
+    p.settings.uiButtonRules=oldRules;
+    if(typeof p.saveSettings==='function')await p.saveSettings();
+  }
+})()
+'@
+    $item = Invoke-CancipEval -Code $code -TimeoutSeconds 45
+    if (-not $item.hasActionable -or -not $item.hasCommand -or -not $item.hasSelector -or -not $item.hasReset) { throw "button context is not actionable enough: $($item | ConvertTo-Json -Compress)" }
+    $remaining = @($item.remaining)
+    if ($remaining -contains 'smoke-context-target') { throw "button rule reset did not remove the target: $($item | ConvertTo-Json -Compress)" }
+    if (-not ($remaining -contains 'smoke-context-other')) { throw "button rule reset removed unrelated rule: $($item | ConvertTo-Json -Compress)" }
+    Add-CaseResult -Group 'programmaticCases' -Item @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs }
+  } catch {
+    Add-CaseResult -Group 'programmaticCases' -Item @{ id = 'programmatic.ui-button-context-actionable'; pass = $false; error = $_.Exception.Message }
   }
 }
 

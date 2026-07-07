@@ -322,8 +322,26 @@
       "command": "cancip.annotate.help",
       "args": { "maxChars": 6000 },
       "expect": {
-        "containsAny": ["cancip.annotate.note", "cancip.annotate.pdf", "Pdftion", "NoteDraw"],
+        "contains": ["cancip.annotate.note", "cancip.annotate.pdf", "Non-visual", "pluginRoute"],
         "maxMs": 7000
+      }
+    },
+    {
+      "id": "command.annotate.note.status",
+      "command": "cancip.annotate.note",
+      "args": { "op": "status" },
+      "expect": {
+        "contains": ["NoteDraw annotation status", "directStorage", "ops:"],
+        "maxMs": 3000
+      }
+    },
+    {
+      "id": "command.annotate.pdf.status",
+      "command": "cancip.annotate.pdf",
+      "args": { "op": "status" },
+      "expect": {
+        "contains": ["Pdftion annotation status", "directStorage", "non-visual"],
+        "maxMs": 3000
       }
     },
     {
