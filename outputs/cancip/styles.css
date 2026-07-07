@@ -81,6 +81,11 @@
 }
 
 .obcc-root {
+  --obcc-radius-xs: 4px;
+  --obcc-radius-control: 6px;
+  --obcc-radius-card: 8px;
+  --obcc-radius-panel: 10px;
+  --obcc-radius-pill: 999px;
   --obcc-footer-height: 72px;
   display: flex;
   flex-direction: column;
@@ -3073,8 +3078,20 @@ body .obcc-view-tts-action {
 }
 
 .modal.obcc-button-edit-modal,
+.obcc-button-edit-modal {
+  --obcc-radius-xs: 4px;
+  --obcc-radius-control: 6px;
+  --obcc-radius-card: 8px;
+  --obcc-radius-panel: 10px;
+  --obcc-radius-pill: 999px;
+}
+
+.modal.obcc-button-edit-modal,
 .obcc-button-edit-modal .modal,
-.obcc-button-edit-modal .modal-content,
+.obcc-button-edit-modal .modal-content {
+  border-radius: var(--obcc-radius-panel);
+}
+
 .obcc-button-edit-modal .setting-item,
 .obcc-button-edit-modal .setting-item-control input,
 .obcc-button-edit-modal .setting-item-control select,
@@ -3084,14 +3101,17 @@ body .obcc-view-tts-action {
 .obcc-button-edit-modal input,
 .obcc-button-edit-modal select,
 .obcc-button-edit-modal textarea {
-  border-radius: 0;
+  border-radius: var(--obcc-radius-control);
 }
 
 .obcc-button-edit-modal .checkbox-container,
+.obcc-button-edit-modal .slider {
+  border-radius: var(--obcc-radius-pill);
+}
+
 .obcc-button-edit-modal .checkbox-container::after,
-.obcc-button-edit-modal .slider,
 .obcc-button-edit-modal .slider::before {
-  border-radius: 0;
+  border-radius: 50%;
 }
 
 .obcc-button-edit-sticky-actions {
@@ -3127,7 +3147,7 @@ body .obcc-view-tts-action {
 .obcc-button-edit-selector {
   padding: 7px 8px;
   border: 1px solid var(--background-modifier-border);
-  border-radius: 0;
+  border-radius: var(--obcc-radius-control);
   background: var(--background-secondary);
   color: var(--text-muted);
   font-family: var(--font-monospace);
@@ -3140,7 +3160,7 @@ body .obcc-view-tts-action {
 .obcc-button-edit-verify {
   padding: 6px 8px;
   border: 1px solid var(--background-modifier-border);
-  border-radius: 0;
+  border-radius: var(--obcc-radius-control);
   background: var(--background-secondary);
   color: var(--text-muted);
   font-size: 12px;
@@ -3161,7 +3181,7 @@ body .obcc-view-tts-action {
 .obcc-button-edit-add-section {
   padding: 8px;
   border: 1px solid var(--background-modifier-border);
-  border-radius: 0;
+  border-radius: var(--obcc-radius-card);
   background: var(--background-secondary);
 }
 
@@ -3207,7 +3227,7 @@ body .obcc-view-tts-action {
   height: 32px;
   padding: 0;
   border: 1px solid var(--background-modifier-border);
-  border-radius: 0;
+  border-radius: var(--obcc-radius-control);
   background: var(--background-primary);
   color: var(--text-muted);
 }
@@ -5605,4 +5625,119 @@ input.obcc-review-correction-input {
     flex-direction: column;
     align-items: stretch;
   }
+}
+
+/* Cancip-owned surfaces keep a compact, consistent rounded-rectangle shape.
+   Native Obsidian menu items stay square through the menu rules above. */
+.obcc-root,
+.obcc-settings,
+.obcc-overlay-layer,
+.obcc-button-edit-modal,
+.obcc-review-leaf-shell {
+  --obcc-radius-xs: 4px;
+  --obcc-radius-control: 6px;
+  --obcc-radius-card: 8px;
+  --obcc-radius-panel: 10px;
+  --obcc-radius-pill: 999px;
+}
+
+.obcc-composer,
+.obcc-mention-popover,
+.obcc-command-popover,
+.obcc-history-popover,
+.obcc-history-popover.is-audit,
+.obcc-history-popover.is-git,
+.obcc-history-popover.is-more,
+.obcc-history-popover.is-skills,
+.obcc-history-popover.is-automation,
+.obcc-tts-floating-panel,
+.modal.obcc-button-edit-modal,
+.obcc-button-edit-modal .modal,
+.obcc-button-edit-modal .modal-content {
+  border-radius: var(--obcc-radius-panel, 10px);
+}
+
+.obcc-message,
+.obcc-empty,
+.obcc-choice-card,
+.obcc-tool-run,
+.obcc-tool-json,
+.obcc-tool-run-approval-card,
+.obcc-queue-item,
+.obcc-session-item,
+.obcc-todo-row,
+.obcc-manual-todo-input,
+.obcc-model-menu-row,
+.obcc-management-card,
+.obcc-review-sources-paired,
+.obcc-review-changes,
+.obcc-review-diff,
+.obcc-settings-group,
+.obcc-support-code-card,
+.obcc-ui-button-rules-list,
+.obcc-ui-button-rule-row,
+.obcc-button-edit-add-section {
+  border-radius: var(--obcc-radius-card, 8px);
+}
+
+.obcc-icon-button,
+.obcc-mode,
+.obcc-chip,
+.obcc-link-button,
+.obcc-message-copy,
+.obcc-tool-run-approve,
+.obcc-tool-run-reject,
+.obcc-tool-run-review-button,
+.obcc-command-item,
+.obcc-command-popover .obcc-command-item,
+.obcc-mention-item,
+.obcc-session-action,
+.obcc-todo-check,
+.obcc-todo-remove,
+.obcc-queue-button,
+.obcc-model-menu-action,
+.obcc-button-icon-choice,
+.obcc-ui-button-rules-reset-all,
+.obcc-ui-button-rule-reset,
+.obcc-button-edit-modal button,
+.obcc-button-edit-modal input,
+.obcc-button-edit-modal select,
+.obcc-button-edit-modal textarea,
+.obcc-button-edit-modal .setting-item-control button,
+.obcc-button-edit-modal .setting-item-control input,
+.obcc-button-edit-modal .setting-item-control select,
+.obcc-button-edit-modal .setting-item-control textarea {
+  border-radius: var(--obcc-radius-control, 6px);
+}
+
+.obcc-tool-button,
+.obcc-access-button,
+.obcc-model-button,
+.obcc-model-menu-body {
+  border-radius: var(--obcc-radius-control, 6px);
+}
+
+.obcc-context-chip,
+.obcc-context-edit,
+.obcc-context-remove,
+.obcc-run-stat-chip,
+.obcc-mention-kind,
+.obcc-subagent-mini-badge,
+.obcc-session-dot,
+.obcc-statusbar-dot,
+.obcc-statusbar-badge,
+.obcc-header-badge,
+.obcc-button-edit-modal .checkbox-container,
+.obcc-button-edit-modal .slider {
+  border-radius: var(--obcc-radius-pill, 999px);
+}
+
+.obcc-send,
+.obcc-scroll-bottom,
+.obcc-tts-floating-bubble,
+.obcc-button-edit-bubble,
+.obcc-selection-send-bubble,
+.obcc-button-edit-modal .checkbox-container::after,
+.obcc-button-edit-modal .slider::before {
+  border-radius: 50%;
 }
