@@ -12,11 +12,20 @@ GitHub, and keeping an auditable trail.
 
 Cancip should feel like Codex on a phone, scoped to one Obsidian vault.
 
+Its product ambition is an auditable Obsidian takeover layer: if a human can do
+an operation inside Obsidian, Cancip should be able to do it through a
+programmatic route. For work that is hard for a human, such as cross-vault
+search, large refactors, plugin API discovery, command routing, automation, and
+batch review, Cancip should be even stronger, while routing risky changes
+through review, approval, rollback, and action logs.
+
 It should be able to:
 
 - Understand and search the whole vault.
 - Read, write, create, rename, and organize vault files through validated
   vault-relative actions.
+- Operate Obsidian workspace commands, plugin commands, plugin APIs, settings,
+  toolbar/buttons, sidebars, panes, current selection, and review surfaces.
 - Maintain project memory in `.cancip/` and selected core-memory folders.
 - Manage GitHub repositories when the user configures credentials or tokens.
 - Build, adapt, install, and package Obsidian plugins.
@@ -157,8 +166,11 @@ trail:
 - Plugin installation over an existing plugin.
 - Any operation outside the vault or configured project workspace.
 
-The important design point is not "no power"; it is "power inside a clear,
-auditable boundary."
+The important design point is not "no power"; it is "high power inside a clear,
+auditable boundary." Capability should not be removed because an action is
+powerful. Instead, Cancip should expose the capability, record what it is doing,
+and use confirmation, review, rollback, and scoped configuration to decide how
+that capability is exercised.
 
 ## Near-Term Milestones
 
