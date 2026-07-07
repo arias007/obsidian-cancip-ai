@@ -9059,7 +9059,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
   private createUiButtonSortSnapshotStage(snapshot: UiButtonSortSnapshot): { anchor: HTMLElement; stage: HTMLElement; cleanup: () => void } | null {
     if (snapshot.items.length < 2) return null;
     const doc = activeDocument;
-    const stage = doc.body.createDiv({ cls: "obcc-ui-sort-snapshot-stage menu" });
+    const stage = doc.body.createDiv({ cls: "obcc-ui-sort-snapshot-stage" });
     stage.dataset.cancipUiSortSnapshotStage = "true";
     stage.setAttr("role", "menu");
     stage.setCssStyles({
@@ -9069,7 +9069,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       overflowX: "hidden",
       overflowY: "auto",
       pointerEvents: "auto",
-      touchAction: "none"
+      touchAction: "pan-y"
     });
     stage.style.setProperty("-webkit-overflow-scrolling", "touch");
     let anchor: HTMLElement | null = null;
@@ -9093,7 +9093,8 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       if (event.button !== 0 && event.pointerType === "mouse") return;
       const win = doc.defaultView;
       const rawTarget = event.target;
-      if (win && rawTarget instanceof win.Element && rawTarget.closest(".obcc-ui-sort-handle")) return;
+      const rawElement = win && rawTarget && (rawTarget as Element).instanceOf?.(win.Element) ? rawTarget as Element : null;
+      if (rawElement?.closest(".obcc-ui-sort-handle")) return;
       scrollPan = { pointerId: event.pointerId, y: event.clientY, scrollTop: stage.scrollTop, moved: false };
       try {
         stage.setPointerCapture(event.pointerId);
@@ -9134,7 +9135,8 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       if (scrollPan || touchScrollPan || event.touches.length !== 1) return;
       const win = doc.defaultView;
       const rawTarget = event.target;
-      if (win && rawTarget instanceof win.Element && rawTarget.closest(".obcc-ui-sort-handle")) return;
+      const rawElement = win && rawTarget && (rawTarget as Element).instanceOf?.(win.Element) ? rawTarget as Element : null;
+      if (rawElement?.closest(".obcc-ui-sort-handle")) return;
       const touch = event.touches[0];
       touchScrollPan = { identifier: touch.identifier, y: touch.clientY, scrollTop: stage.scrollTop, moved: false };
     };

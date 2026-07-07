@@ -939,8 +939,15 @@
 }
 
 .menu,
+.menu-scroll,
 .menu-group,
 .menu-section {
+  --menu-radius: 0px;
+  --touch-radius-xxs: 0px;
+  --touch-radius-s: 0px;
+  --touch-radius-m: 0px;
+  --touch-radius-l: 0px;
+  --touch-radius-xl: 0px;
   --radius-s: 0px;
   --radius-m: 0px;
   --radius-l: 0px;
@@ -951,11 +958,27 @@
 }
 
 body .menu,
+body .menu-scroll,
 body .menu-group,
 body .menu-section {
   gap: 0;
   border-radius: 0;
   box-shadow: none;
+}
+
+body.is-phone .menu,
+body.is-phone .menu-scroll,
+body.is-phone .menu-group,
+body.is-phone .menu-section {
+  --menu-radius: 0px;
+  --touch-radius-xxs: 0px;
+  --touch-radius-s: 0px;
+  --touch-radius-m: 0px;
+  --touch-radius-l: 0px;
+  --touch-radius-xl: 0px;
+  border-radius: 0;
+  box-shadow: none;
+  corner-shape: initial;
 }
 
 body .menu > .menu-section,
@@ -1008,6 +1031,24 @@ body.is-phone .menu-item,
 body.is-phone .menu-item.tappable,
 body.is-phone [role="menuitem"] {
   border-radius: 0;
+}
+
+body.is-phone .menu-group .menu-item.is-label + .menu-item:not(.is-label),
+body.is-phone .menu-group .menu-item:first-child,
+body.is-phone .menu-group .menu-item:last-child,
+body.is-phone .menu-group .menu-item:only-child,
+body.is-phone .menu .suggestion-group .suggestion-item,
+body.is-phone .menu .suggestion-group .suggestion-item:first-child,
+body.is-phone .menu .suggestion-group .suggestion-item:last-child,
+body.is-phone .menu .suggestion-group .suggestion-item:only-child,
+body.is-phone .modal.mod-mobile-menu .menu-item:first-child,
+body.is-phone .modal.mod-mobile-menu .menu-item:last-child,
+body.is-phone .modal.mod-mobile-menu .menu-item:only-child {
+  border-radius: 0;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
 }
 
 body .menu-item::before,
@@ -3433,11 +3474,12 @@ body .obcc-view-tts-action {
   scrollbar-gutter: stable;
 }
 
-.menu.obcc-ui-sort-snapshot-stage .menu-item,
-.menu.obcc-ui-sort-snapshot-stage .menu-item:hover,
-.menu.obcc-ui-sort-snapshot-stage .menu-item.is-selected,
-.menu.obcc-ui-sort-snapshot-stage .menu-item:first-child,
-.menu.obcc-ui-sort-snapshot-stage .menu-item:last-child {
+.obcc-ui-sort-snapshot-stage .menu-item,
+.obcc-ui-sort-snapshot-stage .menu-item:hover,
+.obcc-ui-sort-snapshot-stage .menu-item.is-selected,
+.obcc-ui-sort-snapshot-stage .menu-item:first-child,
+.obcc-ui-sort-snapshot-stage .menu-item:last-child,
+.obcc-ui-sort-snapshot-stage .menu-item:only-child {
   position: relative;
   flex: 0 0 auto;
   min-height: 32px;
@@ -3450,6 +3492,10 @@ body .obcc-view-tts-action {
 
 .obcc-ui-sort-snapshot-stage,
 .obcc-ui-sort-snapshot-stage .menu-item {
+  touch-action: pan-y;
+}
+
+.obcc-ui-sort-snapshot-stage .obcc-ui-sort-handle {
   touch-action: none;
 }
 
