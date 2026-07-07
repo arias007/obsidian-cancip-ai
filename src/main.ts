@@ -1274,6 +1274,8 @@ type UiButtonSortSnapshotItem = {
 class CancipButtonEditModal extends Modal {
   private nameInput: HTMLInputElement | null = null;
   private iconInput: HTMLInputElement | null = null;
+  private verifyEl: HTMLElement | null = null;
+  private verifyTimer: number | null = null;
   private addCommandSelect: HTMLSelectElement | null = null;
   private addNameInput: HTMLInputElement | null = null;
   private addCommandOptions: UiButtonCommandOption[] = [];
@@ -1311,6 +1313,9 @@ class CancipButtonEditModal extends Modal {
       cls: "obcc-button-edit-selector",
       text: this.descriptor.selector
     });
+    this.verifyEl = this.contentEl.createDiv({ cls: "obcc-button-edit-verify" });
+    this.refreshVerifyStatus();
+    this.verifyTimer = window.setInterval(() => this.refreshVerifyStatus(), 700);
 
     new Setting(this.contentEl)
       .setName(this.plugin.t("buttonEditName"))
@@ -1395,7 +1400,32 @@ class CancipButtonEditModal extends Modal {
   }
 
   onClose(): void {
+    if (this.verifyTimer !== null) {
+      window.clearInterval(this.verifyTimer);
+      this.verifyTimer = null;
+    }
     this.contentEl.empty();
+  }
+
+  private refreshVerifyStatus(): void {
+    if (!this.verifyEl) return;
+    const status = this.plugin.uiButtonEditTargetStatus(this.descriptor);
+    this.verifyEl.empty();
+    this.verifyEl.toggleClass("is-ok", status.verified);
+    this.verifyEl.toggleClass("is-mismatch", !status.verified);
+    const text = status.verified
+      ? this.plugin.t("buttonEditVerifyOk", {
+          label: status.expectedLabel,
+          selectorCount: String(status.selectorCount),
+          labelCount: String(status.labelCount)
+        })
+      : this.plugin.t("buttonEditVerifyMismatch", {
+          label: status.expectedLabel,
+          selectorCount: String(status.selectorCount),
+          labelCount: String(status.labelCount),
+          seen: status.seenLabels.join(" / ") || "-"
+        });
+    this.verifyEl.setText(text);
   }
 
   private async saveRule(): Promise<void> {
@@ -2029,6 +2059,8 @@ const EN = {
   buttonEditRevealHiddenDesc: "Temporary reveal hidden UI button rules. Turn it off to restore hidden state.",
   buttonEditRevealHiddenOn: "Hidden buttons are temporarily visible",
   buttonEditRevealHiddenOff: "Hidden buttons restored",
+  buttonEditVerifyOk: "Text check OK: \"{label}\" · selector {selectorCount} / text {labelCount}",
+  buttonEditVerifyMismatch: "Text check failed: expected \"{label}\" · selector {selectorCount} / text {labelCount} · seen: {seen}",
   buttonEditSave: "Save",
   buttonEditRemove: "Remove rule",
   buttonEditSaved: "Button rule saved",
@@ -2723,6 +2755,8 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     buttonEditRevealHiddenDesc: "临时显示被隐藏的按钮，方便找回；手动关掉后恢复隐藏状态。",
     buttonEditRevealHiddenOn: "已临时显示隐藏按钮",
     buttonEditRevealHiddenOff: "已恢复隐藏按钮",
+    buttonEditVerifyOk: "文字核对通过：\"{label}\" · selector {selectorCount} / 文字 {labelCount}",
+    buttonEditVerifyMismatch: "文字核对失败：应为 \"{label}\" · selector {selectorCount} / 文字 {labelCount} · 当前：{seen}",
     buttonEditSave: "保存",
     buttonEditRemove: "删除规则",
     buttonEditSaved: "按钮规则已保存",
@@ -9055,12 +9089,19 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
 
   private isVisibleUiButtonSortTarget(target: HTMLElement): boolean {
     const win = activeDocument.defaultView;
+    if (!win || !this.isRenderedUiButtonSortTarget(target)) return false;
+    const rect = target.getBoundingClientRect();
+    if (rect.bottom < 0 || rect.right < 0 || rect.top > win.innerHeight || rect.left > win.innerWidth) return false;
+    return true;
+  }
+
+  private isRenderedUiButtonSortTarget(target: HTMLElement): boolean {
+    const win = activeDocument.defaultView;
     if (!win || !target.isConnected) return false;
     const style = win.getComputedStyle(target);
     if (style.display === "none" || style.visibility === "hidden" || style.pointerEvents === "none") return false;
     const rect = target.getBoundingClientRect();
     if (rect.width < 2 || rect.height < 2) return false;
-    if (rect.bottom < 0 || rect.right < 0 || rect.top > win.innerHeight || rect.left > win.innerWidth) return false;
     return true;
   }
 
@@ -9547,13 +9588,30 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       ?? null;
   }
 
+  uiButtonEditTargetStatus(descriptor: UiButtonEditDescriptor): { expectedLabel: string; selectorCount: number; labelCount: number; seenLabels: string[]; verified: boolean } {
+    const expectedLabel = descriptor.label || descriptor.selector;
+    const wanted = normalizeUiButtonLabel(expectedLabel);
+    const elements = this.uiRuleElementsBySelector(descriptor.selector, descriptor.scope);
+    const seenLabels = uniqueStrings(elements.map((el) => uiElementLabel(el)).filter(Boolean)).slice(0, 5);
+    const labelCount = wanted && wanted !== normalizeUiButtonLabel(descriptor.selector)
+      ? elements.filter((el) => uiButtonElementMatchesRuleLabel({ selector: descriptor.selector, label: expectedLabel }, el)).length
+      : elements.length;
+    return {
+      expectedLabel,
+      selectorCount: elements.length,
+      labelCount,
+      seenLabels,
+      verified: elements.length > 0 && labelCount > 0
+    };
+  }
+
   private createUiButtonSortSnapshot(target: HTMLElement, selector: string, scope: UiButtonRule["scope"]): UiButtonSortSnapshot | undefined {
     const menuRoot = target.closest<HTMLElement>(".menu");
     const popoverRoot = target.closest<HTMLElement>(".obcc-history-popover.is-more, .obcc-history-popover.is-skills, .obcc-history-popover.is-automation");
     const root = menuRoot ?? popoverRoot?.querySelector<HTMLElement>(".obcc-management-body") ?? popoverRoot;
     if (!root) return undefined;
     const source: UiButtonSortSnapshot["source"] = menuRoot ? "menu" : "popover";
-    const items = this.flatSortableUiButtonTargets(root).map((item): UiButtonSortSnapshotItem => {
+    const items = this.flatSortableUiButtonTargets(root, { includeOffscreen: true }).map((item): UiButtonSortSnapshotItem => {
       const itemSelector = looseSelectorForUiButtonRule(item);
       const label = uiElementLabel(item) || itemSelector;
       const command = item.getAttribute("data-command") || item.querySelector<HTMLElement>("[data-command]")?.getAttribute("data-command") || undefined;
@@ -9580,7 +9638,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     return { source, scope, anchorSelector: selector, items: uniqueItems };
   }
 
-  private flatSortableUiButtonTargets(root: HTMLElement): HTMLElement[] {
+  private flatSortableUiButtonTargets(root: HTMLElement, options: { includeOffscreen?: boolean } = {}): HTMLElement[] {
     const selector = [
       "button",
       "a[href]",
@@ -9599,7 +9657,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       .filter((item) => !item.closest(".obcc-button-edit-modal, .obcc-button-edit-bubble, .obcc-selection-send-bubble, .obcc-ui-sort-overlay"))
       .filter((item) => item.dataset.cancipUiCustomButton !== "true")
       .filter((item) => this.isEditableButtonUiTarget(item) || Boolean(this.editableButtonTarget(item)))
-      .filter((item) => this.isVisibleUiButtonSortTarget(item))
+      .filter((item) => options.includeOffscreen ? this.isRenderedUiButtonSortTarget(item) : this.isVisibleUiButtonSortTarget(item))
       .filter((item) => !this.isUiButtonSortExcludedTarget(item));
   }
 
@@ -9758,60 +9816,46 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       const rules = this.settings.uiButtonManagementEnabled
         ? this.settings.uiButtonRules.filter(uiButtonRuleHasChanges)
         : [];
-      let applied = false;
-      let frameId: number | null = null;
-      let fallbackId: number | null = null;
-      const applyNow = () => {
-        if (applied) return;
-        applied = true;
-        if (frameId !== null) window.cancelAnimationFrame(frameId);
-        if (fallbackId !== null) window.clearTimeout(fallbackId);
-        try {
-          for (const rule of rules) {
-            if (rule.kind === "custom") {
-              this.applyCustomUiButtonRule(rule);
-              continue;
-            }
-            for (const el of this.uiRuleElements(rule)) {
-              if (rule.hidden && !this.uiButtonRulesRevealHidden) {
-                el.dataset.cancipUiHidden = "true";
-                el.addClass("obcc-ui-rule-hidden");
-              }
-              if (Number.isFinite(rule.order) && rule.order !== 0) {
-                const parent = this.uiButtonOrderParent(el);
-                if (!parent) continue;
-                el.dataset.cancipUiOrder = String(rule.order);
-                el.setCssStyles({ order: String(rule.order) });
-                const directParent = el.parentElement;
-                if (directParent && directParent !== parent && directParent.matches(".menu-section")) {
-                  directParent.addClass("obcc-ui-rule-menu-section-contents");
-                  parent.addClass("obcc-ui-rule-menu-complete-sort-parent");
-                }
-                const display = activeDocument.defaultView?.getComputedStyle(parent).display ?? "";
-                if (!/^(inline-)?(flex|grid)$/.test(display)) {
-                  parent.addClass(display.startsWith("inline") ? "obcc-ui-rule-inline-flex-parent" : "obcc-ui-rule-flex-parent");
-                }
-              }
-              if (rule.title?.trim()) {
-                this.applyUiRuleTitle(el, rule.title.trim());
-              }
-              if (rule.icon?.trim()) {
-                this.applyUiRuleIcon(el, rule.icon.trim());
-              }
-            }
-          }
-          if (this.settings.hideUnpinnedTagsInRightSidebar) {
-            const pinned = new Set(this.settings.pinnedTags.map((tag) => normalizeTagName(tag)).filter(Boolean));
-            for (const item of this.rightSidebarTagElements()) {
-              if (!pinned.has(item.tag)) item.el.dataset.cancipTagHidden = item.tag;
-            }
-          }
-        } finally {
-          finish();
+      for (const rule of rules) {
+        if (rule.kind === "custom") {
+          this.applyCustomUiButtonRule(rule);
+          continue;
         }
-      };
-      frameId = window.requestAnimationFrame(applyNow);
-      fallbackId = window.setTimeout(applyNow, 80);
+        for (const el of this.uiRuleElements(rule)) {
+          if (rule.hidden && !this.uiButtonRulesRevealHidden) {
+            el.dataset.cancipUiHidden = "true";
+            el.addClass("obcc-ui-rule-hidden");
+          }
+          if (Number.isFinite(rule.order) && rule.order !== 0) {
+            const parent = this.uiButtonOrderParent(el);
+            if (!parent) continue;
+            el.dataset.cancipUiOrder = String(rule.order);
+            el.setCssStyles({ order: String(rule.order) });
+            const directParent = el.parentElement;
+            if (directParent && directParent !== parent && directParent.matches(".menu-section")) {
+              directParent.addClass("obcc-ui-rule-menu-section-contents");
+              parent.addClass("obcc-ui-rule-menu-complete-sort-parent");
+            }
+            const display = activeDocument.defaultView?.getComputedStyle(parent).display ?? "";
+            if (!/^(inline-)?(flex|grid)$/.test(display)) {
+              parent.addClass(display.startsWith("inline") ? "obcc-ui-rule-inline-flex-parent" : "obcc-ui-rule-flex-parent");
+            }
+          }
+          if (rule.title?.trim()) {
+            this.applyUiRuleTitle(el, rule.title.trim());
+          }
+          if (rule.icon?.trim()) {
+            this.applyUiRuleIcon(el, rule.icon.trim());
+          }
+        }
+      }
+      if (this.settings.hideUnpinnedTagsInRightSidebar) {
+        const pinned = new Set(this.settings.pinnedTags.map((tag) => normalizeTagName(tag)).filter(Boolean));
+        for (const item of this.rightSidebarTagElements()) {
+          if (!pinned.has(item.tag)) item.el.dataset.cancipTagHidden = item.tag;
+        }
+      }
+      finish();
     } catch (error) {
       console.warn("Cancip UI button rules apply failed", error);
       finish();
@@ -10553,18 +10597,8 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
   }
 
   private narrowUiRuleElementsByLabel(rule: UiButtonRule, elements: HTMLElement[]): HTMLElement[] {
-    const guardByLabel = uiButtonRuleRequiresLabelGuard(rule);
-    if (!guardByLabel && elements.length <= 1) return elements;
-    const wanted = normalizeUiButtonLabel(rule.label || "");
-    if (!wanted || wanted === normalizeUiButtonLabel(rule.selector)) return elements;
-    const exact = elements.filter((el) => normalizeUiButtonLabel(uiElementLabel(el)) === wanted);
-    if (exact.length) return exact;
-    const contains = elements.filter((el) => {
-      const label = normalizeUiButtonLabel(uiElementLabel(el));
-      return label && (label.includes(wanted) || wanted.includes(label));
-    });
-    if (contains.length) return contains;
-    return guardByLabel ? [] : elements;
+    if (!uiButtonRuleHasLabelGuard(rule)) return elements;
+    return elements.filter((el) => uiButtonElementMatchesRuleLabel(rule, el));
   }
 
   async maybeRunDueAutomations(): Promise<void> {
@@ -35027,14 +35061,12 @@ function uiButtonRulesReferToSameTarget(a: UiButtonRule, b: UiButtonRule): boole
 function uiButtonRuleMatchesTarget(rule: UiButtonRule, selector: string, scope: UiButtonRule["scope"], label: string): boolean {
   if (rule.kind === "custom") return false;
   if (rule.selector !== selector || rule.scope !== scope) return false;
-  if (!uiButtonSelectorRequiresLabelGuard(selector)) return true;
-  const ruleLabel = normalizeUiButtonLabel(rule.label || "");
-  const targetLabel = normalizeUiButtonLabel(label || selector);
-  return Boolean(ruleLabel && targetLabel && ruleLabel === targetLabel);
+  if (!uiButtonRuleHasLabelGuard(rule)) return true;
+  return uiButtonRuleAllowsLabel(rule, label || selector);
 }
 
 function uiButtonRuleRequiresLabelGuard(rule: UiButtonRule): boolean {
-  return uiButtonSelectorRequiresLabelGuard(rule.selector);
+  return uiButtonRuleHasLabelGuard(rule);
 }
 
 function uiButtonSelectorRequiresLabelGuard(selector: string): boolean {
@@ -35054,6 +35086,28 @@ function isBroadUiButtonSelector(selector: string): boolean {
     || normalized === ".menu-item"
     || normalized === "[role='menuitem']"
     || /^[a-z0-9_-]+$/i.test(normalized);
+}
+
+function uiButtonRuleHasLabelGuard(rule: Pick<UiButtonRule, "selector" | "label" | "title" | "commandName">): boolean {
+  return uiButtonRuleReferenceLabels(rule).length > 0 || uiButtonSelectorRequiresLabelGuard(rule.selector);
+}
+
+function uiButtonRuleReferenceLabels(rule: Pick<UiButtonRule, "selector" | "label" | "title" | "commandName">): string[] {
+  const selectorLabel = normalizeUiButtonLabel(rule.selector);
+  return uniqueStrings([rule.label, rule.title, rule.commandName]
+    .map((item) => normalizeUiButtonLabel(item ?? ""))
+    .filter((item) => item && item !== selectorLabel));
+}
+
+function uiButtonElementMatchesRuleLabel(rule: Pick<UiButtonRule, "selector" | "label" | "title" | "commandName">, el: HTMLElement): boolean {
+  return uiButtonRuleAllowsLabel(rule, uiElementLabel(el));
+}
+
+function uiButtonRuleAllowsLabel(rule: Pick<UiButtonRule, "selector" | "label" | "title" | "commandName">, label: string): boolean {
+  const wanted = uiButtonRuleReferenceLabels(rule);
+  if (!wanted.length) return !uiButtonSelectorRequiresLabelGuard(rule.selector);
+  const current = normalizeUiButtonLabel(label || "");
+  return Boolean(current && wanted.includes(current));
 }
 
 function workspaceLeafArea(leaf: WorkspaceLeaf): WorkspaceTabInfo["area"] {

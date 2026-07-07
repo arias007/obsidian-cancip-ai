@@ -899,7 +899,10 @@ if (-not $Case -or 'programmatic.ui-button-sort-menu-snapshot'.Contains($Case)) 
   root.style.left='12px';
   root.style.top='12px';
   root.style.zIndex='1000';
-  const longItems=Array.from({length:30},(_,i)=>`<div class="menu-item" data-command="smoke-menu-extra-${i}" id="cancip-sort-snapshot-extra-${i}"><div class="menu-item-title">Extra item ${i}</div></div>`).join('');
+  root.style.width='260px';
+  root.style.maxHeight='120px';
+  root.style.overflowY='auto';
+  const longItems=Array.from({length:56},(_,i)=>`<div class="menu-item" data-command="smoke-menu-extra-${i}" id="cancip-sort-snapshot-extra-${i}"><div class="menu-item-title">Extra item ${i}</div></div>`).join('');
   root.innerHTML=[
     '<div class="menu-section"><div class="menu-item" data-command="smoke-menu-a" id="cancip-sort-snapshot-a"><div class="menu-item-title">Duplicate Snapshot</div></div><div class="menu-item" data-command="smoke-menu-b" id="cancip-sort-snapshot-b"><div class="menu-item-title">Duplicate Snapshot</div></div></div>',
     '<div class="menu-separator"></div>',
@@ -923,6 +926,8 @@ if (-not $Case -or 'programmatic.ui-button-sort-menu-snapshot'.Contains($Case)) 
     const stageStyle=stage?getComputedStyle(stage):null;
     const stageOverflowY=stageStyle?.overflowY||'';
     const stageTouchAction=stageStyle?.touchAction||'';
+    const stagePaddingTop=stageStyle?.paddingTop||'';
+    const stageRadius=stageStyle?.borderTopLeftRadius||'';
     const stageCanScroll=stage?stage.scrollHeight>stage.clientHeight:false;
     const firstRadius=stage?getComputedStyle(stage.querySelector('.obcc-ui-sort-snapshot-item')).borderTopLeftRadius:'';
     const initialHiddenHandles=Array.from(doc.querySelectorAll('.obcc-ui-sort-handle')).filter((handle)=>getComputedStyle(handle).display==='none').length;
@@ -936,7 +941,7 @@ if (-not $Case -or 'programmatic.ui-button-sort-menu-snapshot'.Contains($Case)) 
     const controlTop=parseFloat(doc.querySelector('.obcc-ui-sort-done')?.style?.top||'0');
     p.stopUiButtonSortMode();
     const stageAfter=!!doc.querySelector('.obcc-ui-sort-snapshot-stage');
-    return JSON.stringify({id:'programmatic.ui-button-sort-menu-snapshot',elapsedMs:Date.now()-t,snapshotCount,hasStage:!!stage,stageItems,handles,firstSelector,duplicateSelectors,stageOverflowY,stageTouchAction,stageCanScroll,firstRadius,initialHiddenHandles,lastHandleDisplay,controlTop,stageAfter});
+    return JSON.stringify({id:'programmatic.ui-button-sort-menu-snapshot',elapsedMs:Date.now()-t,snapshotCount,hasStage:!!stage,stageItems,handles,firstSelector,duplicateSelectors,stageOverflowY,stageTouchAction,stagePaddingTop,stageRadius,stageCanScroll,firstRadius,initialHiddenHandles,lastHandleDisplay,controlTop,stageAfter});
   } finally {
     root.remove();
     p.stopUiButtonSortMode?.();
@@ -946,13 +951,14 @@ if (-not $Case -or 'programmatic.ui-button-sort-menu-snapshot'.Contains($Case)) 
 })()
 '@
     $item = Invoke-CancipEval -Code $code -TimeoutSeconds 45
-    if ([int]$item.snapshotCount -lt 4) { throw "menu sort snapshot did not flatten grouped siblings: $($item | ConvertTo-Json -Compress)" }
-    if (-not $item.hasStage -or [int]$item.stageItems -lt 4 -or [int]$item.handles -lt 4) { throw "menu sort snapshot stage/handles missing: $($item | ConvertTo-Json -Compress)" }
+    if ([int]$item.snapshotCount -lt 60) { throw "menu sort snapshot did not collect complete long/scrolling menu: $($item | ConvertTo-Json -Compress)" }
+    if (-not $item.hasStage -or [int]$item.stageItems -lt 60 -or [int]$item.handles -lt 60) { throw "menu sort snapshot stage/handles missing: $($item | ConvertTo-Json -Compress)" }
     if ([int]$item.handles -ne [int]$item.stageItems) { throw "not every scrollable snapshot item received a sort handle: $($item | ConvertTo-Json -Compress)" }
     if (-not ([string]$item.firstSelector).Contains('data-command')) { throw "snapshot item did not preserve original selector: $($item | ConvertTo-Json -Compress)" }
     if (@($item.duplicateSelectors).Count -ne 2) { throw "duplicate menu labels were merged or selectors were not command-specific: $($item | ConvertTo-Json -Compress)" }
     if (-not ([string]$item.stageOverflowY -match 'auto|scroll') -or -not $item.stageCanScroll) { throw "menu sort snapshot stage is not scrollable: $($item | ConvertTo-Json -Compress)" }
     if ([string]$item.stageTouchAction -notmatch 'pan-y') { throw "menu sort snapshot stage does not allow vertical touch scroll: $($item | ConvertTo-Json -Compress)" }
+    if ([string]$item.stagePaddingTop -ne '0px' -or [string]$item.stageRadius -ne '0px') { throw "snapshot stage still has rounded/padded grouped look: $($item | ConvertTo-Json -Compress)" }
     if ([string]$item.firstRadius -ne '0px') { throw "snapshot menu items still keep inconsistent rounded corners: $($item | ConvertTo-Json -Compress)" }
     if ([int]$item.initialHiddenHandles -lt 1) { throw "offscreen snapshot handles were not hidden before scrolling: $($item | ConvertTo-Json -Compress)" }
     if ([string]$item.lastHandleDisplay -eq 'none') { throw "bottom snapshot item handle did not appear after vertical scroll: $($item | ConvertTo-Json -Compress)" }
