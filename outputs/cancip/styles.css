@@ -978,6 +978,12 @@
   padding: 0;
 }
 
+.obcc-right-tab-button.is-pinned,
+.obcc-right-tab-button[aria-pressed="true"] {
+  color: var(--interactive-accent);
+  background: var(--background-modifier-hover);
+}
+
 .menu.obcc-ui-rule-flex-parent,
 .menu .obcc-ui-rule-flex-parent,
 .menu-group.obcc-ui-rule-flex-parent,
@@ -3101,9 +3107,13 @@ body .obcc-view-tts-action {
 .obcc-model-button {
   flex: 0 1 auto;
   gap: 5px;
-  max-width: min(112px, 32vw);
+  max-width: min(168px, 42vw);
   padding: 0 4px;
   color: var(--text-muted);
+}
+
+.obcc-model-copy-button {
+  flex: 0 0 29px;
 }
 
 .obcc-tool-button:hover,
@@ -5431,7 +5441,7 @@ input.obcc-review-correction-input {
   }
 
   .obcc-model-button {
-    max-width: min(92px, 30vw);
+    max-width: min(132px, 38vw);
   }
 
   .obcc-model-effort {
@@ -5468,7 +5478,7 @@ input.obcc-review-correction-input {
   }
 
   .obcc-model-button {
-    max-width: 76px;
+    max-width: 104px;
   }
 }
 

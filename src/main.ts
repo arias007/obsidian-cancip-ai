@@ -201,6 +201,13 @@ type ModelCallRetryProgress = {
   waitingMs?: number;
 };
 
+type ModelStreamProgress = {
+  text: string;
+  done: boolean;
+};
+
+type ModelStreamCallback = (progress: ModelStreamProgress) => void;
+
 type TokenUsage = {
   inputTokens: number;
   outputTokens: number;
@@ -1748,16 +1755,6 @@ const MODEL_PRESETS = [
   "kimi-k2-instruct"
 ] as const;
 
-const MECHANICAL_TASK_MODEL_PRIORITY = [
-  "qwen-plus",
-  "deepseek-chat",
-  "gpt-4o-mini",
-  "gemini-2.5-flash",
-  "o4-mini",
-  "kimi-k2-instruct",
-  "gpt-4.1-mini"
-] as const;
-
 const DEFAULT_MECHANICAL_TASK_ROUTES: MechanicalTaskRoutes = {
   contentRename: true,
   markdownBeautify: true,
@@ -1831,7 +1828,7 @@ const DEFAULT_SETTINGS: Settings = {
   maxAutoSkills: 3,
   maxSkillContextChars: 6000,
   maxAutoSkillContextChars: 1800,
-  specialistRoutingEnabled: true,
+  specialistRoutingEnabled: false,
   mechanicalTaskApiProfileId: "",
   mechanicalTaskModel: "",
   mechanicalTaskRoutes: { ...DEFAULT_MECHANICAL_TASK_ROUTES },
@@ -1943,10 +1940,14 @@ const PROGRAMMATIC_PLAN_TEMPLATE_TEXTS = new Set([
 const SKILL_DISCOVERY_CACHE_MS = 60 * 1000;
 const SKILL_DISCOVERY_TIME_BUDGET_MS = 2400;
 const SKILL_DISCOVERY_MAX_FILES = 180;
-const MODEL_CALL_TIMEOUT_MS = 120000;
+const MODEL_CALL_TIMEOUT_MS = 300000;
+const MODEL_CALL_COMPLEX_TIMEOUT_MS = 480000;
 const MODEL_CALL_MAX_ATTEMPTS = 5;
-const MODEL_CALL_RETRY_BASE_DELAY_MS = 1600;
-const MODEL_CALL_RETRY_MAX_DELAY_MS = 12000;
+const MODEL_CALL_RETRY_BASE_DELAY_MS = 5000;
+const MODEL_CALL_RETRY_MAX_DELAY_MS = 45000;
+const MODEL_CALL_SERVICE_RETRY_MIN_DELAY_MS = 9000;
+const MODEL_CALL_RATE_LIMIT_RETRY_MIN_DELAY_MS = 18000;
+const MODEL_CALL_RETRY_AFTER_MAX_DELAY_MS = 90000;
 const INFORMATIONAL_ANSWER_TIMEOUT_MS = 45000;
 const CHOICE_SUGGESTION_TIMEOUT_MS = 18000;
 const FILE_WRITE_CHUNK_SIZE = 64 * 1024;
@@ -2050,14 +2051,14 @@ const EN = {
   tokenUsageEstimated: " estimated",
   processRecord: "Process record",
   finalConclusionFallback: "{summary}",
-  finalAnswerFormatPrompt: "For implementation/change/tool tasks, do not write a \"Final answer\" heading and do not write elapsed time, token counts, or character counts; Cancip appends those programmatically. The visible closeout should be human-readable and concrete: start with a short summary tied to the user's original request, then use concise numbered items for what was done, then include actions performed, changed/read files, verification/results, blockers/reminders when relevant, and memory/rule updates if any. If more tool work is still needed and no real blocker exists, continue with exactly one cancip-action instead of summarizing as done. Generate the final answer and exactly three next-step buttons together in the same reply: append exactly one hidden HTML comment like <!-- cancip-choices {\"choices\":[\"specific action 1\",\"specific action 2\",\"specific action 3\"]} -->. Do not show these choices as visible numbered or bulleted text. Keep tool details folded in process records; do not expose raw action JSON.",
+  finalAnswerFormatPrompt: "For implementation/change/tool tasks, do not write a \"Final answer\" heading and do not write elapsed time, token counts, or character counts; Cancip appends those programmatically. The visible closeout should be human-readable and concrete: start with a short summary tied to the user's original request, then use concise numbered items for what was done, then include actions performed, changed/read files, verification/results, blockers/reminders when relevant, and memory/rule updates if any. If more tool work is still needed and no real blocker exists, continue with exactly one cancip-action instead of summarizing as done. Generate the final answer and one to three concrete next-step buttons together in the same reply when useful: append exactly one hidden HTML comment like <!-- cancip-choices {\"choices\":[\"specific action 1\",\"specific action 2\"]} -->. Do not show these choices as visible numbered or bulleted text. Keep tool details folded in process records; do not expose raw action JSON.",
   emptyApiReply: "The API returned an empty response.",
   emptyApiReplyWithSuppressedTools: "The API returned tool/action instructions but no visible assistant reply. For simple chat, Cancip does not execute hidden actions.",
   modelContinuationFailed: "Model follow-up failed: {reason}",
   resumeTask: "Continue",
   resumableStopped: "Stopped. Tap Continue to resume from the current session state.",
   resumableFailed: "Failed. Tap Continue to resume from the latest tool/session state.",
-  toolActionRequiredPrompt: "The user asked for a concrete implementation/change task, but your previous answer did not emit any cancip-action and no tool ran.\n\nUser task:\n{task}\n\nUse the general agent loop: identify the smallest relevant target, inspect only if needed, take the smallest available tool action that advances the user's actual goal, then verify from tool results. Do not default to a broad search, a generic status report, capability refusal, or prose confirmation such as \"needs approval\". If the task is analysis only, give a concrete answer from evidence; if the task asks for a state change, output an executable cancip-action. Access mode is handled by the UI: confirmation mode shows Approve/Reject cards, and full access auto-approves implemented tools. For Cancip self-fixes, missing desktop source build/npm/restart is not a blocker to making an installed-plugin hot patch when that is the available implementation surface. Output exactly one cancip-action block if action is needed; otherwise give one short concrete blocker or evidence-based answer with hidden cancip-choices.",
+  toolActionRequiredPrompt: "The user asked for a concrete implementation/change task, but your previous answer did not emit any cancip-action and no tool ran.\n\nUser task:\n{task}\n\nUse the general agent loop: identify the smallest relevant target, inspect only if needed, take the smallest available tool action that advances the user's actual goal, then verify from tool results. Do not default to a broad search, a generic status report, capability refusal, or prose confirmation such as \"needs approval\". If the task is analysis only, give a concrete answer from evidence; if the task asks for a state change, output an executable cancip-action. Access mode is handled by the UI: confirmation mode shows Approve/Reject cards, and full access auto-approves implemented tools. For Cancip self-fixes, missing desktop source build/npm/restart is not a blocker to making an installed-plugin hot patch when that is the available implementation surface. Output exactly one cancip-action block if action is needed; otherwise give one short concrete blocker or evidence-based answer, with hidden cancip-choices only when you have real concrete next-step choices.",
   toolActionHardRequiredPrompt: "Your previous answer still did not produce an executable cancip-action. The user needs useful progress.\n\nUser task:\n{task}\n\nUse the smallest available tool action that genuinely advances this task, then verify it if possible. For a state-change task, currentView/read/search/list/status are only locating context; they cannot be the final step. If the previous result names activeFile, read that file if content is still missing, otherwise patch/write/move/delete/config the relevant target. If the correct next step is analysis rather than a state change, answer from evidence instead of producing a fake action. If no current Cancip capability can advance the task, state the exact blocker and missing capability. Do not ask for generic confirmation, do not say \"needs execution/approval\" in prose, and do not give a generic limitation or status summary.",
   toolActionLowCommitmentPrompt: "The user asked for a concrete implementation/change task, but the previous tool iterations only read/searched/listed and did not materially advance it.\n\nUser task:\n{task}\n\nContinue with a general agent loop: use the last tool result as state, decide whether the user asked for analysis or a state change, then either answer the real question from evidence or output one executable cancip-action that advances the task. For state-change tasks, currentView/read/search/list/status are only context gathering. If activeFile is present, use it as the target: read it when text is missing, then patch/write and verify. Avoid repeating broad reads/searches. If action is impossible, state the exact blocker and missing capability. Do not ask whether to proceed, and do not answer with \"not finished\", \"continue\", or a summary of searches.",
   selfPatchNeedsReload: "This changed Cancip's installed plugin files. The current running plugin will not reliably show the effect until Cancip/Obsidian is reloaded. This is still a real mobile hot patch; desktop tools are only needed later to sync source/build/release.",
@@ -2115,6 +2116,15 @@ const EN = {
   commandStopTts: "Stop read aloud",
   commandPauseTts: "Pause read aloud",
   commandResumeTts: "Resume read aloud",
+  commandRightSidebarTogglePinnedTab: "Lock/unlock active right sidebar tab",
+  commandRightSidebarCloseUnpinnedTabs: "Close unlocked right sidebar tabs",
+  commandRightSidebarCloseAllTabs: "Close all right sidebar tabs",
+  tabHeaderMenuTitle: "Tab: {title}",
+  tabHeaderMenuPin: "Lock tab",
+  tabHeaderMenuUnpin: "Unlock tab",
+  tabHeaderMenuCloseThis: "Close this tab",
+  tabHeaderMenuCloseUnpinnedInSidebar: "Close unlocked tabs in this sidebar",
+  tabHeaderMenuCloseAllInSidebar: "Close all tabs in this sidebar",
   commandRebuildIndex: "Rebuild light index",
   commandLocalVersionCommit: "Create local version commit",
   reviewGate: "Review",
@@ -2324,6 +2334,8 @@ const EN = {
   modelEffort: "Extra High",
   accessMenuTitle: "Access",
   modelMenuTitle: "Model",
+  copyModelInfo: "Copy model info",
+  modelInfoCopied: "Model info copied",
   accessModeChanged: "Access mode: {mode}",
   modelChanged: "Model: {model}",
   apiProfileChanged: "API profile: {profile}",
@@ -2351,7 +2363,7 @@ const EN = {
   done: "Done",
   callFailed: "Call failed",
   stopped: "Stopped",
-  localNoHits: "Model call failed: {reason}\n\nNo local search results are attached for this turn. Keep the failure visible and continue from the latest session/tool state after the API recovers.",
+  localNoHits: "Model call failed: {reason}\n\nNo local search results are attached for this turn. Keep the failure visible in the process record and continue from the latest session/tool state after the API recovers.",
   localHits: "Model call failed: {reason}\n\nHere are local Vault Search results for now.\n\nQuestion: {prompt}\n\n{list}",
   recentConversation: "Recent conversation",
   userQuestion: "User question",
@@ -2509,18 +2521,6 @@ const EN = {
   settingsMaxAutoSkills: "Auto Skills per prompt",
   settingsMaxSkillContextChars: "Explicit Skill characters",
   settingsMaxAutoSkillContextChars: "Auto Skill characters",
-  settingsSpecialistRouting: "Route mechanical tasks to a specialist model",
-  settingsSpecialistRoutingDesc: "Batch rename, Markdown beautify, and low-difficulty folder cleanup can use a cheaper/specialized model while the main model stays for harder work.",
-  settingsMechanicalTaskApiProfile: "Mechanical task API profile",
-  settingsMechanicalTaskModel: "Mechanical task model",
-  settingsMechanicalUseCurrentProfile: "Use current profile",
-  settingsMechanicalUseCurrentModel: "Auto cheap model",
-  settingsMechanicalTaskRoutes: "Mechanical route triggers",
-  settingsMechanicalTaskRoutesDesc: "These switches are enforced before the model call. Disabled situations do not route to the specialist model even if the prompt mentions them.",
-  settingsMechanicalRouteContentRename: "Content-based batch rename",
-  settingsMechanicalRouteMarkdownBeautify: "Markdown beautify / formatting",
-  settingsMechanicalRouteFolderCleanup: "Folder-level cleanup",
-  settingsMechanicalRouteFrontmatterTags: "Properties / tags cleanup",
   settingsSkillExperienceHarvest: "Harvest successful runs into Skills",
   settingsSkillExperienceHarvestDesc: "Keeps a mobile-safe generated Skill/recipe cache under .cancip/skills/generated for repeated workflows.",
   harvestExperienceSkills: "Harvest experience Skills",
@@ -2547,13 +2547,6 @@ const EN = {
   automationApiProfile: "API profile",
   automationModel: "Model",
   automationUseCurrentModel: "Follow current model",
-  automationMechanicalMode: "Mechanical mode",
-  automationMechanicalModeDesc: "Routes low-difficulty batch rename, Markdown formatting, folder cleanup, and properties/tag cleanup to the configured specialist model. Explicit model/profile still wins.",
-  automationMechanicalOff: "Off",
-  automationMechanicalAuto: "Auto",
-  automationMechanicalOn: "Force on",
-  automationMechanicalRoutes: "Mechanical routes",
-  automationMechanicalRoutesDesc: "Limit which mechanical situations this automation can route. These switches are enforced before the model call.",
   automationEnabled: "Enabled",
   automationDisabled: "Disabled",
   automationSaved: "Automation saved",
@@ -2631,7 +2624,7 @@ const EN = {
   accessPromptFull: "Access: full. Implemented tools may read/write the Vault, dot folders, Obsidian config, .cancip, installed Cancip files, and authorized external bridges. Do not claim unavailable before trying the indexed route. Execute small auditable actions and verify from tool results; plugin hot patches are valid when source build is unavailable.",
   configWriteFailed: "Could not write .cancip/config.json: {reason}",
   configReadFailed: "Could not read .cancip/config.json: {reason}",
-  toolProtocol: "Tool protocol: Choose tools by user intent, not by rigid greeting/simple-chat rules. For read/list/explain/analyze questions, even if they mention plugins, settings, config, folders, GitHub, or commands, use only read-only actions such as read, search, list, status, or help, then answer directly from the tool result; do not create reports or run write-like actions unless the user explicitly asks to create, modify, move, delete, configure, install, execute, or fix something. If an action is genuinely needed, output exactly one fenced block named cancip-action containing JSON like {\"actions\":[{\"type\":\"todo\",\"op\":\"set\",\"items\":[{\"text\":\"inspect files\"},{\"text\":\"apply patch\"}]},{\"type\":\"automation\",\"op\":\"add\",\"title\":\"Daily review\",\"prompt\":\"Review open todos\",\"schedule\":\"daily\",\"hour\":9,\"minute\":15,\"sessionMode\":\"new\",\"model\":\"gpt-5\"},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"query\":\"anchor\",\"maxChars\":8000},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"startLine\":120,\"endLine\":180},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"aroundLine\":240,\"maxChars\":4000},{\"type\":\"write\",\"path\":\"Folder/Note.md\",\"content\":\"...\"},{\"type\":\"write\",\"path\":\"Folder/Large.md\",\"chunks\":[\"part 1\",\"part 2\"]},{\"type\":\"move\",\"path\":\"Folder/Old.md\",\"newPath\":\"Folder/New.md\"},{\"type\":\"move\",\"path\":\"Folder/Old.md\",\"newPath\":\"Archive\"},{\"type\":\"delete\",\"path\":\"Folder/Old.md\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"find\":\"old\",\"replace\":\"new\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"regex\":true,\"find\":\"old\\\\s+pattern\",\"replace\":\"new\",\"flags\":\"m\"},{\"type\":\"config\",\"set\":{\"maxToolIterations\":6},\"unset\":[\"oldSetting\"]},{\"type\":\"command\",\"command\":\"cancip.findTarget\",\"args\":{\"query\":\"target or command name\",\"limit\":10}}]}. Supported action types: read, write, append, patch, config, todo, automation, mkdir, rename, move, copy, delete, command. Read supports query, occurrence, startLine, endLine, aroundLine, and maxChars for focused line-numbered snippets from large/minified files; prefer query or line ranges over whole-file reads, and reading a folder returns a direct child listing. Write and append support content or chunks:[\"part1\",\"part2\"]; for large files prefer chunks because Cancip writes/appends sequentially and verifies the result by reading it back. Move is the normal file/folder move action; rename is kept as an alias. If newPath is a folder path, Cancip keeps the original file/folder name under that folder. Delete moves to trash by default; if platform trash is unavailable, Cancip moves the target to Cancip trash; only use permanent:true when the user explicitly asks for permanent deletion. Patch supports exact find/replace or regex:true with optional flags; if patch text is not found, do not retry the same find text, read the current file with a focused query or line range and use a smaller anchored patch. Config safely deep-merges JSON into Cancip config by default, supports optional path, set, unset, replace, writes formatted JSON, and verifies by reading JSON back; use it for large config files instead of fragile string patches. Todo operations are set, add, update, remove, list, clear and update the visible Plan panel. Automation operations are add, update, remove, list, run; schedules are manual, hourly, daily and daily supports hour+minute; sessionMode can be current, new, or session with sessionId, condition stores an optional trigger note, apiProfileId selects an API profile, and model selects a task-specific model while empty values follow the current model. File actions use Vault-relative paths only, including dot folders, Obsidian config, Cancip installed files, and .cancip session JSON. Command actions use a named command bus: cancip.findTarget, cancip.tools.index, obsidian.listCommands, obsidian.execute, obsidian.js.help, obsidian.js.probe, obsidian.eval/js.eval/javascript.eval/browser.eval, obsidian.currentView, obsidian.dom.snapshot, obsidian.dom.click, obsidian.dom.input, obsidian.ui.buttons, obsidian.ui.buttonRules, obsidian.ui.applyButtonRules, obsidian.tags, obsidian.tags.pin, obsidian.tags.unpin, obsidian.tags.deleteUnpinned, obsidian.tabs, obsidian.tabs.pin, obsidian.tabs.unpin, obsidian.tabs.closeUnpinned, obsidian.tabs.closeAll, cancip.reviewGate, cancip.reviewGate.list, cancip.reviewGate.testMarkdown, cancip.sessionEvents, cancip.sessionHistory, cancip.subagents.start/list/status/stop/open, cancip.installedPlugins, cancip.pluginCapabilities, cancip.skills.list, cancip.skills.read, cancip.skills.refresh, cancip.experience.list, cancip.experience.harvest, cancip.attachment.help, cancip.tts.help/probe/voices/status/installLocal/speak/readActive/pause/resume/seek/stop, cancip.externalFiles.help, cancip.automation.templates, cancip.automation.addTemplate, cancip.searchVault, cancip.rebuildIndex, cancip.previewVaultSearch, cancip.localVersionCommit, cancip.importCapabilityPack, cancip.newsBrief, cancip.vaultDailyReport, cancip.automation.list, cancip.automation.add, cancip.automation.update, cancip.automation.addNewsBrief, cancip.automation.addVaultDailyReport, cancip.automation.run, cancip.automation.remove, web.search, web.fetch, github.help, github.status, github.repo, github.issues, github.pulls, github.releases, github.workflowRuns, github.branches, github.file, github.createIssue, github.installObsidianPlugin. Use cancip.findTarget first when the file, folder, attachment, content, or Obsidian command target is unclear; it combines weak filename/path/folder inference, content hits, attachment metadata, and command fuzzy matches. Use cancip.tools.index when the route is unclear; it maps user intent to the right action/help/list command. Use obsidian.js.help/probe for JS bridge capability; use obsidian.eval only for explicit Obsidian app/workspace/vault/plugin API glue, with args.code/script/js/body or args.expression. It exposes app, workspace, vault, metadataCache, activeDocument, window, args, plugins, activeFile, activeLeaf, activeView, and helpers.plugin/api/runCommand/openPath/notice/query/click/input/sleep/snapshot. Use cancip.pluginCapabilities with pluginId/name/query for plugin feature requests; it returns installed plugin matches, Obsidian commands, runtime API surface, plugin files/settings, and command/UI/API/config/web routes. Use cancip.sessionHistory with all:true to list sessions, sessionId to read any saved session, path for .cancip/sessions/*.json, and mode:'full', includeContext:true when exact prior prompts/context are needed. Use cancip.subagents.start/list/status/stop/open to split long work into child sessions; children are visible under their parent in session history. Use obsidian.ui.buttons to inspect active note/PDF/more buttons; use obsidian.ui.applyButtonRules with selector rules to hide/show/order/rename/re-icon buttons and menu items. Use obsidian.tags to inspect right-sidebar tags, obsidian.tags.pin/unpin for fixed tags, and obsidian.tags.deleteUnpinned with dryRun:false only when the user asks to remove non-pinned tags from notes. Use obsidian.tabs to inspect workspace tabs/leaves, obsidian.tabs.pin/unpin to pin pages, obsidian.tabs.closeUnpinned to close non-pinned pages, and obsidian.tabs.closeAll to close all scoped pages without deleting files. Use cancip.skills.list/read/refresh to inspect available Skills when the task asks about capabilities or when a matching Skill is not already injected; use cancip.experience.harvest after repeated successful workflows so future runs can reuse a generated recipe. Low-difficulty bulk note rename, Markdown beautify, and folder cleanup are programmatically routed to the configured specialist model; still use small reads, batch actions, and verification. For settings/UI/plugin/self-fix requests, first inspect the relevant source/config with read/search actions, then patch/write/config and verify. If desktop source is unavailable, use the installed plugin files as the mobile hot-patch implementation surface; do not stop merely because npm build/restart/source sync is unavailable. Installed Cancip plugin file edits require reload/restart before visible effect. Use cancip.findTarget before cancip.searchVault when the target is unclear; use cancip.searchVault only when long-term memory and supplied context are insufficient and content search is the next step; then read only the necessary matched files. Keep action batches small and wait for results. If a tool fails, use the error as authoritative context and explain or correct the next step. Access mode controls execution: approval mode queues write-like actions in the visible Run/Reject box and notifies the user; full access runs implemented tools automatically. Use cancip.reviewGate only when the user explicitly wants review or the task is risky vault organization; it creates native Cancip review-panel data, not a prompt-only or external HTML workflow. Plan panel only adds planning/todo behavior and never changes access permission. JS is limited to the Obsidian WebView/API bridge and is not an OS shell.",
+  toolProtocol: "Tool protocol: Choose tools by user intent, not by rigid greeting/simple-chat rules. For read/list/explain/analyze questions, even if they mention plugins, settings, config, folders, GitHub, or commands, use only read-only actions such as read, search, list, status, or help, then answer directly from the tool result; do not create reports or run write-like actions unless the user explicitly asks to create, modify, move, delete, configure, install, execute, or fix something. If an action is genuinely needed, output exactly one fenced block named cancip-action containing JSON like {\"actions\":[{\"type\":\"todo\",\"op\":\"set\",\"items\":[{\"text\":\"inspect files\"},{\"text\":\"apply patch\"}]},{\"type\":\"automation\",\"op\":\"add\",\"title\":\"Daily review\",\"prompt\":\"Review open todos\",\"schedule\":\"daily\",\"hour\":9,\"minute\":15,\"sessionMode\":\"new\",\"model\":\"gpt-5\"},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"query\":\"anchor\",\"maxChars\":8000},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"startLine\":120,\"endLine\":180},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"aroundLine\":240,\"maxChars\":4000},{\"type\":\"write\",\"path\":\"Folder/Note.md\",\"content\":\"...\"},{\"type\":\"write\",\"path\":\"Folder/Large.md\",\"chunks\":[\"part 1\",\"part 2\"]},{\"type\":\"move\",\"path\":\"Folder/Old.md\",\"newPath\":\"Folder/New.md\"},{\"type\":\"move\",\"path\":\"Folder/Old.md\",\"newPath\":\"Archive\"},{\"type\":\"delete\",\"path\":\"Folder/Old.md\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"find\":\"old\",\"replace\":\"new\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"regex\":true,\"find\":\"old\\\\s+pattern\",\"replace\":\"new\",\"flags\":\"m\"},{\"type\":\"config\",\"set\":{\"maxToolIterations\":6},\"unset\":[\"oldSetting\"]},{\"type\":\"command\",\"command\":\"cancip.findTarget\",\"args\":{\"query\":\"target or command name\",\"limit\":10}}]}. Supported action types: read, write, append, patch, config, todo, automation, mkdir, rename, move, copy, delete, command. Read supports query, occurrence, startLine, endLine, aroundLine, and maxChars for focused line-numbered snippets from large/minified files; prefer query or line ranges over whole-file reads, and reading a folder returns a direct child listing. Write and append support content or chunks:[\"part1\",\"part2\"]; for large files prefer chunks because Cancip writes/appends sequentially and verifies the result by reading it back. Move is the normal file/folder move action; rename is kept as an alias. If newPath is a folder path, Cancip keeps the original file/folder name under that folder. Delete moves to trash by default; if platform trash is unavailable, Cancip moves the target to Cancip trash; only use permanent:true when the user explicitly asks for permanent deletion. Patch supports exact find/replace or regex:true with optional flags; if patch text is not found, do not retry the same find text, read the current file with a focused query or line range and use a smaller anchored patch. Config safely deep-merges JSON into Cancip config by default, supports optional path, set, unset, replace, writes formatted JSON, and verifies by reading JSON back; use it for large config files instead of fragile string patches. Todo operations are set, add, update, remove, list, clear and update the visible Plan panel. Automation operations are add, update, remove, list, run; schedules are manual, hourly, daily and daily supports hour+minute; sessionMode can be current, new, or session with sessionId, condition stores an optional trigger note, apiProfileId selects an API profile, and model selects a task-specific model while empty values follow the current model. File actions use Vault-relative paths only, including dot folders, Obsidian config, Cancip installed files, and .cancip session JSON. Command actions use a named command bus: cancip.findTarget, cancip.tools.index, obsidian.listCommands, obsidian.execute, obsidian.js.help, obsidian.js.probe, obsidian.eval/js.eval/javascript.eval/browser.eval, obsidian.currentView, obsidian.dom.snapshot, obsidian.dom.click, obsidian.dom.input, obsidian.ui.buttons, obsidian.ui.buttonRules, obsidian.ui.applyButtonRules, obsidian.tags, obsidian.tags.pin, obsidian.tags.unpin, obsidian.tags.deleteUnpinned, obsidian.tabs, obsidian.tabs.pin, obsidian.tabs.unpin, obsidian.tabs.closeUnpinned, obsidian.tabs.closeAll, cancip.reviewGate, cancip.reviewGate.list, cancip.reviewGate.testMarkdown, cancip.sessionEvents, cancip.sessionHistory, cancip.subagents.start/list/status/stop/open, cancip.installedPlugins, cancip.pluginCapabilities, cancip.skills.list, cancip.skills.read, cancip.skills.refresh, cancip.experience.list, cancip.experience.harvest, cancip.attachment.help, cancip.tts.help/probe/voices/status/installLocal/speak/readActive/pause/resume/seek/stop, cancip.externalFiles.help, cancip.automation.templates, cancip.automation.addTemplate, cancip.searchVault, cancip.rebuildIndex, cancip.previewVaultSearch, cancip.localVersionCommit, cancip.importCapabilityPack, cancip.newsBrief, cancip.vaultDailyReport, cancip.automation.list, cancip.automation.add, cancip.automation.update, cancip.automation.addNewsBrief, cancip.automation.addVaultDailyReport, cancip.automation.run, cancip.automation.remove, web.search, web.fetch, github.help, github.status, github.repo, github.issues, github.pulls, github.releases, github.workflowRuns, github.branches, github.file, github.createIssue, github.installObsidianPlugin. Use cancip.findTarget first when the file, folder, attachment, content, or Obsidian command target is unclear; it combines weak filename/path/folder inference, content hits, attachment metadata, and command fuzzy matches. Use cancip.tools.index when the route is unclear; it maps user intent to the right action/help/list command. Use obsidian.js.help/probe for JS bridge capability; use obsidian.eval only for explicit Obsidian app/workspace/vault/plugin API glue, with args.code/script/js/body or args.expression. It exposes app, workspace, vault, metadataCache, activeDocument, window, args, plugins, activeFile, activeLeaf, activeView, and helpers.plugin/api/runCommand/openPath/notice/query/click/input/sleep/snapshot. Use cancip.pluginCapabilities with pluginId/name/query for plugin feature requests; it returns installed plugin matches, Obsidian commands, runtime API surface, plugin files/settings, and command/UI/API/config/web routes. Use cancip.sessionHistory with all:true to list sessions, sessionId to read any saved session, path for .cancip/sessions/*.json, and mode:'full', includeContext:true when exact prior prompts/context are needed. Use cancip.subagents.start/list/status/stop/open to split long work into child sessions; children are visible under their parent in session history. Use obsidian.ui.buttons to inspect active note/PDF/more buttons; use obsidian.ui.applyButtonRules with selector rules to hide/show/order/rename/re-icon buttons and menu items. Use obsidian.tags to inspect right-sidebar tags, obsidian.tags.pin/unpin for fixed tags, and obsidian.tags.deleteUnpinned with dryRun:false only when the user asks to remove non-pinned tags from notes. Use obsidian.tabs to inspect workspace tabs/leaves, obsidian.tabs.pin/unpin to pin pages, obsidian.tabs.closeUnpinned to close non-pinned pages, and obsidian.tabs.closeAll to close all scoped pages without deleting files. Use cancip.skills.list/read/refresh to inspect available Skills when the task asks about capabilities or when a matching Skill is not already injected; use cancip.experience.harvest after repeated successful workflows so future runs can reuse a generated recipe. For settings/UI/plugin/self-fix requests, first inspect the relevant source/config with read/search actions, then patch/write/config and verify. If desktop source is unavailable, use the installed plugin files as the mobile hot-patch implementation surface; do not stop merely because npm build/restart/source sync is unavailable. Installed Cancip plugin file edits require reload/restart before visible effect. Use cancip.findTarget before cancip.searchVault when the target is unclear; use cancip.searchVault only when long-term memory and supplied context are insufficient and content search is the next step; then read only the necessary matched files. Keep action batches small and wait for results. If a tool fails, use the error as authoritative context and explain or correct the next step. Access mode controls execution: approval mode queues write-like actions in the visible Run/Reject box and notifies the user; full access runs implemented tools automatically. Use cancip.reviewGate only when the user explicitly wants review or the task is risky vault organization; it creates native Cancip review-panel data, not a prompt-only or external HTML workflow. Plan panel only adds planning/todo behavior and never changes access permission. JS is limited to the Obsidian WebView/API bridge and is not an OS shell.",
   actionsNeedApproval: "Action block queued for approval. Nothing has run yet.\n\n{summary}",
   actionsExecuted: "Tool results:\n\n{summary}",
   toolRunsQueued: "{count} tool run(s) queued. Review and tap Approve when ready.",
@@ -2652,7 +2645,7 @@ const EN = {
   toolFeedbackSaved: "Tool feedback saved",
   toolContinueStatus: "Continuing from tool results...",
   toolRunResult: "Tool result",
-  toolContinuationPrompt: "Tool results from the previous action:\n\n{summary}\n\nContinue the task using these results. Tool failures are authoritative and must not be ignored: explain the failure, choose a smaller corrected next action, or give the final answer only when the useful work is complete, objectively blocked, or waiting for user/UI intervention. If a patch failed because find text was not found, do not retry the same find text; read the current file with a focused query/maxChars snippet, then use a smaller anchored exact patch or regex:true patch. If the user asked for an implementation/change and only read/search/todo/list steps have run so far, you are not done: continue with the next concrete patch/write/command action unless a real blocker is shown. If a write/patch/command already succeeded, verify it by reading the changed path or checking the command result, then give a final user-readable conclusion. If a tool result says it was truncated or incomplete, do not summarize the gap as the final answer; continue with a smaller read/list/detail action that fills the missing part. Final answer format for implementation/change/tool tasks: start with a short summary tied to the user's original request, then concise numbered items; include actions performed, changed/read files, verification/result, blockers/reminders, and memory/rule updates if any. Do not write elapsed time, token counts, or character counts; Cancip appends those programmatically. Keep process/tool details folded and do not expose raw action JSON. If more tool actions are needed, output one cancip-action block; otherwise give the final answer with exactly one hidden cancip-choices comment in the same answer.",
+  toolContinuationPrompt: "Tool results from the previous action:\n\n{summary}\n\nContinue the task using these results. Tool failures are authoritative and must not be ignored: explain the failure, choose a smaller corrected next action, or give the final answer only when the useful work is complete, objectively blocked, or waiting for user/UI intervention. If a patch failed because find text was not found, do not retry the same find text; read the current file with a focused query/maxChars snippet, then use a smaller anchored exact patch or regex:true patch. If the user asked for an implementation/change and only read/search/todo/list steps have run so far, you are not done: continue with the next concrete patch/write/command action unless a real blocker is shown. If a write/patch/command already succeeded, verify it by reading the changed path or checking the command result, then give a final user-readable conclusion. If a tool result says it was truncated or incomplete, do not summarize the gap as the final answer; continue with a smaller read/list/detail action that fills the missing part. Final answer format for implementation/change/tool tasks: start with a short summary tied to the user's original request, then concise numbered items; include actions performed, changed/read files, verification/result, blockers/reminders, and memory/rule updates if any. Do not write elapsed time, token counts, or character counts; Cancip appends those programmatically. Keep process/tool details folded and do not expose raw action JSON. If more tool actions are needed, output one cancip-action block; otherwise give the final answer and append hidden cancip-choices only when there are real concrete next-step choices.",
   invalidActionBlock: "Cancip found an action block, but it was not valid executable JSON. Use one fenced block whose opening line is exactly ```cancip-action, with only JSON inside; or use <cancip-action>JSON</cancip-action>.",
   actionFailed: "Action failed: {reason}",
   actionRead: "read {path}\n{content}",
@@ -2764,11 +2757,11 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     tokenUsageEstimated: " 估算",
     processRecord: "过程记录",
     finalConclusionFallback: "{summary}",
-    finalAnswerFormatPrompt: "实现、改动、工具类任务的最终可见回答不要写“最终结论”标题，也不要写耗时、token 数或字数；这些由 Cancip 程序在结束时自动追加。按普通人能直接看懂的结构回答：先用一句短总结对应用户原始问题说这轮干了什么，再按序号精简展开；然后按需写清「动作」「改动/读取的文件」「验证/结果」「提醒/阻塞」「记忆/规则更新」。如果还能继续用工具推进且没有真实阻塞，就不要总结成完成，而是继续输出一个 cancip-action。最终回答和正好三个推荐按钮必须同一轮生成：末尾追加且只追加一个隐藏 HTML 注释 <!-- cancip-choices {\"choices\":[\"具体动作1\",\"具体动作2\",\"具体动作3\"]} -->；正文里不要显示推荐序号或推荐列表。工具细节留在折叠过程里，不要暴露原始 action JSON。",
+    finalAnswerFormatPrompt: "实现、改动、工具类任务的最终可见回答不要写“最终结论”标题，也不要写耗时、token 数或字数；这些由 Cancip 程序在结束时自动追加。按普通人能直接看懂的结构回答：先用一句短总结对应用户原始问题说这轮干了什么，再按序号精简展开；然后按需写清「动作」「改动/读取的文件」「验证/结果」「提醒/阻塞」「记忆/规则更新」。如果还能继续用工具推进且没有真实阻塞，就不要总结成完成，而是继续输出一个 cancip-action。最终回答和一到三个具体推荐按钮在同一轮生成即可：有用时末尾追加且只追加一个隐藏 HTML 注释 <!-- cancip-choices {\"choices\":[\"具体动作1\",\"具体动作2\"]} -->；正文里不要显示推荐序号或推荐列表。工具细节留在折叠过程里，不要暴露原始 action JSON。",
     emptyApiReply: "API 返回了空回复。",
     emptyApiReplyWithSuppressedTools: "API 只返回了工具/动作指令，没有给普通可见回复。简单聊天不会执行隐藏动作。",
     modelContinuationFailed: "模型续答失败：{reason}",
-    toolActionRequiredPrompt: "用户提出了明确的实现/改动/执行任务，但上一条回答没有输出 cancip-action，也没有任何工具执行。\n\n用户任务：\n{task}\n\n按通用 agent 循环做：确认最小相关目标，只在必要时做精准检查，使用当前可用工具推进用户真实目标，然后用工具结果验证。不要默认泛搜、套状态报告、说不能，或用“需要确认/需要执行”这类普通文字停住。如果任务只是分析，就基于证据给具体结论；如果任务要求改变状态，就输出可执行 cancip-action。权限由 UI 处理：确认模式显示批准/拒绝卡，全权模式自动批准已实现工具。Cancip 自改自身时，缺少桌面源码构建/npm/重启能力不算阻止已安装插件热补丁的理由。需要动作时只输出一个 cancip-action 块；如果确实不能动作，只给具体阻塞原因和缺少的明确能力，并附隐藏 cancip-choices。",
+    toolActionRequiredPrompt: "用户提出了明确的实现/改动/执行任务，但上一条回答没有输出 cancip-action，也没有任何工具执行。\n\n用户任务：\n{task}\n\n按通用 agent 循环做：确认最小相关目标，只在必要时做精准检查，使用当前可用工具推进用户真实目标，然后用工具结果验证。不要默认泛搜、套状态报告、说不能，或用“需要确认/需要执行”这类普通文字停住。如果任务只是分析，就基于证据给具体结论；如果任务要求改变状态，就输出可执行 cancip-action。权限由 UI 处理：确认模式显示批准/拒绝卡，全权模式自动批准已实现工具。Cancip 自改自身时，缺少桌面源码构建/npm/重启能力不算阻止已安装插件热补丁的理由。需要动作时只输出一个 cancip-action 块；如果确实不能动作，只给具体阻塞原因和缺少的明确能力；只有确实有具体下一步选择时才附隐藏 cancip-choices。",
     toolActionHardRequiredPrompt: "你上一条仍然没有给出可执行 cancip-action。用户要的是有效推进。\n\n用户任务：\n{task}\n\n使用当前最小可用工具动作推进这个任务，并尽量验证。对状态改变任务，currentView/read/search/list/status 只是定位上下文，不能作为最终步骤；如果上一步结果里有 activeFile，内容不足就读这个文件，内容足够就 patch/write/move/delete/config 相关目标。如果正确下一步是分析而不是改变状态，就基于证据回答，不要为了动作而假动作。如果当前 Cancip 能力确实无法推进，只说具体阻塞和缺少的能力。不要泛泛询问是否继续，不要用普通文字说“需要执行/等待确认”，也不要给泛泛限制或状态摘要。",
     toolActionLowCommitmentPrompt: "用户要求的是明确实现/改动，但前几轮工具只做了读取、搜索或列表，没有实质推进。\n\n用户任务：\n{task}\n\n请按通用 agent 循环继续：把上一步工具结果当作当前状态，先判断用户要的是分析还是改变状态；能回答就基于证据回答真实问题，需要动作就输出一个能推进任务的 cancip-action。对状态改变任务，currentView/read/search/list/status 只是收集上下文；如果 activeFile 存在，就把它当目标，没内容先读，有内容就 patch/write 并验证。不要重复泛搜。如果确实不能动作，只说具体阻塞和缺少的能力。不要问是否继续，不要回答“未完成”“继续让我总结”或搜索结果摘要。",
     selfPatchNeedsReload: "这次改动写到了 Cancip 已安装插件文件。当前正在运行的插件通常不会立刻显示效果，需要重载/重启 Obsidian 才能可靠生效。这仍然是手机端真实热补丁；桌面工具只用于后续同步源码、构建或发布。",
@@ -2829,6 +2822,15 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     commandStopTts: "停止朗读",
     commandPauseTts: "暂停朗读",
     commandResumeTts: "继续朗读",
+    commandRightSidebarTogglePinnedTab: "锁定/取消锁定当前右侧栏标签页",
+    commandRightSidebarCloseUnpinnedTabs: "关闭右侧栏非锁定标签页",
+    commandRightSidebarCloseAllTabs: "关闭右侧栏全部标签页",
+    tabHeaderMenuTitle: "标签页：{title}",
+    tabHeaderMenuPin: "锁定标签页",
+    tabHeaderMenuUnpin: "取消锁定标签页",
+    tabHeaderMenuCloseThis: "关闭这个标签页",
+    tabHeaderMenuCloseUnpinnedInSidebar: "关闭本侧栏非锁定标签页",
+    tabHeaderMenuCloseAllInSidebar: "关闭本侧栏全部标签页",
     commandRebuildIndex: "重建轻量索引",
     commandLocalVersionCommit: "创建本地版本提交",
     reviewGate: "审核",
@@ -3052,6 +3054,8 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     modelEffort: "Extra High",
     accessMenuTitle: "权限",
     modelMenuTitle: "模型",
+    copyModelInfo: "复制模型信息",
+    modelInfoCopied: "模型信息已复制",
     accessModeChanged: "访问模式：{mode}",
     modelChanged: "模型：{model}",
     apiProfileChanged: "API 配置：{profile}",
@@ -3079,7 +3083,7 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     done: "完成",
     callFailed: "调用失败",
     stopped: "已停止",
-    localNoHits: "模型调用失败：{reason}\n\n本轮没有可展示的本地检索结果。请保留这个失败原因，API 恢复后从最近会话/工具状态继续，不要误判为已经完成。",
+    localNoHits: "模型调用失败：{reason}\n\n本轮没有可展示的本地检索结果。请把失败原因保留在过程记录里，API 恢复后从最近会话/工具状态继续，不要误判为已经完成。",
     localHits: "模型调用失败：{reason}\n\n先给本地 Vault Search 结果，供你继续判断。\n\n问题：{prompt}\n\n{list}",
     recentConversation: "最近对话",
     userQuestion: "用户问题",
@@ -3223,18 +3227,6 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     settingsMaxAutoSkills: "每次自动 Skill 数",
     settingsMaxSkillContextChars: "显式 Skill 字符数",
     settingsMaxAutoSkillContextChars: "自动 Skill 字符数",
-    settingsSpecialistRouting: "机械任务走专用模型",
-    settingsSpecialistRoutingDesc: "批量重命名、Markdown 美化、文件夹低难度整理可自动使用更便宜/专用的模型，主模型保留给复杂任务。",
-    settingsMechanicalTaskApiProfile: "机械任务 API 配置",
-    settingsMechanicalTaskModel: "机械任务模型",
-    settingsMechanicalUseCurrentProfile: "使用当前配置",
-    settingsMechanicalUseCurrentModel: "自动便宜模型",
-    settingsMechanicalTaskRoutes: "机械路由触发条件",
-    settingsMechanicalTaskRoutesDesc: "这些开关在发给模型前由程序强制判断。关闭的场景即使提示词提到，也不会切到专用模型。",
-    settingsMechanicalRouteContentRename: "按内容批量重命名",
-    settingsMechanicalRouteMarkdownBeautify: "Markdown 美化/排版",
-    settingsMechanicalRouteFolderCleanup: "文件夹级整理",
-    settingsMechanicalRouteFrontmatterTags: "属性/标签整理",
     settingsSkillExperienceHarvest: "成功经验自动沉淀 Skill",
     settingsSkillExperienceHarvestDesc: "把重复成功流程生成到 .cancip/skills/generated，手机端可按需自动复用。",
     harvestExperienceSkills: "收割经验 Skill",
@@ -3261,13 +3253,6 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     automationApiProfile: "API 配置",
     automationModel: "模型",
     automationUseCurrentModel: "跟随当前模型",
-    automationMechanicalMode: "机械模式",
-    automationMechanicalModeDesc: "把低难度批量重命名、Markdown 排版、文件夹整理、属性/标签整理路由到配置的专用模型。任务里显式指定模型/API 配置时优先。",
-    automationMechanicalOff: "关闭",
-    automationMechanicalAuto: "自动判断",
-    automationMechanicalOn: "强制开启",
-    automationMechanicalRoutes: "机械路由",
-    automationMechanicalRoutesDesc: "限制这个自动化任务可触发的机械场景。发给模型前由程序强制判断。",
     automationEnabled: "启用",
     automationDisabled: "停用",
     automationSaved: "自动化已保存",
@@ -3345,7 +3330,7 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     accessPromptFull: "权限：全权。已实现工具可读写 Vault、点开头目录、Obsidian 配置、.cancip、Cancip 已安装文件和授权库外桥接。不要没查索引路线就说不能；小步执行、读回验证。源码构建不可用时，可先做已安装插件热补丁。",
     configWriteFailed: "无法写入 .cancip/config.json：{reason}",
     configReadFailed: "无法读取 .cancip/config.json：{reason}",
-    toolProtocol: "工具协议：普通问候、测试、身份问题、泛泛聊天不要输出 cancip-action。读取、清单、解释、分析类问题，即使提到插件、设置、配置、文件夹、GitHub 或命令，也只用 read/search/list/status/help 等只读动作，然后根据工具结果直接回答；除非用户明确要求新建、修改、移动、删除、配置、安装、执行或修复，否则不要创建报告或执行写入类动作。确实需要动作时，只输出一个名为 cancip-action 的 fenced block，JSON 形如 {\"actions\":[{\"type\":\"todo\",\"op\":\"set\",\"items\":[{\"text\":\"检查文件\"},{\"text\":\"应用补丁\"}]},{\"type\":\"automation\",\"op\":\"add\",\"title\":\"每日复盘\",\"prompt\":\"复盘未完成待办\",\"schedule\":\"daily\",\"hour\":9,\"minute\":15,\"sessionMode\":\"new\",\"model\":\"gpt-5\"},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"query\":\"锚点\",\"maxChars\":8000},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"startLine\":120,\"endLine\":180},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"aroundLine\":240,\"maxChars\":4000},{\"type\":\"write\",\"path\":\"Folder/Note.md\",\"content\":\"...\"},{\"type\":\"write\",\"path\":\"Folder/Large.md\",\"chunks\":[\"第 1 段\",\"第 2 段\"]},{\"type\":\"move\",\"path\":\"Folder/旧.md\",\"newPath\":\"Folder/新.md\"},{\"type\":\"move\",\"path\":\"Folder/旧.md\",\"newPath\":\"归档\"},{\"type\":\"delete\",\"path\":\"Folder/旧.md\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"find\":\"旧内容\",\"replace\":\"新内容\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"regex\":true,\"find\":\"旧内容\\\\s+模式\",\"replace\":\"新内容\",\"flags\":\"m\"},{\"type\":\"config\",\"set\":{\"maxToolIterations\":6},\"unset\":[\"oldSetting\"]},{\"type\":\"command\",\"command\":\"cancip.searchVault\",\"args\":{\"query\":\"关键词\",\"limit\":8}}]}。支持动作：read、write、append、patch、config、todo、automation、mkdir、rename、move、copy、delete、command。read 支持 query、occurrence、startLine、endLine、aroundLine、maxChars，用来精确读取带行号的大文件/压缩构建文件片段；优先用 query 或行号范围，不要轻易整文件读取；读取文件夹会返回直接子项列表。write/append 支持 content 或 chunks:[\"part1\",\"part2\"]；写大文件优先用 chunks，Cancip 会顺序写入/追加并读回校验。move 是正常移动文件/文件夹动作，rename 保留为别名；如果 newPath 是文件夹路径，工具层会保留原文件/文件夹名放进该文件夹。delete 默认进入回收站；平台回收站不可用时移入 Cancip 回收目录；只有用户明确要求永久删除时才使用 permanent:true。patch 支持精确 find/replace，也支持 regex:true 和可选 flags；如果 patch 提示 find text was not found，绝对不要重复同一个 find，必须先用 query 或行号范围读取当前文件片段，再换更小锚点或正则补丁。config 默认安全深度合并写入 Cancip 配置文件，可选 path、set、unset、replace，会格式化 JSON 并读回校验；改大型配置文件优先用 config，不要靠脆弱字符串 patch。todo 支持 set、add、update、remove、list、clear，并会更新可见 Plan 面板。automation 支持 add、update、remove、list、run；schedule 可用 manual、hourly、daily；daily 支持 hour+minute；sessionMode 可用 current、new、session，session 需要 sessionId，condition 保存额外触发条件说明，apiProfileId 指定 API 配置，model 指定单任务模型，空值沿用当前模型。文件动作只能使用 Vault 相对路径，包括点开头文件夹、Obsidian 配置、Cancip 已安装文件和 .cancip 会话 JSON。命令动作走命令总线：cancip.tools.index、obsidian.listCommands、obsidian.execute、obsidian.currentView、obsidian.dom.snapshot、obsidian.dom.click、obsidian.dom.input、obsidian.ui.buttons、obsidian.ui.buttonRules、obsidian.ui.applyButtonRules、obsidian.tags、obsidian.tags.pin、obsidian.tags.unpin、obsidian.tags.deleteUnpinned、obsidian.tabs、obsidian.tabs.pin、obsidian.tabs.unpin、obsidian.tabs.closeUnpinned、obsidian.tabs.closeAll、cancip.reviewGate、cancip.reviewGate.list、cancip.reviewGate.testMarkdown、cancip.sessionEvents、cancip.sessionHistory、cancip.subagents.start/list/status/stop/open、cancip.installedPlugins、cancip.skills.list、cancip.skills.read、cancip.skills.refresh、cancip.experience.list、cancip.experience.harvest、cancip.attachment.help、cancip.tts.help/probe/voices/status/installLocal/speak/readActive/pause/resume/seek/stop、cancip.externalFiles.help、cancip.automation.templates、cancip.automation.addTemplate、cancip.searchVault、cancip.rebuildIndex、cancip.previewVaultSearch、cancip.localVersionCommit、cancip.importCapabilityPack、cancip.newsBrief、cancip.vaultDailyReport、cancip.automation.list、cancip.automation.add、cancip.automation.update、cancip.automation.addNewsBrief、cancip.automation.addVaultDailyReport、cancip.automation.run、cancip.automation.remove、web.search、web.fetch、github.help、github.status、github.repo、github.issues、github.pulls、github.releases、github.workflowRuns、github.branches、github.file、github.createIssue、github.installObsidianPlugin。不确定路线时先用 cancip.tools.index，它会把用户意图映射到应该查的 action/help/list 命令。用 cancip.subagents.start/list/status/stop/open 可把长任务拆成子会话；子会话会在父会话历史下默认折叠显示。用 obsidian.ui.buttons 检查当前笔记/PDF/官方更多菜单按钮和菜单项；用 obsidian.ui.applyButtonRules 按 selector 规则显示、隐藏、排序、改名、换图标。可用 obsidian.tabs 查看工作区标签页，obsidian.tabs.pin/unpin 固定/取消固定页，obsidian.tabs.closeUnpinned 关闭非固定页，obsidian.tabs.closeAll 关闭指定范围全部页，均不删除文件。需要读取历史/任意会话时，用 cancip.sessionHistory：all:true 列出会话，sessionId 读取任意保存会话，path 读取 .cancip/sessions/*.json，mode:'full' + includeContext:true 可带原始上下文。需要查看能力或本轮没有注入匹配 Skill 时，用 cancip.skills.list/read/refresh 程序化检查可用 Skill；成功流程可用 cancip.experience.harvest 生成 .cancip/skills/generated 下的经验 Skill。低难度批量笔记重命名、Markdown 美化、文件夹整理会由程序路由到专用模型；仍要小片段读取、分批动作、执行后验证。设置/界面/插件/自身修复类任务，先用 read/search 检查相关源码或配置，再 patch/write/config 并验证；若桌面源码不可用，就把已安装插件文件作为手机热补丁实现面，不能仅因 npm build/重启/源码同步不可用就停止。写已安装 Cancip 插件文件后必须说明需要重载/重启才有可见效果。只有长期记忆和已提供上下文不够时才用 cancip.searchVault 搜库，然后只读取必要命中文件。动作批次要小，等待工具结果后继续。工具失败就是权威上下文，必须解释失败或改用更小的下一步。访问模式控制执行：确认模式把写入类动作放进可见 Run/Reject 确认框并通知用户等待；全权模式自动执行已实现工具。只有用户明确要求审核或任务属于高风险 Vault 整理时，才用 cancip.reviewGate 程序化生成 Cancip 原生审核面板数据；它不是提示词，也不是外部 HTML 流程。Plan panel 只增加计划/待办层，不改变访问权限。原始 JavaScript eval 阻止。",
+    toolProtocol: "工具协议：普通问候、测试、身份问题、泛泛聊天不要输出 cancip-action。读取、清单、解释、分析类问题，即使提到插件、设置、配置、文件夹、GitHub 或命令，也只用 read/search/list/status/help 等只读动作，然后根据工具结果直接回答；除非用户明确要求新建、修改、移动、删除、配置、安装、执行或修复，否则不要创建报告或执行写入类动作。确实需要动作时，只输出一个名为 cancip-action 的 fenced block，JSON 形如 {\"actions\":[{\"type\":\"todo\",\"op\":\"set\",\"items\":[{\"text\":\"检查文件\"},{\"text\":\"应用补丁\"}]},{\"type\":\"automation\",\"op\":\"add\",\"title\":\"每日复盘\",\"prompt\":\"复盘未完成待办\",\"schedule\":\"daily\",\"hour\":9,\"minute\":15,\"sessionMode\":\"new\",\"model\":\"gpt-5\"},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"query\":\"锚点\",\"maxChars\":8000},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"startLine\":120,\"endLine\":180},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"aroundLine\":240,\"maxChars\":4000},{\"type\":\"write\",\"path\":\"Folder/Note.md\",\"content\":\"...\"},{\"type\":\"write\",\"path\":\"Folder/Large.md\",\"chunks\":[\"第 1 段\",\"第 2 段\"]},{\"type\":\"move\",\"path\":\"Folder/旧.md\",\"newPath\":\"Folder/新.md\"},{\"type\":\"move\",\"path\":\"Folder/旧.md\",\"newPath\":\"归档\"},{\"type\":\"delete\",\"path\":\"Folder/旧.md\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"find\":\"旧内容\",\"replace\":\"新内容\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"regex\":true,\"find\":\"旧内容\\\\s+模式\",\"replace\":\"新内容\",\"flags\":\"m\"},{\"type\":\"config\",\"set\":{\"maxToolIterations\":6},\"unset\":[\"oldSetting\"]},{\"type\":\"command\",\"command\":\"cancip.searchVault\",\"args\":{\"query\":\"关键词\",\"limit\":8}}]}。支持动作：read、write、append、patch、config、todo、automation、mkdir、rename、move、copy、delete、command。read 支持 query、occurrence、startLine、endLine、aroundLine、maxChars，用来精确读取带行号的大文件/压缩构建文件片段；优先用 query 或行号范围，不要轻易整文件读取；读取文件夹会返回直接子项列表。write/append 支持 content 或 chunks:[\"part1\",\"part2\"]；写大文件优先用 chunks，Cancip 会顺序写入/追加并读回校验。move 是正常移动文件/文件夹动作，rename 保留为别名；如果 newPath 是文件夹路径，工具层会保留原文件/文件夹名放进该文件夹。delete 默认进入回收站；平台回收站不可用时移入 Cancip 回收目录；只有用户明确要求永久删除时才使用 permanent:true。patch 支持精确 find/replace，也支持 regex:true 和可选 flags；如果 patch 提示 find text was not found，绝对不要重复同一个 find，必须先用 query 或行号范围读取当前文件片段，再换更小锚点或正则补丁。config 默认安全深度合并写入 Cancip 配置文件，可选 path、set、unset、replace，会格式化 JSON 并读回校验；改大型配置文件优先用 config，不要靠脆弱字符串 patch。todo 支持 set、add、update、remove、list、clear，并会更新可见 Plan 面板。automation 支持 add、update、remove、list、run；schedule 可用 manual、hourly、daily；daily 支持 hour+minute；sessionMode 可用 current、new、session，session 需要 sessionId，condition 保存额外触发条件说明，apiProfileId 指定 API 配置，model 指定单任务模型，空值沿用当前模型。文件动作只能使用 Vault 相对路径，包括点开头文件夹、Obsidian 配置、Cancip 已安装文件和 .cancip 会话 JSON。命令动作走命令总线：cancip.tools.index、obsidian.listCommands、obsidian.execute、obsidian.currentView、obsidian.dom.snapshot、obsidian.dom.click、obsidian.dom.input、obsidian.ui.buttons、obsidian.ui.buttonRules、obsidian.ui.applyButtonRules、obsidian.tags、obsidian.tags.pin、obsidian.tags.unpin、obsidian.tags.deleteUnpinned、obsidian.tabs、obsidian.tabs.pin、obsidian.tabs.unpin、obsidian.tabs.closeUnpinned、obsidian.tabs.closeAll、cancip.reviewGate、cancip.reviewGate.list、cancip.reviewGate.testMarkdown、cancip.sessionEvents、cancip.sessionHistory、cancip.subagents.start/list/status/stop/open、cancip.installedPlugins、cancip.skills.list、cancip.skills.read、cancip.skills.refresh、cancip.experience.list、cancip.experience.harvest、cancip.attachment.help、cancip.tts.help/probe/voices/status/installLocal/speak/readActive/pause/resume/seek/stop、cancip.externalFiles.help、cancip.automation.templates、cancip.automation.addTemplate、cancip.searchVault、cancip.rebuildIndex、cancip.previewVaultSearch、cancip.localVersionCommit、cancip.importCapabilityPack、cancip.newsBrief、cancip.vaultDailyReport、cancip.automation.list、cancip.automation.add、cancip.automation.update、cancip.automation.addNewsBrief、cancip.automation.addVaultDailyReport、cancip.automation.run、cancip.automation.remove、web.search、web.fetch、github.help、github.status、github.repo、github.issues、github.pulls、github.releases、github.workflowRuns、github.branches、github.file、github.createIssue、github.installObsidianPlugin。不确定路线时先用 cancip.tools.index，它会把用户意图映射到应该查的 action/help/list 命令。用 cancip.subagents.start/list/status/stop/open 可把长任务拆成子会话；子会话会在父会话历史下默认折叠显示。用 obsidian.ui.buttons 检查当前笔记/PDF/官方更多菜单按钮和菜单项；用 obsidian.ui.applyButtonRules 按 selector 规则显示、隐藏、排序、改名、换图标。可用 obsidian.tabs 查看工作区标签页，obsidian.tabs.pin/unpin 固定/取消固定页，obsidian.tabs.closeUnpinned 关闭非固定页，obsidian.tabs.closeAll 关闭指定范围全部页，均不删除文件。需要读取历史/任意会话时，用 cancip.sessionHistory：all:true 列出会话，sessionId 读取任意保存会话，path 读取 .cancip/sessions/*.json，mode:'full' + includeContext:true 可带原始上下文。需要查看能力或本轮没有注入匹配 Skill 时，用 cancip.skills.list/read/refresh 程序化检查可用 Skill；成功流程可用 cancip.experience.harvest 生成 .cancip/skills/generated 下的经验 Skill。设置/界面/插件/自身修复类任务，先用 read/search 检查相关源码或配置，再 patch/write/config 并验证；若桌面源码不可用，就把已安装插件文件作为手机热补丁实现面，不能仅因 npm build/重启/源码同步不可用就停止。写已安装 Cancip 插件文件后必须说明需要重载/重启才有可见效果。只有长期记忆和已提供上下文不够时才用 cancip.searchVault 搜库，然后只读取必要命中文件。动作批次要小，等待工具结果后继续。工具失败就是权威上下文，必须解释失败或改用更小的下一步。访问模式控制执行：确认模式把写入类动作放进可见 Run/Reject 确认框并通知用户等待；全权模式自动执行已实现工具。只有用户明确要求审核或任务属于高风险 Vault 整理时，才用 cancip.reviewGate 程序化生成 Cancip 原生审核面板数据；它不是提示词，也不是外部 HTML 流程。Plan panel 只增加计划/待办层，不改变访问权限。原始 JavaScript eval 阻止。",
     actionsNeedApproval: "动作块已进入确认队列，尚未执行。\n\n{summary}",
     actionsExecuted: "工具执行结果：\n\n{summary}",
     toolRunsQueued: "{count} 个工具调用已排队。确认后点批准执行。",
@@ -3366,7 +3351,7 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     toolFeedbackSaved: "工具反馈已记录",
     toolContinueStatus: "正在根据工具结果继续...",
     toolRunResult: "工具结果",
-    toolContinuationPrompt: "上一步工具执行结果：\n\n{summary}\n\n请根据这些结果继续完成任务。工具失败是权威上下文，不能忽略：解释失败原因，改用更小且更明确的下一步，或只有在已完成、客观无法继续、或正在等待用户/UI 介入时才给最终回答。如果 patch 因 find text was not found 失败，绝对不要重复同一个 find；先用 query/maxChars 读取当前文件片段，再换更小的精确锚点或 regex:true 补丁。如果用户要求实现/修改，而目前只执行了读取、搜索、待办或列表步骤，说明还没完成：除非有真实阻塞，否则继续给出下一个 patch/write/command 具体动作。如果写入、补丁或命令已经成功，必须再通过读取改动路径或检查命令结果验证，然后给用户能直接看懂的最终回答。如果工具结果提示被截断或不完整，不要把“缺口/需要再查”当最终回答；继续用更小范围的 read/list/detail 动作补齐缺口。实现/改动/工具类最终回答格式：先用一句短总结对应用户原始问题说这轮干了什么，再按序号精简展开；按需包含「动作」「改动/读取的文件」「验证/结果」「提醒/阻塞」「记忆/规则更新」。不要写耗时、token 数或字数；Cancip 会程序化追加。工具细节放折叠过程里，不要暴露原始 action JSON。若还需要工具动作，只输出一个 cancip-action 块；否则最终回答必须追加且只追加一个隐藏 cancip-choices 注释。",
+    toolContinuationPrompt: "上一步工具执行结果：\n\n{summary}\n\n请根据这些结果继续完成任务。工具失败是权威上下文，不能忽略：解释失败原因，改用更小且更明确的下一步，或只有在已完成、客观无法继续、或正在等待用户/UI 介入时才给最终回答。如果 patch 因 find text was not found 失败，绝对不要重复同一个 find；先用 query/maxChars 读取当前文件片段，再换更小的精确锚点或 regex:true 补丁。如果用户要求实现/修改，而目前只执行了读取、搜索、待办或列表步骤，说明还没完成：除非有真实阻塞，否则继续给出下一个 patch/write/command 具体动作。如果写入、补丁或命令已经成功，必须再通过读取改动路径或检查命令结果验证，然后给用户能直接看懂的最终回答。如果工具结果提示被截断或不完整，不要把“缺口/需要再查”当最终回答；继续用更小范围的 read/list/detail 动作补齐缺口。实现/改动/工具类最终回答格式：先用一句短总结对应用户原始问题说这轮干了什么，再按序号精简展开；按需包含「动作」「改动/读取的文件」「验证/结果」「提醒/阻塞」「记忆/规则更新」。不要写耗时、token 数或字数；Cancip 会程序化追加。工具细节放折叠过程里，不要暴露原始 action JSON。若还需要工具动作，只输出一个 cancip-action 块；否则给最终回答；只有确实有具体下一步选择时才追加一个隐藏 cancip-choices 注释。",
     invalidActionBlock: "Cancip 找到了动作块，但里面不是可执行的 JSON。请使用一个开头行就是 ```cancip-action 的 fenced 块，里面只放 JSON；或使用 <cancip-action>JSON</cancip-action>。",
     actionFailed: "动作失败：{reason}",
     actionRead: "read {path}\n{content}",
@@ -5229,6 +5214,30 @@ export default class CancipPlugin extends Plugin {
       name: this.t("commandStopTts"),
       callback: () => {
         this.stopTts();
+      }
+    });
+
+    this.addCommand({
+      id: "right-sidebar-toggle-pinned-tab",
+      name: this.t("commandRightSidebarTogglePinnedTab"),
+      callback: () => {
+        new Notice(this.toggleRightSidebarActiveTabPinned());
+      }
+    });
+
+    this.addCommand({
+      id: "right-sidebar-close-unpinned-tabs",
+      name: this.t("commandRightSidebarCloseUnpinnedTabs"),
+      callback: () => {
+        new Notice(this.closeRightSidebarUnpinnedTabs(false));
+      }
+    });
+
+    this.addCommand({
+      id: "right-sidebar-close-all-tabs",
+      name: this.t("commandRightSidebarCloseAllTabs"),
+      callback: () => {
+        new Notice(this.closeRightSidebarAllTabs(false));
       }
     });
 
@@ -8549,10 +8558,10 @@ Detailed operating rules that should not live in the system prompt. Read this fi
 ## User-facing output
 - Keep the visible final answer focused on the user question: done/not done, changed paths, verification, failure reason, next step.
 - Put commands, code, raw action JSON, large tool results, and process logs in folded details.
-  - Recommendation buttons should be exactly 3 short, concrete next-step actions tied to the user's request and the final answer, not long explanations or paths.
+  - Recommendation buttons should use only the model-provided choices from this same final reply: show 1 to 3 short, concrete next-step actions when useful, and show none if no real choices were provided. Never synthesize or auto-fill template fallback choices.
 - Every turn must end with a visible conclusion if the model stops. Process logs are not a substitute.
 - Do not write elapsed time, token count, or character count in the answer body. The app adds those programmatically.
-- Generate recommendation choices together with the final answer in the hidden cancip-choices HTML comment; do not show numbered recommendation text in the body.
+- If there are useful concrete next-step choices, generate them together with the final answer in the hidden cancip-choices HTML comment; do not show numbered recommendation text in the body.
 - If the API returns empty/truncated content or a recoverable error, continue with retry/smaller reads before giving up.
 
 ## Cancip self-repair
@@ -8644,7 +8653,7 @@ Detailed operating rules that should not live in the system prompt. Read this fi
 - Every turn must end with a visible conclusion if the model stops. Process logs are not a substitute.
 - The visible answer should summarize the user's task, list what was done, list changed/read files when useful, show verification, then note blockers or memory/rule updates.
 - Do not write elapsed time, token count, or character count in the answer body. The app adds those programmatically.
-- Generate recommendation choices together with the final answer in the hidden cancip-choices HTML comment; do not show numbered recommendation text in the body.
+- If there are useful concrete next-step choices, generate them together with the final answer in the hidden cancip-choices HTML comment; do not show numbered recommendation text in the body.
 `;
         }
         if (nextRules !== rules) await adapter.write(CANCIP_RULES_PATH, nextRules);
@@ -8965,8 +8974,8 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       id,
       kind: "custom",
       selector: `[data-cancip-ui-custom-button-id="${cssEscapeAttr(id)}"]`,
-      anchorSelector: descriptor.selector,
-      anchorLabel: descriptor.label,
+      anchorSelector: descriptor.rule?.kind === "custom" && descriptor.rule.anchorSelector ? descriptor.rule.anchorSelector : descriptor.selector,
+      anchorLabel: descriptor.rule?.kind === "custom" && descriptor.rule.anchorLabel ? descriptor.rule.anchorLabel : descriptor.label,
       label: options.title || commandName || commandId,
       title: options.title || commandName || commandId,
       icon,
@@ -9761,7 +9770,10 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       this.buttonEditLongPressTarget = target;
       this.buttonEditLongPressTimer = window.setTimeout(() => {
         this.buttonEditLongPressTimer = null;
-        if (this.buttonEditLongPressTarget === target) this.showButtonEditBubble(target, x, y);
+        if (this.buttonEditLongPressTarget !== target) return;
+        const tabHeader = this.workspaceTabHeaderTarget(target);
+        if (tabHeader) this.showWorkspaceTabHeaderMenu(tabHeader, x, y);
+        else this.showButtonEditBubble(target, x, y);
       }, 620);
     };
     const cancel = () => {
@@ -9787,6 +9799,15 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       if (!this.settings.uiButtonManagementEnabled) return;
       const target = this.editableButtonTarget(event.target);
       if (!target) return;
+      const tabHeader = this.workspaceTabHeaderTarget(target);
+      if (tabHeader) {
+        event.preventDefault();
+        event.stopPropagation();
+        this.clearButtonEditLongPress();
+        this.hideButtonEditBubble();
+        this.showWorkspaceTabHeaderMenu(tabHeader, event.clientX, event.clientY);
+        return;
+      }
       this.clearButtonEditLongPress();
       this.hideButtonEditBubble();
       this.showButtonEditBubble(target, event.clientX, event.clientY);
@@ -9841,6 +9862,176 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       this.buttonEditLongPressTimer = null;
     }
     this.buttonEditLongPressTarget = null;
+  }
+
+  private workspaceTabHeaderTarget(rawTarget: EventTarget | null): HTMLElement | null {
+    const win = activeDocument.defaultView;
+    const rawElement = rawTarget as Element | null;
+    if (!win || !rawElement?.instanceOf?.(win.Element)) return null;
+    return rawElement.closest<HTMLElement>(
+      ".workspace-tab-header, .workspace-drawer-tab-header, .workspace-drawer-active-tab-header, .workspace-drawer-tab-option"
+    );
+  }
+
+  private showWorkspaceTabHeaderMenu(header: HTMLElement, x: number, y: number): void {
+    const headerArea = this.workspaceTabAreaForHeader(header);
+    const tab = this.workspaceTabInfoForHeader(header, headerArea) ?? this.fallbackWorkspaceTabInfoForArea(headerArea);
+    const title = tab?.title || uiElementLabel(header) || "tab";
+    const area = tab?.area ?? headerArea;
+    const menu = new Menu();
+    menu.addItem((item) => {
+      item
+        .setTitle(this.t("tabHeaderMenuTitle", { title }))
+        .setIcon(area === "right" ? "panel-right" : area === "left" ? "panel-left" : "panel-top")
+        .setIsLabel(true);
+    });
+    menu.addItem((item) => {
+      item
+        .setTitle(tab?.pinned ? this.t("tabHeaderMenuUnpin") : this.t("tabHeaderMenuPin"))
+        .setIcon(tab?.pinned ? "pin-off" : "pin")
+        .onClick(() => {
+          new Notice(this.toggleWorkspaceTabPinnedFromHeader(header));
+        });
+    });
+    menu.addItem((item) => {
+      item
+        .setTitle(this.t("tabHeaderMenuCloseThis"))
+        .setIcon("x")
+        .setWarning(true)
+        .onClick(() => {
+          new Notice(this.closeWorkspaceTabFromHeader(header));
+        });
+    });
+    if (area === "left" || area === "right") {
+      menu.addItem((item) => {
+        item
+          .setTitle(this.t("tabHeaderMenuCloseUnpinnedInSidebar"))
+          .setIcon("panel-right-close")
+          .setWarning(true)
+          .onClick(() => {
+            new Notice(this.closeTabsForHeaderArea(header, true));
+            this.scheduleRightSidebarTabToolbarRefresh(0);
+          });
+      });
+      menu.addItem((item) => {
+        item
+          .setTitle(this.t("tabHeaderMenuCloseAllInSidebar"))
+          .setIcon("panel-right-close")
+          .setWarning(true)
+          .onClick(() => {
+            new Notice(this.closeTabsForHeaderArea(header, false));
+            this.scheduleRightSidebarTabToolbarRefresh(0);
+          });
+      });
+    }
+    menu.addItem((item) => {
+      item
+        .setTitle(this.t("editButtonSettings"))
+        .setIcon("settings")
+        .onClick(() => {
+          this.openButtonEditModal(this.describeUiButtonEditTarget(header));
+        });
+    });
+    menu.showAtPosition({ x: Math.max(8, x), y: Math.max(8, y) }, activeDocument);
+  }
+
+  private workspaceTabAreaForHeader(header: HTMLElement): WorkspaceTabInfo["area"] {
+    if (header.closest(".mod-right-split, .workspace-split.mod-right-split, .workspace-drawer.mod-right, .workspace-drawer-right, .workspace-drawer.is-right")) return "right";
+    if (header.closest(".mod-left-split, .workspace-split.mod-left-split, .workspace-drawer.mod-left, .workspace-drawer-left, .workspace-drawer.is-left")) return "left";
+    if (header.closest(".workspace-popout, .mod-popout")) return "floating";
+    let current: HTMLElement | null = header;
+    for (let depth = 0; current && depth < 8; depth += 1, current = current.parentElement) {
+      const text = `${current.className ?? ""} ${current.getAttribute("aria-label") ?? ""}`.toLowerCase();
+      if (/\bright\b|右/.test(text)) return "right";
+      if (/\bleft\b|左/.test(text)) return "left";
+    }
+    const rect = header.getBoundingClientRect();
+    const width = activeDocument.defaultView?.innerWidth ?? window.innerWidth;
+    if (Number.isFinite(rect.left) && width > 0) {
+      if (rect.left > width * 0.58) return "right";
+      if (rect.right < width * 0.42) return "left";
+    }
+    return "root";
+  }
+
+  private workspaceTabInfoForHeader(header: HTMLElement, knownArea?: WorkspaceTabInfo["area"]): WorkspaceTabInfo | null {
+    const tabHeader = header.closest<HTMLElement>(".workspace-tab-header, .workspace-drawer-tab-header, .workspace-drawer-active-tab-header, .workspace-drawer-tab-option") ?? header;
+    const tabsContainer = tabHeader.closest<HTMLElement>(".workspace-tabs, .workspace-drawer-tab-container, .workspace-drawer-tabs");
+    const area = knownArea ?? this.workspaceTabAreaForHeader(tabHeader);
+    if (!tabsContainer) return null;
+    const groupTabs = this.workspaceTabInfos({ scope: area })
+      .filter((tab) => workspaceLeafTabsContainer(tab.leaf) === tabsContainer);
+    if (!groupTabs.length) return null;
+    const headerContainer = tabsContainer.querySelector<HTMLElement>(":scope > .workspace-tab-header-container")
+      ?? tabsContainer.querySelector<HTMLElement>(".workspace-tab-header-container, .workspace-drawer-tab-header-container, .workspace-drawer-tab-options");
+    const headers = headerContainer
+      ? Array.from(headerContainer.querySelectorAll<HTMLElement>(".workspace-tab-header, .workspace-drawer-tab-header, .workspace-drawer-active-tab-header, .workspace-drawer-tab-option"))
+      : [];
+    const headerIndex = headers.indexOf(tabHeader);
+    const ordered = orderedWorkspaceTabInfosFromParent(groupTabs);
+    if (headerIndex >= 0 && ordered[headerIndex]) return ordered[headerIndex];
+    const domActive = groupTabs.find((tab) => workspaceLeafIsDomActive(tab.leaf));
+    return domActive ?? activeWorkspaceTabInfoFromParent(groupTabs) ?? ordered[0] ?? groupTabs[0] ?? null;
+  }
+
+  private fallbackWorkspaceTabInfoForArea(area: WorkspaceTabInfo["area"]): WorkspaceTabInfo | null {
+    const tabs = this.workspaceTabInfos({ scope: area === "root" ? "main" : area });
+    if (!tabs.length && (area === "left" || area === "right")) return this.workspaceTabInfos({ scope: "all" }).find((tab) => tab.area === area) ?? null;
+    const active = this.activeWorkspaceLeaf();
+    return tabs.find((tab) => tab.leaf === active)
+      ?? tabs.find((tab) => workspaceLeafIsDomActive(tab.leaf))
+      ?? activeWorkspaceTabInfoFromParent(tabs)
+      ?? orderedWorkspaceTabInfosFromParent(tabs)[0]
+      ?? tabs[0]
+      ?? null;
+  }
+
+  private toggleWorkspaceTabPinned(tab: WorkspaceTabInfo): string {
+    const nextPinned = !workspaceLeafPinned(tab.leaf);
+    tab.leaf.setPinned(nextPinned);
+    this.requestWorkspaceLayoutSave();
+    this.scheduleRightSidebarTabToolbarRefresh(0);
+    return `${nextPinned ? "pinned" : "unpinned"}: ${tab.title}${tab.path ? ` (${tab.path})` : ""}`;
+  }
+
+  private toggleWorkspaceTabPinnedFromHeader(header: HTMLElement): string {
+    const area = this.workspaceTabAreaForHeader(header);
+    const tab = this.workspaceTabInfoForHeader(header, area) ?? this.fallbackWorkspaceTabInfoForArea(area);
+    if (!tab) return "tab not found";
+    return this.toggleWorkspaceTabPinned(tab);
+  }
+
+  private closeWorkspaceTab(tab: WorkspaceTabInfo): string {
+    tab.leaf.detach();
+    this.requestWorkspaceLayoutSave();
+    this.scheduleRightSidebarTabToolbarRefresh(0);
+    return `closed tab: ${tab.title}${tab.path ? ` (${tab.path})` : ""} (no files deleted)`;
+  }
+
+  private closeWorkspaceTabFromHeader(header: HTMLElement): string {
+    const area = this.workspaceTabAreaForHeader(header);
+    const tab = this.workspaceTabInfoForHeader(header, area) ?? this.fallbackWorkspaceTabInfoForArea(area);
+    if (!tab) return "tab not found";
+    return this.closeWorkspaceTab(tab);
+  }
+
+  private closeTabsForHeaderArea(header: HTMLElement, unpinnedOnly: boolean): string {
+    const area = this.workspaceTabAreaForHeader(header);
+    const scope = area === "left" || area === "right" ? area : "all";
+    const direct = unpinnedOnly
+      ? this.closeUnpinnedTabsCommand({ scope, keepActive: true, dryRun: false })
+      : this.closeAllTabsCommand({ scope, keepActive: false, dryRun: false });
+    if (!/^closed tabs: 0\b/.test(direct)) return direct;
+    const fallbackTab = this.workspaceTabInfoForHeader(header, area) ?? this.fallbackWorkspaceTabInfoForArea(area);
+    if (!fallbackTab) return direct;
+    const parentTabs = this.workspaceTabInfos({ scope: "all" })
+      .filter((tab) => tab.leaf.parent === fallbackTab.leaf.parent);
+    const activeLeaf = this.activeWorkspaceLeaf();
+    const targets = parentTabs.filter((tab) => unpinnedOnly ? !tab.pinned && tab.leaf !== activeLeaf : true);
+    if (!targets.length) return direct;
+    for (const tab of targets) tab.leaf.detach();
+    this.requestWorkspaceLayoutSave();
+    return `closed tabs: ${targets.length} (no files deleted)\n${targets.map((tab) => `- ${tab.title}${tab.path ? ` (${tab.path})` : ""}`).join("\n")}`;
   }
 
   private editableButtonTarget(rawTarget: EventTarget | null): HTMLElement | null {
@@ -10215,21 +10406,15 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
   }
 
   automationMechanicalRouteKinds(task: Pick<AutomationTask, "title" | "prompt" | "command" | "mechanical" | "mechanicalRoutes">, fallbackPrompt = ""): MechanicalTaskRouteKey[] {
-    if (!this.settings.specialistRoutingEnabled) return [];
-    const mode = task.mechanical ?? "auto";
-    if (mode === "off") return [];
-    const routes = task.mechanicalRoutes ?? this.settings.mechanicalTaskRoutes;
-    const detectionPrompt = automationMechanicalDetectionPrompt(task, fallbackPrompt);
-    const detected = mechanicalTaskRouteKindsForPrompt(detectionPrompt, routes);
-    if (mode === "on") return detected.length ? detected : enabledMechanicalRouteKeys(routes);
-    return detected;
+    void task;
+    void fallbackPrompt;
+    return [];
   }
 
   automationModelPromptForTask(task: Pick<AutomationTask, "title" | "prompt" | "command" | "mechanical" | "mechanicalRoutes">, prompt = task.prompt): { prompt: string; routeKinds: MechanicalTaskRouteKey[] } {
-    const routeKinds = this.automationMechanicalRouteKinds(task, prompt);
     return {
-      prompt: wrapMechanicalAutomationPrompt(prompt, task, routeKinds, this.language()),
-      routeKinds
+      prompt,
+      routeKinds: []
     };
   }
 
@@ -10239,30 +10424,18 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       : this.activeApiProfile();
     const model = task.model?.trim();
     if (task.apiProfileId || model) return model ? { ...base, model } : base;
-    const routeKinds = this.automationMechanicalRouteKinds(task, fallbackPrompt);
-    if (!routeKinds.length) return base;
-    const specialistBase = this.settings.mechanicalTaskApiProfileId
-      ? this.settings.apiProfiles.find((profile) => profile.id === this.settings.mechanicalTaskApiProfileId) ?? base
-      : base;
-    const specialistModel = this.settings.mechanicalTaskModel.trim() || inferMechanicalTaskModel(this.settings.modelOptions, specialistBase.model);
-    if (!specialistModel && specialistBase.id === base.id) return base;
-    return specialistModel ? { ...specialistBase, model: specialistModel } : specialistBase;
+    void fallbackPrompt;
+    return base;
   }
 
   specialistApiProfileForPrompt(prompt: string): ApiProfile | null {
-    if (!this.settings.specialistRoutingEnabled) return null;
-    if (!this.mechanicalTaskRouteKindsForPrompt(prompt).length) return null;
-    const base = this.settings.mechanicalTaskApiProfileId
-      ? this.settings.apiProfiles.find((profile) => profile.id === this.settings.mechanicalTaskApiProfileId) ?? this.activeApiProfile()
-      : this.activeApiProfile();
-    const model = this.settings.mechanicalTaskModel.trim() || inferMechanicalTaskModel(this.settings.modelOptions, base.model);
-    if (!model && base.id === this.activeApiProfile().id) return null;
-    return model ? { ...base, model } : base;
+    void prompt;
+    return null;
   }
 
   mechanicalTaskRouteKindsForPrompt(prompt: string): MechanicalTaskRouteKey[] {
-    if (!this.settings.specialistRoutingEnabled) return [];
-    return mechanicalTaskRouteKindsForPrompt(prompt, this.settings.mechanicalTaskRoutes);
+    void prompt;
+    return [];
   }
 
   async selectApiProfile(id: string): Promise<void> {
@@ -10431,33 +10604,27 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       const toolbar = header.createDiv({ cls: "obcc-right-tab-toolbar" });
       toolbar.dataset.cancipUiInternal = "true";
       const tabForHeader = this.rightSidebarTabInfoForHeaderContainer(header);
-      this.createRightSidebarTabButton(toolbar, tabForHeader?.pinned ? "pin-off" : "pin", "锁定/取消锁定当前右侧标签页", () => {
-        const tab = this.rightSidebarTabInfoForHeaderContainer(header);
-        if (!tab) {
-          new Notice("No right sidebar tab found");
-          return;
-        }
-        const nextPinned = !tab.pinned;
-        tab.leaf.setPinned(nextPinned);
-        this.requestWorkspaceLayoutSave();
-        new Notice(`${nextPinned ? "Pinned" : "Unpinned"}: ${tab.title}`);
-        this.scheduleRightSidebarTabToolbarRefresh(0);
-      });
+      const pinned = tabForHeader?.pinned === true;
+      this.createRightSidebarTabButton(
+        toolbar,
+        pinned ? "pin-off" : "pin",
+        pinned ? "取消锁定当前右侧标签页" : "锁定当前右侧标签页",
+        () => new Notice(this.toggleRightSidebarActiveTabPinned(tabForHeader?.leaf)),
+        { pressed: pinned, cls: pinned ? "is-pinned" : "" }
+      );
       this.createRightSidebarTabButton(toolbar, "x", "关闭右侧全部非锁定标签页", () => {
-        new Notice(this.closeUnpinnedTabsCommand({ scope: "right", keepActive: false }));
-        this.scheduleRightSidebarTabToolbarRefresh(0);
+        new Notice(this.closeRightSidebarUnpinnedTabs(false));
       });
       this.createRightSidebarTabButton(toolbar, "panel-right-close", "关闭右侧全部标签页", () => {
-        new Notice(this.closeAllTabsCommand({ scope: "right", keepActive: false }));
-        this.scheduleRightSidebarTabToolbarRefresh(0);
+        new Notice(this.closeRightSidebarAllTabs(false));
       });
     }
   }
 
-  private createRightSidebarTabButton(parent: HTMLElement, icon: string, title: string, onClick: () => void): HTMLButtonElement {
+  private createRightSidebarTabButton(parent: HTMLElement, icon: string, title: string, onClick: () => void, options: { pressed?: boolean; cls?: string } = {}): HTMLButtonElement {
     const button = parent.createEl("button", {
-      cls: "clickable-icon obcc-right-tab-button",
-      attr: { type: "button", title, "aria-label": title }
+      cls: `clickable-icon obcc-right-tab-button${options.cls ? ` ${options.cls}` : ""}`,
+      attr: { type: "button", title, "aria-label": title, "aria-pressed": options.pressed ? "true" : "false" }
     });
     setIcon(button, icon);
     button.addEventListener("click", (event) => {
@@ -10493,6 +10660,30 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     const ordered = orderedWorkspaceTabInfosFromParent(groupTabs);
     if (headerIndex >= 0 && ordered[headerIndex]) return ordered[headerIndex];
     return ordered[0] ?? groupTabs[0] ?? null;
+  }
+
+  private toggleRightSidebarActiveTabPinned(preferredLeaf?: WorkspaceLeaf): string {
+    const tab = preferredLeaf
+      ? this.workspaceTabInfos({ scope: "right" }).find((item) => item.leaf === preferredLeaf) ?? null
+      : this.rightSidebarActiveTabInfo();
+    if (!tab) return "right sidebar tab not found";
+    const nextPinned = !tab.pinned;
+    tab.leaf.setPinned(nextPinned);
+    this.requestWorkspaceLayoutSave();
+    this.scheduleRightSidebarTabToolbarRefresh(0);
+    return `${nextPinned ? "pinned" : "unpinned"}: ${tab.title}${tab.path ? ` (${tab.path})` : ""}`;
+  }
+
+  private closeRightSidebarUnpinnedTabs(keepActive = false): string {
+    const result = this.closeUnpinnedTabsCommand({ scope: "right", keepActive });
+    this.scheduleRightSidebarTabToolbarRefresh(0);
+    return result;
+  }
+
+  private closeRightSidebarAllTabs(keepActive = false): string {
+    const result = this.closeAllTabsCommand({ scope: "right", keepActive });
+    this.scheduleRightSidebarTabToolbarRefresh(0);
+    return result;
   }
 
   private closeUnpinnedTabsCommand(args: Record<string, unknown>): string {
@@ -11569,8 +11760,6 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
           prompt: template.prompt,
           command: template.command,
           args: template.args,
-          mechanical: template.mechanical,
-          mechanicalRoutes: template.mechanicalRoutes,
           schedule: template.schedule,
           enabled: template.enabled,
           intervalMinutes: template.intervalMinutes,
@@ -11607,8 +11796,8 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       args: isRecord(action.args) ? action.args : existing?.args,
       apiProfileId: typeof action.apiProfileId === "string" ? action.apiProfileId.trim() || undefined : existing?.apiProfileId,
       model: typeof action.model === "string" ? action.model.trim() || undefined : existing?.model,
-      mechanical: isAutomationMechanicalMode(action.mechanical) ? action.mechanical : existing?.mechanical ?? "auto",
-      mechanicalRoutes: action.mechanicalRoutes ? normalizeMechanicalTaskRoutes(action.mechanicalRoutes) : existing?.mechanicalRoutes,
+      mechanical: existing?.mechanical ?? "auto",
+      mechanicalRoutes: existing?.mechanicalRoutes,
       schedule: isAutomationSchedule(action.schedule) ? action.schedule : existing?.schedule ?? "manual",
       enabled: typeof action.enabled === "boolean" ? action.enabled : existing?.enabled ?? true,
       intervalMinutes: typeof action.intervalMinutes === "number" ? action.intervalMinutes : existing?.intervalMinutes ?? 60,
@@ -11715,7 +11904,6 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       `- schedule: ${task.schedule}`,
       `- time: ${formatAutomationSchedule(task)}`,
       `- session: ${task.sessionMode}${task.sessionId ? ` ${task.sessionId}` : ""}`,
-      `- mechanical: ${task.mechanical}${this.automationMechanicalRouteKinds(task).length ? ` (${this.automationMechanicalRouteKinds(task).join(", ")})` : ""}`,
       task.condition ? `- condition: ${task.condition}` : "",
       "",
       "### Prompt",
@@ -11741,10 +11929,8 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
         const session = task.sessionMode === "session" ? `session:${task.sessionId || "unset"}` : task.sessionMode;
         const profile = task.apiProfileId ? `, profile:${task.apiProfileId}` : "";
         const model = task.model ? `, model:${task.model}` : ", model:current";
-        const routeKinds = this.automationMechanicalRouteKinds(task);
-        const mechanical = `, mechanical:${task.mechanical}${routeKinds.length ? `(${routeKinds.join("+")})` : ""}`;
         const condition = task.condition ? `, condition:${trimContext(task.condition, 80)}` : "";
-        return `- ${task.id}: ${task.title} [${status}, ${formatAutomationSchedule(task)}, ${mode}, ${session}${profile}${model}${mechanical}${condition}${last}]`;
+        return `- ${task.id}: ${task.title} [${status}, ${formatAutomationSchedule(task)}, ${mode}, ${session}${profile}${model}${condition}${last}]`;
       })
       .join("\n");
   }
@@ -12155,7 +12341,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       ]);
       this.updateStatusBarAttention({
         unreadSessions: Math.max(openViewState.unreadSessions, unreadSessions),
-        reviews: Math.max(openViewState.reviews, reviews)
+        reviews
       });
     } catch (error) {
       console.warn("Cancip status bar attention refresh failed", error);
@@ -12308,15 +12494,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
   }
 
   async activateView(): Promise<CancipView | null> {
-    let leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
-    if (!leaf) {
-      const rightLeaf = this.app.workspace.getRightLeaf(false);
-      if (!rightLeaf) return null;
-      leaf = rightLeaf;
-      await leaf?.setViewState({ type: VIEW_TYPE, active: true });
-    } else if (!(leaf.view instanceof CancipView)) {
-      await leaf.setViewState({ type: VIEW_TYPE, active: true });
-    }
+    const leaf = await this.ensureCancipLeaf(true);
     if (!leaf) return null;
     await this.app.workspace.revealLeaf(leaf);
     return leaf.view instanceof CancipView ? leaf.view : null;
@@ -12324,15 +12502,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
 
   async getOrCreateChatView(options: { reveal?: boolean; focus?: boolean } = {}): Promise<CancipView | null> {
     const reveal = options.reveal !== false;
-    let leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
-    if (!leaf) {
-      const rightLeaf = this.app.workspace.getRightLeaf(false);
-      if (!rightLeaf) return null;
-      leaf = rightLeaf;
-      await leaf.setViewState({ type: VIEW_TYPE, active: reveal });
-    } else if (!(leaf.view instanceof CancipView)) {
-      await leaf.setViewState({ type: VIEW_TYPE, active: reveal });
-    }
+    const leaf = await this.ensureCancipLeaf(reveal);
     if (!leaf) return null;
     if (reveal) {
       await this.app.workspace.revealLeaf(leaf);
@@ -12344,6 +12514,22 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       }
     }
     return leaf.view instanceof CancipView ? leaf.view : null;
+  }
+
+  private async ensureCancipLeaf(active: boolean): Promise<WorkspaceLeaf | null> {
+    let leaf: WorkspaceLeaf | null = this.app.workspace.getLeavesOfType(VIEW_TYPE).find((candidate) => candidate.view instanceof CancipView)
+      ?? this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
+    if (!leaf) leaf = this.app.workspace.getRightLeaf(false) ?? null;
+    if (!leaf) return null;
+    if (!(leaf.view instanceof CancipView)) {
+      await leaf.setViewState({ type: VIEW_TYPE, active });
+      await sleep(0);
+    }
+    if (!(leaf.view instanceof CancipView)) {
+      await leaf.setViewState({ type: VIEW_TYPE, active: true });
+      await sleep(30);
+    }
+    return leaf.view instanceof CancipView ? leaf : null;
   }
 
   async submitReviewCorrectionPrompt(input: {
@@ -12588,7 +12774,7 @@ class CancipReviewLeafView extends ItemView {
         console.warn("Cancip review package load failed", packagePath, error);
       }
     }
-    const total = await this.plugin.pendingReviewGateCountForPackages(packages);
+    const total = pendingData.reduce((sum, entry) => sum + entry.items.length, 0);
     if (!pendingData.length || total <= 0) {
       parent.createDiv({ cls: "obcc-review-native-empty", text: this.t("reviewGatePanelEmpty") });
       return;
@@ -13096,6 +13282,7 @@ class CancipView extends ItemView {
   private progressStepTimers = new Map<string, number>();
   private toolRunTimers = new Map<string, number>();
   private detailsOpenState = new Map<string, boolean>();
+  private liveProcessRecordActive = false;
   private readOnlyActionCache = new Map<string, ReadOnlyActionCacheEntry>();
   private resolvedActionPathAliases = new Map<string, string>();
   private vaultAttachmentTextCache = new Map<string, VaultAttachmentParseCacheEntry>();
@@ -13995,12 +14182,11 @@ class CancipView extends ItemView {
     const activeProfile = this.plugin.activeApiProfile();
     const modelButton = rightControls.createEl("button", {
       cls: "obcc-model-button",
-      attr: { type: "button", title: activeProfile.model || this.t("settingsModel"), "aria-label": this.t("settingsModel") }
+      attr: { type: "button", title: this.modelProfileLabel(activeProfile), "aria-label": this.t("settingsModel") }
     });
-    modelButton.createSpan({ cls: "obcc-model-name", text: this.formatModelLabel(activeProfile.model) });
+    modelButton.createSpan({ cls: "obcc-model-name", text: this.modelProfileShortLabel(activeProfile) });
     setIcon(modelButton.createSpan({ cls: "obcc-chevron" }), "chevron-up");
     modelButton.addEventListener("click", () => this.toggleModelMenu());
-
     const sendButton = form.createEl("button", {
       cls: "obcc-send",
       attr: { type: "submit", title: this.t("send"), "aria-label": this.t("send") }
@@ -14562,26 +14748,6 @@ class CancipView extends ItemView {
     this.menuEl.removeClass("is-hidden");
     this.placeCommandMenu();
 
-    const sourceSection = this.menuEl.createDiv({ cls: "obcc-model-menu-section" });
-    const sourceHead = sourceSection.createDiv({ cls: "obcc-model-menu-section-head" });
-    sourceHead.createSpan({ text: this.t("modelSources") });
-    this.createModelMenuIconButton(sourceHead, "plus", this.t("addApiProfile"), () => void this.addApiProfileFromModelMenu());
-    for (const [index, profile] of this.plugin.settings.apiProfiles.entries()) {
-      const row = sourceSection.createDiv({ cls: `obcc-model-menu-row ${profile.id === active.id ? "is-active" : ""}` });
-      const body = row.createEl("button", { cls: "obcc-model-menu-body", attr: { type: "button", title: profile.name || profile.id } });
-      setIcon(body.createSpan({ cls: "obcc-command-icon" }), "server");
-      const text = body.createDiv({ cls: "obcc-model-menu-text" });
-      text.createDiv({ cls: "obcc-command-title", text: profile.name || profile.id });
-      text.createDiv({ cls: "obcc-command-detail", text: `${profile.apiMode} · ${profile.model}` });
-      if (profile.id === active.id) setIcon(body.createSpan({ cls: "obcc-command-check" }), "check");
-      body.addEventListener("click", () => void this.selectApiProfileFromModelMenu(profile.id));
-      const actions = row.createDiv({ cls: "obcc-model-menu-actions" });
-      this.createModelMenuIconButton(actions, "arrow-up", this.t("moveQueuedPromptUp"), () => void this.moveApiProfileFromModelMenu(profile.id, -1), index === 0);
-      this.createModelMenuIconButton(actions, "arrow-down", this.t("moveQueuedPromptDown"), () => void this.moveApiProfileFromModelMenu(profile.id, 1), index === this.plugin.settings.apiProfiles.length - 1);
-      this.createModelMenuIconButton(actions, "pencil", this.t("renameSession"), () => void this.renameApiProfileFromModelMenu(profile.id));
-      this.createModelMenuIconButton(actions, "trash-2", this.t("removeApiProfile"), () => void this.removeApiProfileFromModelMenu(profile.id), this.plugin.settings.apiProfiles.length <= 1);
-    }
-
     const modelSection = this.menuEl.createDiv({ cls: "obcc-model-menu-section" });
     const modelHead = modelSection.createDiv({ cls: "obcc-model-menu-section-head" });
     modelHead.createSpan({ text: this.t("modelList") });
@@ -14592,10 +14758,10 @@ class CancipView extends ItemView {
       setIcon(body.createSpan({ cls: "obcc-command-icon" }), "cpu");
       const text = body.createDiv({ cls: "obcc-model-menu-text" });
       text.createDiv({ cls: "obcc-command-title", text: this.formatModelLabel(model) });
-      text.createDiv({ cls: "obcc-command-detail", text: model });
       if (model === active.model) setIcon(body.createSpan({ cls: "obcc-command-check" }), "check");
       body.addEventListener("click", () => void this.setModelFromMenu(model));
       const actions = row.createDiv({ cls: "obcc-model-menu-actions" });
+      this.createModelMenuIconButton(actions, "copy", this.t("copyModelInfo"), () => void this.copyModelInfo(model));
       this.createModelMenuIconButton(actions, "arrow-up", this.t("moveModelUp"), () => void this.moveModelOptionFromMenu(model, -1), index === 0);
       this.createModelMenuIconButton(actions, "arrow-down", this.t("moveModelDown"), () => void this.moveModelOptionFromMenu(model, 1), index === presets.length - 1);
       this.createModelMenuIconButton(actions, "pencil", this.t("editModel"), () => void this.editModelOptionFromMenu(model));
@@ -16358,6 +16524,32 @@ class CancipView extends ItemView {
     return compact.length > 18 ? `${compact.slice(0, 18)}...` : compact;
   }
 
+  private modelProfileShortLabel(profile: ApiProfile): string {
+    return this.formatModelLabel(profile.model);
+  }
+
+  private modelProfileLabel(profile: ApiProfile): string {
+    return profile.model || this.t("settingsModel");
+  }
+
+  private async copyModelInfo(modelOverride?: string): Promise<void> {
+    const profile = modelOverride ? { ...this.plugin.activeApiProfile(), model: modelOverride } : this.plugin.activeApiProfile();
+    const lines = [
+      `source=${profile.name || profile.id}`,
+      `sourceId=${profile.id}`,
+      `mode=${profile.apiMode}`,
+      `model=${profile.model}`,
+      `apiUrl=${profile.apiUrl}`
+    ];
+    await this.copyTextDirect(lines.join("\n"), this.t("modelInfoCopied"));
+  }
+
+  private modelCallTimeoutForPrompt(prompt: string): number {
+    const intent = classifyPromptIntent(prompt);
+    if (intent === "implementation" || shouldExpectToolActionForPrompt(prompt)) return MODEL_CALL_COMPLEX_TIMEOUT_MS;
+    return MODEL_CALL_TIMEOUT_MS;
+  }
+
   private formatAccessLabel(mode: AccessMode): string {
     const labels: Record<Language, Record<AccessMode, string>> = {
       zh: { "ask-for-approval": "确认", "full-access": "全权" },
@@ -16457,16 +16649,8 @@ class CancipView extends ItemView {
     const userMessage = this.addMessage("user", rawPrompt);
     const taskGoal = this.resolveTaskGoal(rawPrompt);
     const previousRequestProfile = this.activeRequestApiProfile;
-    const mechanicalRouteKinds = this.plugin.mechanicalTaskRouteKindsForPrompt(taskGoal);
-    const routedProfile = this.plugin.specialistApiProfileForPrompt(taskGoal);
-    const requestProfile = routedProfile ?? this.plugin.activeApiProfile();
+    const requestProfile = this.plugin.activeApiProfile();
     this.activeRequestApiProfile = requestProfile;
-    if (routedProfile) {
-      void this.recordSessionEvent({
-        kind: "model.route",
-        detail: `mechanical-specialist:${requestProfile.name || requestProfile.id}/${requestProfile.model}; triggers=${mechanicalRouteKinds.join(",") || "unknown"}`
-      });
-    }
     this.resumableTask = null;
     this.noteTaskControlPrompt(rawPrompt);
     this.ensureTaskControl(rawPrompt, taskGoal);
@@ -16513,11 +16697,9 @@ class CancipView extends ItemView {
 
       const activeProfile = requestProfile;
       if (!activeProfile.apiUrl || !activeProfile.apiKey || !activeProfile.model) {
-        this.addMessage(
-          "assistant",
-          this.localFallback(rawPrompt, context.searchHits, this.t("missingApi"))
-        );
+        this.updateProgressStep(contextStep, this.t("preparingContext"), this.localFallback(rawPrompt, context.searchHits, this.t("missingApi")), this.t("toolRunFailed"));
         this.setStatus(this.t("callFailed"));
+        this.markResumableTask(taskGoal, "failed");
         await this.finishCurrentSessionStatus("failed", true, request);
         return;
       }
@@ -16546,8 +16728,10 @@ class CancipView extends ItemView {
         context,
         rawPrompt,
         "model request timed out",
-        MODEL_CALL_TIMEOUT_MS,
-        this.modelRetryProgressUpdater(generationStep, this.t("generating"))
+        this.modelCallTimeoutForPrompt(taskGoal),
+        this.modelRetryProgressUpdater(generationStep, this.t("generating")),
+        undefined,
+        this.modelStreamProgressUpdater(generationStep, this.t("generating"))
       );
       if (request.signal.aborted || !this.hasRequest(request)) return;
       const requestSessionId = this.requestSessionId(request);
@@ -16679,7 +16863,6 @@ class CancipView extends ItemView {
       void this.recordSessionEvent({ kind: "prompt.error", detail: message });
       void this.recordSessionEvent({ kind: "prompt.recoverable_error", detail: message, status: "failed" });
       this.updateProgressStep(generationStep, this.generationStepSummary(this.t("generating"), this.currentModelCharUsageText()), this.formatGenerationAuditDetail(modelPrompt, context, this.activeRequestApiProfile ?? this.plugin.activeApiProfile(), `Model call failed: ${message}`, "", rawPrompt), this.t("toolRunFailed"));
-      this.addMessage("assistant", this.localFallback(taskGoal, context.searchHits, message));
       this.setStatus(this.t("callFailed"));
       this.markResumableTask(taskGoal, "failed");
       await this.finishCurrentSessionStatus("failed", true, request);
@@ -17126,12 +17309,6 @@ class CancipView extends ItemView {
     this.syncRequestControls();
     void this.updateCurrentSessionStatus("running", false);
     this.setStatus(this.t("automationStarted", { title: task.title }));
-    if (modelPromptInfo.routeKinds.length) {
-      void this.recordSessionEvent({
-        kind: "model.route",
-        detail: `automation-mechanical:${automationProfile.name || automationProfile.id}/${automationProfile.model}; triggers=${modelPromptInfo.routeKinds.join(",")}`
-      });
-    }
     let generationStep: ChatMessage | null = null;
     try {
       const generationSummary = this.t("automationStarted", { title: task.title });
@@ -17142,9 +17319,10 @@ class CancipView extends ItemView {
         context,
         prompt,
         "automation model request timed out",
-        MODEL_CALL_TIMEOUT_MS,
+        this.modelCallTimeoutForPrompt(task.prompt),
         this.modelRetryProgressUpdater(generationStep, generationSummary),
-        automationProfile
+        automationProfile,
+        this.modelStreamProgressUpdater(generationStep, generationSummary)
       );
       if (request.signal.aborted || !this.isCurrentRequest(request)) return this.t("stopped");
       this.updateProgressStep(generationStep, this.generationStepSummary(generationSummary, this.currentModelCharUsageText()), this.formatGenerationAuditDetail(modelPrompt, context, activeProfile, answer, answer.trim(), prompt));
@@ -17208,12 +17386,6 @@ class CancipView extends ItemView {
     this.syncRequestControls();
     void this.updateCurrentSessionStatus("running", false);
     this.setStatus(this.t("automationStarted", { title: task.title }));
-    if (modelPromptInfo.routeKinds.length) {
-      void this.recordSessionEvent({
-        kind: "model.route",
-        detail: `automation-mechanical:${automationProfile.name || automationProfile.id}/${automationProfile.model}; triggers=${modelPromptInfo.routeKinds.join(",")}`
-      });
-    }
 
     let contextStep: ChatMessage | null = null;
     let generationStep: ChatMessage | null = null;
@@ -17256,9 +17428,10 @@ class CancipView extends ItemView {
         context,
         rawPrompt,
         "automation model request timed out",
-        MODEL_CALL_TIMEOUT_MS,
+        this.modelCallTimeoutForPrompt(displayPrompt),
         this.modelRetryProgressUpdater(generationStep, generationSummary),
-        automationProfile
+        automationProfile,
+        this.modelStreamProgressUpdater(generationStep, generationSummary)
       );
       if (request.signal.aborted || !this.isCurrentRequest(request)) return this.t("stopped");
       this.updateProgressStep(generationStep, this.generationStepSummary(generationSummary, this.currentModelCharUsageText()), this.formatGenerationAuditDetail(commandContext.prompt, context, activeProfile, answer, answer.trim(), rawPrompt));
@@ -19061,7 +19234,7 @@ class CancipView extends ItemView {
       "If the tool result already contains the answer, answer now. Do not ask to run more tools unless the needed field is truly absent.",
       "If the result is incomplete, say the exact missing part and the smallest next read-only check.",
       "Do not write elapsed time, token counts, or character counts; Cancip appends them programmatically.",
-      'Append exactly one hidden HTML comment for next-step buttons, like <!-- cancip-choices {"choices":["短动作1","短动作2"]} -->.'
+      'When useful, append one hidden HTML comment for next-step buttons, like <!-- cancip-choices {"choices":["短动作1","短动作2"]} -->.'
     ].join("\n");
   }
 
@@ -19124,8 +19297,11 @@ class CancipView extends ItemView {
 
   private modelRetryProgressUpdater(step: ChatMessage | null | undefined, summary: string): (progress: ModelCallRetryProgress) => void {
     return (progress) => {
+      const visibleAttempt = progress.waitingMs && progress.retrying
+        ? Math.min(progress.maxAttempts, progress.attempt + 1)
+        : progress.attempt;
       const attemptLabel = progress.retrying
-        ? `${summary} ${progress.attempt}/${progress.maxAttempts}`
+        ? `${summary} ${visibleAttempt}/${progress.maxAttempts}`
         : summary;
       const reason = progress.reason || this.t("emptyApiReply");
       const waitSeconds = progress.waitingMs ? Math.max(1, Math.ceil(progress.waitingMs / 1000)) : 0;
@@ -19136,6 +19312,31 @@ class CancipView extends ItemView {
       const status = progress.retrying ? this.t("toolRunExecuting") : this.t("toolRunFailed");
       this.updateProgressStepLive(step, this.generationStepSummary(attemptLabel, this.currentModelCharUsageText()), detail, status);
     };
+  }
+
+  private modelStreamProgressUpdater(step: ChatMessage | null | undefined, summary: string): ModelStreamCallback {
+    let lastRenderAt = 0;
+    return (progress) => {
+      if (!step) return;
+      const now = Date.now();
+      if (!progress.done && now - lastRenderAt < 260) return;
+      lastRenderAt = now;
+      const detail = this.formatLiveModelProgress(progress.text);
+      this.updateProgressStepLive(
+        step,
+        this.generationStepSummary(summary, this.currentModelCharUsageText()),
+        detail || this.t("generating"),
+        progress.done ? this.t("toolRunExecuted") : this.t("toolRunExecuting")
+      );
+    };
+  }
+
+  private formatLiveModelProgress(text: string): string {
+    const visible = sanitizeLiveModelProgress(text);
+    if (!visible) return "";
+    const trimmed = trimContext(visible, 1800);
+    if (trimmed !== visible) return `${trimmed}\n...`;
+    return trimmed;
   }
 
   private formatTokenUsage(usage: TokenUsage): string {
@@ -19284,11 +19485,23 @@ class CancipView extends ItemView {
     return error ? { ...audit, error } : { ...audit };
   }
 
-  private modelRetryDelayMs(failedAttempt: number): number {
+  private modelRetryDelayMs(failedAttempt: number, reason = ""): number {
     const exponent = Math.max(0, failedAttempt - 1);
     const base = MODEL_CALL_RETRY_BASE_DELAY_MS * (2 ** exponent);
+    const explicitRetryAfterMs = modelRetryAfterMsFromReason(reason);
+    if (explicitRetryAfterMs !== null) {
+      const minimum = isRateLimitRetryReason(reason) ? MODEL_CALL_RATE_LIMIT_RETRY_MIN_DELAY_MS : MODEL_CALL_SERVICE_RETRY_MIN_DELAY_MS;
+      const delay = Math.max(minimum, Math.min(MODEL_CALL_RETRY_AFTER_MAX_DELAY_MS, explicitRetryAfterMs));
+      return delay + Math.round(Math.random() * 1000);
+    }
+    const minimum = isRateLimitRetryReason(reason)
+      ? MODEL_CALL_RATE_LIMIT_RETRY_MIN_DELAY_MS
+      : isServiceRetryReason(reason)
+        ? MODEL_CALL_SERVICE_RETRY_MIN_DELAY_MS
+        : 0;
     const jitter = 0.85 + Math.random() * 0.3;
-    return Math.round(Math.min(MODEL_CALL_RETRY_MAX_DELAY_MS, base) * jitter);
+    const delay = Math.max(minimum, Math.min(MODEL_CALL_RETRY_MAX_DELAY_MS, base));
+    return Math.max(minimum, Math.round(delay * jitter));
   }
 
   private async callModelWithRetries(
@@ -19298,7 +19511,8 @@ class CancipView extends ItemView {
     timeoutMessage = "model request timed out",
     timeoutMs = MODEL_CALL_TIMEOUT_MS,
     onAttempt?: (progress: ModelCallRetryProgress) => void,
-    profileOverride?: ApiProfile
+    profileOverride?: ApiProfile,
+    onStream?: ModelStreamCallback
   ): Promise<string> {
     let lastError = "";
     const attempts: ModelCallAudit[] = [];
@@ -19307,7 +19521,7 @@ class CancipView extends ItemView {
         onAttempt?.({ attempt, maxAttempts: MODEL_CALL_MAX_ATTEMPTS, reason: lastError, retrying: true });
       }
       try {
-        const answer = await withTimeout(this.callModel(prompt, context, rawPrompt, profileOverride), timeoutMs, timeoutMessage);
+        const answer = await withTimeout(this.callModel(prompt, context, rawPrompt, profileOverride, onStream), timeoutMs, timeoutMessage);
         if (answer.trim()) return answer;
         lastError = this.t("emptyApiReply");
         this.recordFailedModelAttemptUsage();
@@ -19318,7 +19532,7 @@ class CancipView extends ItemView {
       const audit = this.modelCallAuditSnapshot(lastError);
       if (audit) attempts.push(audit);
       if (attempt < MODEL_CALL_MAX_ATTEMPTS) {
-        const waitingMs = this.modelRetryDelayMs(attempt);
+        const waitingMs = this.modelRetryDelayMs(attempt, lastError);
         onAttempt?.({ attempt, maxAttempts: MODEL_CALL_MAX_ATTEMPTS, reason: lastError, retrying: true, waitingMs });
         this.setStatus(`${this.t("generating")} ${attempt + 1}/${MODEL_CALL_MAX_ATTEMPTS} · ${Math.max(1, Math.ceil(waitingMs / 1000))}s`);
         await sleep(waitingMs);
@@ -19342,7 +19556,7 @@ class CancipView extends ItemView {
     const retryPrompt = [
       prompt,
       "",
-      "The previous model reply was empty or contained no visible answer/action. Retry now. Return either a concise final answer with hidden cancip-choices, or exactly one executable cancip-action if tool work is needed."
+      "The previous model reply was empty or contained no visible answer/action. Retry now. Return either a concise final answer, with hidden cancip-choices only if there are real concrete next-step choices, or exactly one executable cancip-action if tool work is needed."
     ].join("\n");
     try {
       this.updateProgressStepLive(step, this.generationStepSummary(`${this.t("generating")} 1/${MODEL_CALL_MAX_ATTEMPTS}`, this.currentModelCharUsageText()), this.t("emptyApiReply"));
@@ -19351,8 +19565,10 @@ class CancipView extends ItemView {
         context,
         rawPrompt,
         "model retry timed out",
-        MODEL_CALL_TIMEOUT_MS,
-        this.modelRetryProgressUpdater(step, this.t("generating"))
+        this.modelCallTimeoutForPrompt(rawPrompt),
+        this.modelRetryProgressUpdater(step, this.t("generating")),
+        undefined,
+        this.modelStreamProgressUpdater(step, this.t("generating"))
       );
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
@@ -19385,7 +19601,7 @@ class CancipView extends ItemView {
     };
   }
 
-  private async callModel(prompt: string, context: { system: string; contextText: string; images?: ImageAttachmentContext[] }, rawPrompt = prompt, profileOverride?: ApiProfile): Promise<string> {
+  private async callModel(prompt: string, context: { system: string; contextText: string; images?: ImageAttachmentContext[] }, rawPrompt = prompt, profileOverride?: ApiProfile, onStream?: ModelStreamCallback): Promise<string> {
     const profile = profileOverride ?? this.activeRequestApiProfile ?? this.plugin.activeApiProfile();
     const inputText = this.modelInputText(prompt, context, rawPrompt);
     const endpoint = normalizeApiUrl(profile.apiUrl);
@@ -19410,22 +19626,22 @@ class CancipView extends ItemView {
 
     try {
       if (mode === "responses") {
-        return finish(await this.callResponsesApi(profile, endpoint.responsesUrl, context.system, inputText, context.images ?? []));
+        return finish(await this.callResponsesApi(profile, endpoint.responsesUrl, context.system, inputText, context.images ?? [], onStream));
       }
 
       if (mode === "compatible") {
         this.lastResponsesState = null;
-        return finish(await this.callCompatibleApi(profile, endpoint.chatUrl, context.system, inputText, context.images ?? []));
+        return finish(await this.callCompatibleApi(profile, endpoint.chatUrl, context.system, inputText, context.images ?? [], onStream));
       }
 
       try {
-        return finish(await this.callResponsesApi(profile, endpoint.responsesUrl, context.system, inputText, context.images ?? []));
+        return finish(await this.callResponsesApi(profile, endpoint.responsesUrl, context.system, inputText, context.images ?? [], onStream));
       } catch (error) {
         const firstError = error instanceof Error ? error.message : String(error);
         const firstAudit = this.modelCallAuditSnapshot(firstError);
         try {
           this.lastResponsesState = null;
-          const answer = await this.callCompatibleApi(profile, endpoint.chatUrl, context.system, inputText, context.images ?? []);
+          const answer = await this.callCompatibleApi(profile, endpoint.chatUrl, context.system, inputText, context.images ?? [], onStream);
           const currentAudit = this.modelCallAuditSnapshot();
           if (firstAudit && currentAudit) {
             this.lastModelCallAudit = {
@@ -19452,7 +19668,7 @@ class CancipView extends ItemView {
     }
   }
 
-  private async callCompatibleApi(profile: ApiProfile, url: string, system: string, inputText: string, images: ImageAttachmentContext[] = []): Promise<string> {
+  private async callCompatibleApi(profile: ApiProfile, url: string, system: string, inputText: string, images: ImageAttachmentContext[] = [], onStream?: ModelStreamCallback): Promise<string> {
     const settings = this.plugin.settings;
     const userContent = images.length
       ? [
@@ -19473,6 +19689,24 @@ class CancipView extends ItemView {
       ]
     };
     this.lastModelCallAudit = { mode: "compatible", url, requestBody: redactImagePayloads(body) };
+    if (onStream) {
+      try {
+        const streamed = await this.postJsonStream(url, { ...body, stream: true }, profile.apiKey, "compatible", onStream, extractCompatibleStreamDelta);
+        const text = sanitizeModelVisibleAnswer(streamed.text);
+        const usage = extractTokenUsage(streamed.json, estimateRequestTokens(system, inputText), text);
+        this.lastModelCallAudit = {
+          ...(this.lastModelCallAudit ?? { mode: "compatible", url, requestBody: redactImagePayloads({ ...body, stream: true }) }),
+          status: streamed.status,
+          responseText: streamed.text,
+          responseJson: streamed.json,
+          extractedText: text,
+          usage
+        };
+        if (text) return text;
+      } catch {
+        this.lastModelCallAudit = { mode: "compatible", url, requestBody: redactImagePayloads(body) };
+      }
+    }
     const response = await this.postJson(url, body, profile.apiKey);
     const text = sanitizeModelVisibleAnswer(extractResponseText(response.json) || extractNonJsonText(response.text));
     const usage = extractTokenUsage(response.json, estimateRequestTokens(system, inputText), text);
@@ -19488,7 +19722,7 @@ class CancipView extends ItemView {
     throw new Error(`Chat Completions returned no assistant text (${describeResponseShape(response.json)})`);
   }
 
-  private async callResponsesApi(profile: ApiProfile, url: string, instructions: string, inputText: string, images: ImageAttachmentContext[] = []): Promise<string> {
+  private async callResponsesApi(profile: ApiProfile, url: string, instructions: string, inputText: string, images: ImageAttachmentContext[] = [], onStream?: ModelStreamCallback): Promise<string> {
     const settings = this.plugin.settings;
     const input = images.length
       ? [{
@@ -19512,6 +19746,28 @@ class CancipView extends ItemView {
     const previousResponseId = this.previousResponseIdFor(profile);
     if (previousResponseId) body.previous_response_id = previousResponseId;
     this.lastModelCallAudit = { mode: "responses", url, requestBody: redactImagePayloads(body) };
+    if (onStream) {
+      try {
+        const streamed = await this.postJsonStream(url, { ...body, stream: true }, profile.apiKey, "responses", onStream, extractResponsesStreamDelta);
+        const text = sanitizeModelVisibleAnswer(streamed.text);
+        const usage = extractTokenUsage(streamed.json, estimateRequestTokens(instructions, inputText), text);
+        const responseId = extractResponseId(streamed.json);
+        if (responseId) {
+          this.lastResponsesState = { profileId: profile.id, model: profile.model, responseId };
+        }
+        this.lastModelCallAudit = {
+          ...(this.lastModelCallAudit ?? { mode: "responses", url, requestBody: redactImagePayloads({ ...body, stream: true }) }),
+          status: streamed.status,
+          responseText: streamed.text,
+          responseJson: streamed.json,
+          extractedText: text,
+          usage
+        };
+        if (text) return text;
+      } catch {
+        this.lastModelCallAudit = { mode: "responses", url, requestBody: redactImagePayloads(body) };
+      }
+    }
     const response = await this.postJson(url, body, profile.apiKey);
     const text = sanitizeModelVisibleAnswer(extractResponseText(response.json) || extractNonJsonText(response.text));
     const usage = extractTokenUsage(response.json, estimateRequestTokens(instructions, inputText), text);
@@ -19539,6 +19795,86 @@ class CancipView extends ItemView {
     return state.responseId;
   }
 
+  private async postJsonStream(
+    url: string,
+    body: unknown,
+    apiKey: string,
+    mode: Exclude<ApiMode, "auto">,
+    onStream: ModelStreamCallback,
+    extractDelta: (json: unknown) => string
+  ): Promise<{ status: number; text: string; json: unknown }> {
+    if (typeof fetch !== "function") throw new Error("streaming fetch unavailable");
+    this.lastModelCallAudit = { mode, url, requestBody: redactImagePayloads(body) };
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`
+      },
+      body: JSON.stringify(body)
+    });
+
+    if (!response.ok) {
+      const retryAfter = response.headers.get("retry-after");
+      const retryHint = retryAfter ? ` retry-after=${retryAfter}` : "";
+      const text = await response.text();
+      throw new Error(`HTTP ${response.status}${retryHint}: ${text.slice(0, 220)}`);
+    }
+    if (!response.body) throw new Error("stream response body unavailable");
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let answer = "";
+    let lastJson: unknown = null;
+
+    const flushEvent = (eventText: string): void => {
+      const dataLines = eventText
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).trim());
+      for (const data of dataLines) {
+        if (!data || data === "[DONE]") continue;
+        try {
+          const json = JSON.parse(data) as unknown;
+          lastJson = json;
+          const delta = extractDelta(json);
+          if (!delta) continue;
+          answer += delta;
+          if (this.activeModelCharStats) {
+            this.activeModelCharStats.streaming = true;
+            this.activeModelCharStats.outputChars = answer.length;
+          }
+          onStream({ text: answer, done: false });
+        } catch {
+          // Some providers emit keepalive or non-JSON data lines. Ignore them and keep streaming.
+        }
+      }
+    };
+
+    try {
+      while (true) {
+        const read = await reader.read();
+        if (read.done) break;
+        buffer += decoder.decode(read.value, { stream: true });
+        const parts = buffer.split(/\r?\n\r?\n/);
+        buffer = parts.pop() ?? "";
+        for (const part of parts) flushEvent(part);
+      }
+      buffer += decoder.decode();
+      if (buffer.trim()) flushEvent(buffer);
+      onStream({ text: answer, done: true });
+      return { status: response.status, text: answer, json: lastJson ?? {} };
+    } finally {
+      try {
+        reader.releaseLock();
+      } catch {
+        // Ignore release errors in older WebViews.
+      }
+    }
+  }
+
   private async postJson(url: string, body: unknown, apiKey: string): Promise<{ status: number; text: string; json: unknown }> {
     const response = await requestUrl({
       url,
@@ -19552,7 +19888,9 @@ class CancipView extends ItemView {
     });
 
     if (response.status < 200 || response.status >= 300) {
-      throw new Error(`HTTP ${response.status}: ${response.text.slice(0, 220)}`);
+      const retryAfter = headerValue(response.headers, "retry-after");
+      const retryHint = retryAfter ? ` retry-after=${retryAfter}` : "";
+      throw new Error(`HTTP ${response.status}${retryHint}: ${response.text.slice(0, 220)}`);
     }
     return response;
   }
@@ -21426,8 +21764,10 @@ class CancipView extends ItemView {
         context,
         rawPrompt,
         "model request timed out",
-        MODEL_CALL_TIMEOUT_MS,
-        this.modelRetryProgressUpdater(continueStep, this.t("toolContinueStatus"))
+        this.modelCallTimeoutForPrompt(rawPrompt),
+        this.modelRetryProgressUpdater(continueStep, this.t("toolContinueStatus")),
+        undefined,
+        this.modelStreamProgressUpdater(continueStep, this.t("toolContinueStatus"))
       );
       if (request.signal.aborted || !this.isCurrentRequest(request)) return null;
       this.updateProgressStep(continueStep, this.generationStepSummary(this.t("toolContinueStatus"), this.currentModelCharUsageText()), this.t("done"));
@@ -21819,8 +22159,10 @@ class CancipView extends ItemView {
           continuationContext,
           originalPrompt,
           "model request timed out",
-          MODEL_CALL_TIMEOUT_MS,
-          this.modelRetryProgressUpdater(continueStep, this.t("toolContinueStatus"))
+          this.modelCallTimeoutForPrompt(originalPrompt),
+          this.modelRetryProgressUpdater(continueStep, this.t("toolContinueStatus")),
+          undefined,
+          this.modelStreamProgressUpdater(continueStep, this.t("toolContinueStatus"))
         );
         if (request.signal.aborted || !this.isCurrentRequest(request)) return null;
         this.updateProgressStep(continueStep, this.generationStepSummary(this.t("toolContinueStatus"), this.currentModelCharUsageText()), this.t("done"));
@@ -21951,7 +22293,9 @@ class CancipView extends ItemView {
         originalPrompt,
         "informational answer timed out",
         INFORMATIONAL_ANSWER_TIMEOUT_MS,
-        this.modelRetryProgressUpdater(continueStep, this.t("toolContinueStatus"))
+        this.modelRetryProgressUpdater(continueStep, this.t("toolContinueStatus")),
+        undefined,
+        this.modelStreamProgressUpdater(continueStep, this.t("toolContinueStatus"))
       );
       if (request.signal.aborted || !this.isCurrentRequest(request)) return false;
       this.updateProgressStep(continueStep, this.generationStepSummary(this.t("toolContinueStatus"), this.currentModelCharUsageText()), this.t("done"));
@@ -22230,7 +22574,7 @@ class CancipView extends ItemView {
       "Decide the next output now.",
       "- If more tool work can still advance the original request, output exactly one executable cancip-action and no visible prose.",
       "- If the task is complete, blocked, failed with a concrete reason, or waiting for user approval/review, write the final visible answer now.",
-      "- The final answer must be useful to the user: short summary, numbered actions, changed/read files, verification/result, blockers/reminders if any, and hidden cancip-choices.",
+      "- The final answer must be useful to the user: short summary, numbered actions, changed/read files, verification/result, blockers/reminders if any, and optional hidden cancip-choices only when there are real concrete next-step choices.",
       "- Do not output process-only text, raw action JSON outside cancip-action, or a generic 'no final answer' message."
     ].join("\n");
     const finalContext = {
@@ -22249,8 +22593,10 @@ class CancipView extends ItemView {
         finalContext,
         originalPrompt,
         "final answer model request timed out",
-        MODEL_CALL_TIMEOUT_MS,
-        this.modelRetryProgressUpdater(finalStep, this.t("toolContinueStatus"))
+        this.modelCallTimeoutForPrompt(originalPrompt),
+        this.modelRetryProgressUpdater(finalStep, this.t("toolContinueStatus")),
+        undefined,
+        this.modelStreamProgressUpdater(finalStep, this.t("toolContinueStatus"))
       );
       if (request.signal.aborted || !this.isCurrentRequest(request)) return "failed";
       const hasActions = extractCancipActions(answer).length > 0;
@@ -22399,7 +22745,8 @@ class CancipView extends ItemView {
     const body = stripStructuredChoices(content).trim();
     if (!body) return content;
     const existing = this.mergeChoiceOptions([...finalChoiceOptions(content), ...finalChoiceOptions(sourceHint)]);
-    const choices = this.completeChoiceOptions(existing, `${body}\n${sourceHint}`);
+    const choices = this.mergeChoiceOptions(existing);
+    if (!choices.length) return body;
     const metadata = `<!-- cancip-choices ${JSON.stringify({ choices: choices.map((choice) => choice.text) })} -->`;
     return `${body}\n\n${metadata}`;
   }
@@ -23493,7 +23840,7 @@ class CancipView extends ItemView {
       action.newPath = newPath;
       await this.ensureMoveDestination(adapter, currentPath, newPath);
       await ensureParentFolder(adapter, newPath);
-      await adapter.rename(currentPath, newPath);
+      await renameApprovedPathWithLinks(this.app, currentPath, newPath);
       const sourceExists = await adapter.exists(currentPath);
       const targetExists = await adapter.exists(newPath);
       if (sourceExists || !targetExists) {
@@ -24347,8 +24694,6 @@ class CancipView extends ItemView {
         prompt: template.prompt,
         command: template.command,
         args: template.args,
-        mechanical: template.mechanical,
-        mechanicalRoutes: template.mechanicalRoutes,
         schedule: template.schedule,
         enabled: template.enabled,
         intervalMinutes: template.intervalMinutes,
@@ -24370,8 +24715,6 @@ class CancipView extends ItemView {
           prompt: template.prompt,
           command: template.command,
           args: template.args,
-          mechanical: template.mechanical,
-          mechanicalRoutes: template.mechanicalRoutes,
           schedule: template.schedule,
           enabled: template.enabled,
           intervalMinutes: template.intervalMinutes,
@@ -24393,8 +24736,6 @@ class CancipView extends ItemView {
         prompt: template.prompt,
         command: template.command,
         args: template.args,
-        mechanical: template.mechanical,
-        mechanicalRoutes: template.mechanicalRoutes,
         schedule: template.schedule,
         enabled: template.enabled,
         intervalMinutes: template.intervalMinutes,
@@ -24415,8 +24756,6 @@ class CancipView extends ItemView {
         args: isRecord(args.args) ? args.args : undefined,
         apiProfileId: typeof args.apiProfileId === "string" ? args.apiProfileId : undefined,
         model: typeof args.model === "string" ? args.model : undefined,
-        mechanical: isAutomationMechanicalMode(args.mechanical) ? args.mechanical : undefined,
-        mechanicalRoutes: args.mechanicalRoutes === undefined ? undefined : normalizeMechanicalTaskRoutes(args.mechanicalRoutes),
         schedule: isAutomationSchedule(args.schedule) ? args.schedule : undefined,
         enabled: typeof args.enabled === "boolean" ? args.enabled : undefined,
         intervalMinutes: args.intervalMinutes === undefined ? undefined : clampInt(args.intervalMinutes, 60, 1, 1440),
@@ -26660,6 +26999,7 @@ class CancipView extends ItemView {
       index
     }));
     const finalAssistantIndex = this.lastFinalAssistantMessageIndex(rendered);
+    this.liveProcessRecordActive = Boolean(this.activeRequest);
     let processGroup: RenderedMessage[] = [];
     const flushProcessGroup = (): void => {
       const meaningful = processGroup.filter((item) => isMeaningfulProcessRecord(item.message, item.display));
@@ -26673,8 +27013,7 @@ class CancipView extends ItemView {
 
     for (const item of rendered) {
       const shouldGroupProcess = item.message.role === "assistant"
-        && (item.display.processOnly || item.display.hasProcessFold)
-        && (item.index < finalAssistantIndex || finalAssistantIndex < 0 || Boolean(this.activeRequest));
+        && item.display.processOnly;
       if (shouldGroupProcess) {
         processGroup.push(item);
         continue;
@@ -26744,7 +27083,7 @@ class CancipView extends ItemView {
   }
 
   private shouldDeferMessageRender(): boolean {
-    return this.userInteractingWithMessages;
+    return this.userInteractingWithMessages && !this.activeRequest && !this.liveProcessRecordActive;
   }
 
   private markMessageScrollInteraction(): void {
@@ -26893,6 +27232,7 @@ class CancipView extends ItemView {
   }
 
   private renderProcessRecord(items: RenderedMessage[]): void {
+    this.liveProcessRecordActive = Boolean(this.activeRequest);
     const item = this.messagesEl.createDiv({ cls: "obcc-message obcc-assistant is-process-record" });
     item.dataset.messageId = `process-${items.map((rendered) => rendered.message.id).join("-")}`;
     const head = item.createDiv({ cls: "obcc-message-head" });
@@ -26956,6 +27296,7 @@ class CancipView extends ItemView {
       const { message, display } = rendered[index];
       if (message.role !== "assistant") continue;
       if (isProgressMessage(message.content)) continue;
+      if (display.processOnly) continue;
       if (!display.processOnly && display.visibleContent.trim()) return rendered[index].index;
     }
     return -1;
@@ -27071,9 +27412,12 @@ class CancipView extends ItemView {
   private renderChoiceCards(parent: HTMLElement, message: ChatMessage, content: string, isFinalAssistant: boolean): void {
     if (message.role !== "assistant") return;
     if (!isFinalAssistant || this.activeRequest) return;
+    if (isModelFailureVisibleText(content)) return;
     const choiceContent = [message.choiceSourceText, content].filter(Boolean).join("\n\n");
+    if (isModelFailureVisibleText(choiceContent)) return;
     const localChoices = this.choiceOptionsForMessage(choiceContent);
-    const safeChoices = this.completeChoiceOptions([...(message.choiceOptions ?? []), ...localChoices], choiceContent);
+    const safeChoices = this.mergeChoiceOptions([...(message.choiceOptions ?? []), ...localChoices]);
+    if (!safeChoices.length) return;
     const wrap = parent.createDiv({ cls: "obcc-choice-cards" });
     for (const choice of safeChoices) {
       const button = wrap.createEl("button", {
@@ -27093,7 +27437,7 @@ class CancipView extends ItemView {
 
   private choiceOptionsForMessage(content: string): ChoiceOption[] {
     const extracted = finalChoiceOptions(content);
-    return this.completeChoiceOptions(extracted, content);
+    return this.mergeChoiceOptions(extracted);
   }
 
   private mergeChoiceOptions(choices: ChoiceOption[]): ChoiceOption[] {
@@ -27109,21 +27453,10 @@ class CancipView extends ItemView {
       .map((choice, index) => ({ ...choice, prefix: String(index + 1) }));
   }
 
-  private completeChoiceOptions(choices: ChoiceOption[], content: string): ChoiceOption[] {
-    return this.mergeChoiceOptions([
-      ...choices,
-      ...this.fallbackChoiceOptions(content),
-      ...this.genericChoiceOptions(content)
-    ]).slice(0, 3);
-  }
-
   private shouldGenerateModelChoiceOptions(message: ChatMessage, content: string): boolean {
-    if (message.choiceOptionsStatus === "loading" || message.choiceOptionsStatus === "failed") return false;
-    if (prepareMessageDisplay(redactSensitiveText(content)).processOnly) return false;
-    const existing = this.mergeChoiceOptions([...(message.choiceOptions ?? []), ...finalChoiceOptions(content)]);
-    if (existing.length >= 3 && hasSpecificChoiceOptions(existing)) return false;
-    const profile = this.plugin.activeApiProfile();
-    return Boolean(profile.apiUrl && profile.apiKey && profile.model);
+    void message;
+    void content;
+    return false;
   }
 
   private async ensureModelChoiceOptions(message: ChatMessage, content: string): Promise<void> {
@@ -27139,11 +27472,11 @@ class CancipView extends ItemView {
         "choice suggestion timed out"
       );
       const modelChoices = choiceOptionsFromTexts(parseChoiceSuggestionResponse(raw));
-      message.choiceOptions = this.completeChoiceOptions([...modelChoices, ...this.choiceOptionsForMessage(content)], content);
-      message.choiceOptionsStatus = "ready";
+      message.choiceOptions = this.mergeChoiceOptions([...modelChoices, ...this.choiceOptionsForMessage(content)]);
+      message.choiceOptionsStatus = message.choiceOptions.length ? "ready" : "failed";
     } catch {
-      message.choiceOptions = this.completeChoiceOptions(this.choiceOptionsForMessage(content), content);
-      message.choiceOptionsStatus = "ready";
+      message.choiceOptions = this.choiceOptionsForMessage(content);
+      message.choiceOptionsStatus = message.choiceOptions.length ? "ready" : "failed";
     } finally {
       this.renderMessages();
       void this.saveCurrentSession();
@@ -27189,56 +27522,6 @@ class CancipView extends ItemView {
     };
     const response = await this.postJson(url, body, profile.apiKey);
     return sanitizeModelVisibleAnswer(extractResponseText(response.json) || extractNonJsonText(response.text));
-  }
-
-  private fallbackChoiceOptions(content: string): ChoiceOption[] {
-    const visible = messageOutlineText(content);
-    if (!visible || prepareMessageDisplay(redactSensitiveText(content)).processOnly) return [];
-    const lastUser = [...this.messages].reverse().find((message) => message.role === "user")?.content.trim() ?? "";
-    const chinese = isChineseLanguage(this.plugin.language());
-    const subject = choiceSubjectFromPrompt(lastUser, visible, chinese);
-    const options: string[] = [];
-    if (/等待确认|待确认|confirm|approval/i.test(content)) {
-      options.push(chinese ? "运行待确认" : "Run pending action");
-      options.push(chinese ? "查看动作详情" : "Inspect action");
-      options.push(chinese ? `核对${subject}` : `Check ${subject}`);
-    } else if (/review:|审核|待审核|Review/i.test(content)) {
-      options.push(chinese ? "进入审核面板" : "Open review panel");
-      options.push(chinese ? `核对${subject}` : `Check ${subject}`);
-      options.push(chinese ? "测试取消回滚" : "Test cancel restore");
-    } else if (/身份|你是谁|我是誰|who are you|memory|记忆|記憶|不知道|不清楚|未找到|找不到|信息不足|資訊不足/i.test(`${lastUser}\n${content}`)) {
-      options.push(chinese ? "读取记忆入口" : "Read memory index");
-      options.push(chinese ? "查会话历史" : "Check session history");
-      options.push(chinese ? `继续核实${subject}` : `Verify ${subject}`);
-    } else if (/失败|没完成|未完成|报错|错误|failed|error|not done/i.test(content)) {
-      options.push(chinese ? `继续修${subject}` : `Fix ${subject}`);
-      options.push(chinese ? "读取错误上下文" : "Read error context");
-      options.push(chinese ? "换小步重试" : "Retry smaller step");
-    } else if (/改动：|Changed files|已执行|已完成|完成|done|completed/i.test(content)) {
-      options.push(chinese ? "打开改动文件" : "Open changed files");
-      options.push(chinese ? "进入审核面板" : "Open review panel");
-      options.push(chinese ? `验证${subject}` : `Verify ${subject}`);
-    } else if (classifyPromptIntent(lastUser) === "informational") {
-      options.push(chinese ? `核实${subject}` : `Verify ${subject}`);
-      options.push(chinese ? "查证据来源" : "Check evidence");
-      options.push(chinese ? "读取相关记忆" : "Read related memory");
-    } else {
-      options.push(chinese ? `继续处理${subject}` : `Continue ${subject}`);
-      options.push(chinese ? "读取相关文件" : "Read related files");
-      options.push(chinese ? `验证${subject}` : `Verify ${subject}`);
-    }
-    const unique = uniqueStrings(options.map(normalizeChoiceText).filter(Boolean));
-    return unique.slice(0, 3).map((text, index) => ({ prefix: String(index + 1), text }));
-  }
-
-  private genericChoiceOptions(content = ""): ChoiceOption[] {
-    const chinese = isChineseLanguage(this.plugin.language());
-    const lastUser = [...this.messages].reverse().find((message) => message.role === "user")?.content.trim() ?? "";
-    const subject = choiceSubjectFromPrompt(lastUser, content, chinese);
-    const options = chinese
-      ? [`继续修${subject}`, `验证${subject}`, `查看${subject}结果`]
-      : [`Continue ${subject}`, `Verify ${subject}`, `Review ${subject}`];
-    return options.map((text, index) => ({ prefix: String(index + 1), text }));
   }
 
   private renderToolRuns(parent: HTMLElement, message: ChatMessage): void {
@@ -27748,6 +28031,7 @@ class CancipView extends ItemView {
 
 class CancipSettingTab extends PluginSettingTab {
   private detailsOpenState = new Map<string, boolean>();
+  private renderingSettings = false;
 
   constructor(
     app: App,
@@ -27760,96 +28044,104 @@ class CancipSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     const scrollSnapshots = containerEl.childElementCount ? this.captureScrollSnapshots() : [];
     this.syncDetailsOpenState();
-    containerEl.empty();
-    containerEl.addClass("obcc-settings");
-    containerEl.setAttr("lang", this.plugin.language());
-    containerEl.setAttr("dir", this.plugin.textDirection());
-    new Setting(containerEl).setName(PLUGIN_NAME).setHeading();
-    containerEl.createEl("p", { cls: "obcc-settings-note", text: this.plugin.t("configAuthority") });
+    this.renderingSettings = true;
+    try {
+      containerEl.empty();
+      containerEl.addClass("obcc-settings");
+      containerEl.setAttr("lang", this.plugin.language());
+      containerEl.setAttr("dir", this.plugin.textDirection());
+      new Setting(containerEl).setName(PLUGIN_NAME).setHeading();
+      containerEl.createEl("p", { cls: "obcc-settings-note", text: this.plugin.t("configAuthority") });
 
-    const coreEl = containerEl.createDiv({ cls: "obcc-settings-core" });
+      const coreEl = containerEl.createDiv({ cls: "obcc-settings-core" });
 
-    new Setting(coreEl)
-      .setName(this.plugin.t("settingsLanguage"))
-      .setDesc(this.plugin.t("settingsLanguageDesc"))
-      .addDropdown((dropdown) => {
-        dropdown
-          .addOptions(languageSelectOptions(this.plugin.t("languageAuto")))
-          .setValue(this.plugin.settings.language)
-          .onChange(async (value) => {
-            this.plugin.settings.language = value as LanguageMode;
-            await this.plugin.saveSettings();
-            this.plugin.refreshOpenViews();
-            this.display();
-          });
-      });
+      new Setting(coreEl)
+        .setName(this.plugin.t("settingsLanguage"))
+        .setDesc(this.plugin.t("settingsLanguageDesc"))
+        .addDropdown((dropdown) => {
+          dropdown
+            .addOptions(languageSelectOptions(this.plugin.t("languageAuto")))
+            .setValue(this.plugin.settings.language)
+            .onChange(async (value) => {
+              this.plugin.settings.language = value as LanguageMode;
+              await this.plugin.saveSettings();
+              this.plugin.refreshOpenViews();
+              this.display();
+            });
+        });
 
-    new Setting(coreEl)
-      .setName(this.plugin.t("settingsAccessMode"))
-      .setDesc(this.plugin.t("settingsAccessModeDesc"))
-      .addDropdown((dropdown) => {
-        dropdown
-          .addOptions({
-            "ask-for-approval": this.plugin.t("accessAskApproval"),
-            "full-access": this.plugin.t("accessFullAccess")
-          })
-          .setValue(this.plugin.settings.accessMode)
-          .onChange(async (value) => {
-            this.plugin.settings.accessMode = value as AccessMode;
-            await this.plugin.saveSettings();
-          });
-      });
+      new Setting(coreEl)
+        .setName(this.plugin.t("settingsAccessMode"))
+        .setDesc(this.plugin.t("settingsAccessModeDesc"))
+        .addDropdown((dropdown) => {
+          dropdown
+            .addOptions({
+              "ask-for-approval": this.plugin.t("accessAskApproval"),
+              "full-access": this.plugin.t("accessFullAccess")
+            })
+            .setValue(this.plugin.settings.accessMode)
+            .onChange(async (value) => {
+              this.plugin.settings.accessMode = value as AccessMode;
+              await this.plugin.saveSettings();
+            });
+        });
 
-    this.displayApiProfileSettings(coreEl);
+      this.displayApiProfileSettings(coreEl);
 
-    new Setting(coreEl)
-      .setName(this.plugin.t("settingsSystemPrompt"))
-      .setDesc(this.plugin.t("settingsSystemPromptDesc"))
-      .addTextArea((text) => {
-        text.inputEl.rows = 8;
-        text
-          .setValue(this.plugin.settings.systemPrompt)
-          .onChange(async (value) => {
-            this.plugin.settings.systemPrompt = value;
-            await this.plugin.saveSettings();
-          });
-      });
+      new Setting(coreEl)
+        .setName(this.plugin.t("settingsSystemPrompt"))
+        .setDesc(this.plugin.t("settingsSystemPromptDesc"))
+        .addTextArea((text) => {
+          text.inputEl.rows = 8;
+          text
+            .setValue(this.plugin.settings.systemPrompt)
+            .onChange(async (value) => {
+              this.plugin.settings.systemPrompt = value;
+              await this.plugin.saveSettings();
+            });
+        });
 
-    const advanced = this.createPersistentDetails(containerEl, "advanced", "obcc-advanced-settings", this.plugin.t("advancedSettings"));
-    const advancedBody = advanced.createDiv({ cls: "obcc-advanced-body" });
+      const advanced = this.createPersistentDetails(containerEl, "advanced", "obcc-advanced-settings", this.plugin.t("advancedSettings"));
+      const advancedBody = advanced.createDiv({ cls: "obcc-advanced-body" });
 
-    this.displayInterfaceSettings(this.createSettingsGroup(advancedBody, "settingsGroupInterface"));
-    this.displayContextSettings(this.createSettingsGroup(advancedBody, "settingsGroupContext"));
-    this.displaySkillSettings(this.createSettingsGroup(advancedBody, "settingsGroupSkills"));
-    this.displayPlanSettings(this.createSettingsGroup(advancedBody, "settingsGroupPlan"));
-    this.displayCommandBusSettings(this.createSettingsGroup(advancedBody, "settingsGroupCommandBus"));
-    this.displayVersioningSettings(this.createSettingsGroup(advancedBody, "settingsGroupVersioning"));
-    this.displayAutomationSettings(this.createSettingsGroup(advancedBody, "settingsGroupAutomation"));
-    this.displayNotificationSettings(this.createSettingsGroup(advancedBody, "settingsGroupNotifications"));
-    this.displayTtsSettings(this.createSettingsGroup(advancedBody, "settingsGroupTts"));
-    this.displayExportSettings(this.createSettingsGroup(advancedBody, "settingsGroupExport"));
-    this.displayModelAdvancedSettings(this.createSettingsGroup(advancedBody, "settingsGroupModelAdvanced"));
+      this.displayInterfaceSettings(this.createSettingsGroup(advancedBody, "settingsGroupInterface"));
+      this.displayContextSettings(this.createSettingsGroup(advancedBody, "settingsGroupContext"));
+      this.displaySkillSettings(this.createSettingsGroup(advancedBody, "settingsGroupSkills"));
+      this.displayPlanSettings(this.createSettingsGroup(advancedBody, "settingsGroupPlan"));
+      this.displayCommandBusSettings(this.createSettingsGroup(advancedBody, "settingsGroupCommandBus"));
+      this.displayVersioningSettings(this.createSettingsGroup(advancedBody, "settingsGroupVersioning"));
+      this.displayAutomationSettings(this.createSettingsGroup(advancedBody, "settingsGroupAutomation"));
+      this.displayNotificationSettings(this.createSettingsGroup(advancedBody, "settingsGroupNotifications"));
+      this.displayTtsSettings(this.createSettingsGroup(advancedBody, "settingsGroupTts"));
+      this.displayExportSettings(this.createSettingsGroup(advancedBody, "settingsGroupExport"));
+      this.displayModelAdvancedSettings(this.createSettingsGroup(advancedBody, "settingsGroupModelAdvanced"));
 
-    this.renderSupportCodes(containerEl);
-    this.restoreScrollSnapshots(scrollSnapshots);
+      this.renderSupportCodes(containerEl);
+    } finally {
+      this.renderingSettings = false;
+      this.restoreScrollSnapshots(scrollSnapshots);
+    }
   }
 
-  private captureScrollSnapshots(): Array<{ element: HTMLElement; top: number; left: number }> {
+  private captureScrollSnapshots(): Array<{ element: HTMLElement; top: number; left: number; anchorIndex?: number; anchorOffset?: number }> {
     const doc = this.containerEl.ownerDocument ?? activeDocument;
     const win = doc.defaultView ?? window;
-    const snapshots: Array<{ element: HTMLElement; top: number; left: number }> = [];
+    const snapshots: Array<{ element: HTMLElement; top: number; left: number; anchorIndex?: number; anchorOffset?: number }> = [];
     const seen = new Set<HTMLElement>();
     const add = (candidate: Element | null | undefined): void => {
       if (!candidate || !candidate.instanceOf(win.HTMLElement) || seen.has(candidate)) return;
+      if (candidate === doc.body || candidate === doc.documentElement || candidate === doc.scrollingElement) return;
       const top = candidate.scrollTop;
       const left = candidate.scrollLeft;
+      const style = win.getComputedStyle(candidate);
+      const scrollableY = /(auto|scroll|overlay)/.test(style.overflowY);
       const isScrollable = top > 0
         || left > 0
-        || candidate.scrollHeight > candidate.clientHeight + 2
+        || (scrollableY && candidate.scrollHeight > candidate.clientHeight + 2)
         || candidate.scrollWidth > candidate.clientWidth + 2;
       if (!isScrollable) return;
       seen.add(candidate);
-      snapshots.push({ element: candidate, top, left });
+      snapshots.push({ element: candidate, top, left, ...this.captureVisibleSettingsAnchor(candidate) });
     };
     add(this.containerEl);
     let current: HTMLElement | null = this.containerEl.parentElement;
@@ -27857,16 +28149,41 @@ class CancipSettingTab extends PluginSettingTab {
       add(current);
       current = current.parentElement;
     }
-    add(doc.scrollingElement);
     return snapshots;
   }
 
-  private restoreScrollSnapshots(snapshots: Array<{ element: HTMLElement; top: number; left: number }>): void {
+  private captureVisibleSettingsAnchor(root: HTMLElement): { anchorIndex?: number; anchorOffset?: number } {
+    const items = Array.from(this.containerEl.querySelectorAll<HTMLElement>(
+      ".setting-item, details[data-obcc-settings-fold-key], .obcc-ui-button-rule-row, .obcc-automation-card"
+    )).filter((item) => item.isConnected);
+    if (!items.length) return {};
+    const rootRect = root.getBoundingClientRect();
+    const anchorIndex = items.findIndex((item) => {
+      const rect = item.getBoundingClientRect();
+      return rect.bottom > rootRect.top + 8 && rect.top < rootRect.bottom - 8;
+    });
+    if (anchorIndex < 0) return {};
+    const anchorOffset = items[anchorIndex].getBoundingClientRect().top - rootRect.top;
+    return { anchorIndex, anchorOffset };
+  }
+
+  private restoreScrollSnapshots(snapshots: Array<{ element: HTMLElement; top: number; left: number; anchorIndex?: number; anchorOffset?: number }>): void {
     if (!snapshots.length) return;
     const restore = (): void => {
       for (const snapshot of snapshots) {
+        if (!snapshot.element.isConnected) continue;
         snapshot.element.scrollTop = snapshot.top;
         snapshot.element.scrollLeft = snapshot.left;
+        if (typeof snapshot.anchorIndex === "number" && typeof snapshot.anchorOffset === "number") {
+          const items = Array.from(this.containerEl.querySelectorAll<HTMLElement>(
+            ".setting-item, details[data-obcc-settings-fold-key], .obcc-ui-button-rule-row, .obcc-automation-card"
+          )).filter((item) => item.isConnected);
+          const anchor = items[snapshot.anchorIndex];
+          if (anchor) {
+            const delta = anchor.getBoundingClientRect().top - snapshot.element.getBoundingClientRect().top - snapshot.anchorOffset;
+            if (Number.isFinite(delta) && Math.abs(delta) > 1) snapshot.element.scrollTop += delta;
+          }
+        }
       }
     };
     restore();
@@ -27890,6 +28207,7 @@ class CancipSettingTab extends PluginSettingTab {
     details.open = this.detailsOpenState.get(key) ?? defaultOpen;
     details.createEl("summary", { text: summaryText });
     details.addEventListener("toggle", () => {
+      if (this.renderingSettings) return;
       this.detailsOpenState.set(key, details.open);
     });
     return details;
@@ -27984,10 +28302,11 @@ class CancipSettingTab extends PluginSettingTab {
 
   private displayUiButtonRuleResetList(parent: HTMLElement): void {
     const rules = this.plugin.modifiedUiButtonRules();
-    const wrapper = parent.createDiv({ cls: "obcc-ui-button-rules-list" });
+    const details = this.createPersistentDetails(parent, "ui-button-rules", "obcc-ui-button-rules-list", this.plugin.t("settingsUiButtonRulesList"), false);
+    const wrapper = details.createDiv({ cls: "obcc-ui-button-rules-body" });
     const header = wrapper.createDiv({ cls: "obcc-ui-button-rules-header" });
     const title = header.createDiv({ cls: "obcc-ui-button-rules-title" });
-    title.createDiv({ cls: "obcc-ui-button-rules-name", text: this.plugin.t("settingsUiButtonRulesList") });
+    title.createDiv({ cls: "obcc-ui-button-rules-name", text: `${this.plugin.t("settingsUiButtonRulesList")} (${rules.length})` });
     title.createDiv({ cls: "obcc-ui-button-rules-desc", text: this.plugin.t("settingsUiButtonRulesListDesc") });
     if (rules.length) {
       const resetAll = header.createEl("button", {
@@ -28171,66 +28490,6 @@ class CancipSettingTab extends PluginSettingTab {
       this.plugin.settings.maxAutoSkillContextChars = value;
       await saveAndRefresh();
     });
-    this.addToggleSetting(parent, "settingsSpecialistRouting", this.plugin.settings.specialistRoutingEnabled, async (value) => {
-      this.plugin.settings.specialistRoutingEnabled = value;
-      await saveAndRefresh();
-    }, "settingsSpecialistRoutingDesc");
-    const profileOptions: Record<string, string> = { "": this.plugin.t("settingsMechanicalUseCurrentProfile") };
-    for (const profile of this.plugin.settings.apiProfiles) profileOptions[profile.id] = profile.name || profile.id;
-    new Setting(parent)
-      .setName(this.plugin.t("settingsMechanicalTaskApiProfile"))
-      .addDropdown((dropdown) => {
-        dropdown
-          .addOptions(profileOptions)
-          .setValue(this.plugin.settings.mechanicalTaskApiProfileId)
-          .onChange(async (value) => {
-            this.plugin.settings.mechanicalTaskApiProfileId = value.trim();
-            await saveAndRefresh();
-          });
-      });
-    const baseProfile = this.plugin.settings.mechanicalTaskApiProfileId
-      ? this.plugin.settings.apiProfiles.find((profile) => profile.id === this.plugin.settings.mechanicalTaskApiProfileId) ?? this.plugin.activeApiProfile()
-      : this.plugin.activeApiProfile();
-    const modelOptions: Record<string, string> = { "": this.plugin.t("settingsMechanicalUseCurrentModel") };
-    for (const model of normalizeModelOptions(this.plugin.settings.modelOptions, this.plugin.settings.mechanicalTaskModel || baseProfile.model)) modelOptions[model] = model;
-    new Setting(parent)
-      .setName(this.plugin.t("settingsMechanicalTaskModel"))
-      .addDropdown((dropdown) => {
-        dropdown
-          .addOptions(modelOptions)
-          .setValue(this.plugin.settings.mechanicalTaskModel)
-          .onChange(async (value) => {
-            this.plugin.settings.mechanicalTaskModel = value.trim();
-            await saveAndRefresh();
-          });
-      })
-      .addText((text) => {
-        text
-          .setPlaceholder("qwen-plus")
-          .setValue(this.plugin.settings.mechanicalTaskModel)
-          .onChange(async (value) => {
-            this.plugin.settings.mechanicalTaskModel = value.trim();
-            await saveAndRefresh();
-          });
-      });
-    new Setting(parent)
-      .setName(this.plugin.t("settingsMechanicalTaskRoutes"))
-      .setDesc(this.plugin.t("settingsMechanicalTaskRoutesDesc"));
-    const routeSettings: [MechanicalTaskRouteKey, I18nKey][] = [
-      ["contentRename", "settingsMechanicalRouteContentRename"],
-      ["markdownBeautify", "settingsMechanicalRouteMarkdownBeautify"],
-      ["folderCleanup", "settingsMechanicalRouteFolderCleanup"],
-      ["frontmatterTags", "settingsMechanicalRouteFrontmatterTags"]
-    ];
-    for (const [route, key] of routeSettings) {
-      this.addToggleSetting(parent, key, this.plugin.settings.mechanicalTaskRoutes[route], async (value) => {
-        this.plugin.settings.mechanicalTaskRoutes = {
-          ...this.plugin.settings.mechanicalTaskRoutes,
-          [route]: value
-        };
-        await saveAndRefresh();
-      });
-    }
     this.addToggleSetting(parent, "settingsSkillExperienceHarvest", this.plugin.settings.skillExperienceHarvestEnabled, async (value) => {
       this.plugin.settings.skillExperienceHarvestEnabled = value;
       await saveAndRefresh();
@@ -28511,9 +28770,12 @@ class CancipSettingTab extends PluginSettingTab {
           });
       });
 
-    const taskProfile = this.plugin.automationApiProfile(task);
-    const profileOptions: Record<string, string> = { "": this.plugin.t("automationUseCurrentModel") };
-    for (const profile of this.plugin.settings.apiProfiles) profileOptions[profile.id] = profile.name || profile.id;
+    const activeProfile = this.plugin.activeApiProfile();
+    const taskProfile = task.apiProfileId
+      ? this.plugin.settings.apiProfiles.find((profile) => profile.id === task.apiProfileId) ?? activeProfile
+      : activeProfile;
+    const profileOptions: Record<string, string> = { "": `${this.plugin.t("automationUseCurrentModel")} · ${activeProfile.name || activeProfile.id} · ${activeProfile.model}` };
+    for (const profile of this.plugin.settings.apiProfiles) profileOptions[profile.id] = `${profile.name || profile.id} · ${profile.model}`;
     new Setting(card)
       .setName(this.plugin.t("automationApiProfile"))
       .addDropdown((dropdown) => {
@@ -28526,8 +28788,10 @@ class CancipSettingTab extends PluginSettingTab {
           });
       });
 
-    const modelOptions: Record<string, string> = { "": this.plugin.t("automationUseCurrentModel") };
-    for (const model of normalizeModelOptions(this.plugin.settings.modelOptions, task.model || taskProfile.model)) modelOptions[model] = model;
+    const modelOptions: Record<string, string> = { "": `${this.plugin.t("automationUseCurrentModel")} · ${taskProfile.name || taskProfile.id} · ${taskProfile.model}` };
+    for (const model of normalizeModelOptions(this.plugin.settings.modelOptions, task.model || taskProfile.model)) {
+      modelOptions[model] = `${taskProfile.name || taskProfile.id} · ${model}`;
+    }
     new Setting(card)
       .setName(this.plugin.t("automationModel"))
       .addDropdown((dropdown) => {
@@ -28539,45 +28803,6 @@ class CancipSettingTab extends PluginSettingTab {
             this.display();
           });
       });
-
-    new Setting(card)
-      .setName(this.plugin.t("automationMechanicalMode"))
-      .setDesc(this.plugin.t("automationMechanicalModeDesc"))
-      .addDropdown((dropdown) => {
-        dropdown
-          .addOptions({
-            off: this.plugin.t("automationMechanicalOff"),
-            auto: this.plugin.t("automationMechanicalAuto"),
-            on: this.plugin.t("automationMechanicalOn")
-          })
-          .setValue(task.mechanical)
-          .onChange(async (value) => {
-            await patchTask({ mechanical: isAutomationMechanicalMode(value) ? value : "auto" });
-            this.display();
-          });
-      });
-
-    new Setting(card)
-      .setName(this.plugin.t("automationMechanicalRoutes"))
-      .setDesc(this.plugin.t("automationMechanicalRoutesDesc"));
-    const automationRouteSettings: [MechanicalTaskRouteKey, I18nKey][] = [
-      ["contentRename", "settingsMechanicalRouteContentRename"],
-      ["markdownBeautify", "settingsMechanicalRouteMarkdownBeautify"],
-      ["folderCleanup", "settingsMechanicalRouteFolderCleanup"],
-      ["frontmatterTags", "settingsMechanicalRouteFrontmatterTags"]
-    ];
-    const taskRoutes = task.mechanicalRoutes ?? this.plugin.settings.mechanicalTaskRoutes;
-    for (const [route, key] of automationRouteSettings) {
-      this.addToggleSetting(card, key, taskRoutes[route], async (value) => {
-        await patchTask({
-          mechanicalRoutes: {
-            ...taskRoutes,
-            [route]: value
-          }
-        });
-        this.display();
-      });
-    }
 
     new Setting(card)
       .setName(this.plugin.t("automationSchedule"))
@@ -28923,7 +29148,10 @@ class CancipSettingTab extends PluginSettingTab {
 
   private displayApiProfileSettings(parent: HTMLElement): void {
     const active = this.plugin.activeApiProfile();
-    const profileOptions = Object.fromEntries(this.plugin.settings.apiProfiles.map((profile) => [profile.id, profile.name || profile.id]));
+    const profileOptions = Object.fromEntries(this.plugin.settings.apiProfiles.map((profile) => [
+      profile.id,
+      `${profile.name || profile.id} · ${profile.model}`
+    ]));
 
     new Setting(parent)
       .setName(this.plugin.t("settingsApiProfile"))
@@ -29464,51 +29692,6 @@ function cancipAutomationTemplates(): AutomationTemplate[] {
       schedule: "hourly",
       enabled: true,
       intervalMinutes: 120
-    },
-    {
-      id: "auto-mechanical-content-rename",
-      title: "机械化：按内容批量重命名",
-      description: "Template for low-difficulty content-based note renaming. Edit the folder/path scope before enabling; explicit task model/profile overrides specialist routing.",
-      prompt: buildMechanicalAutomationTemplatePrompt("contentRename"),
-      mechanical: "on",
-      mechanicalRoutes: {
-        contentRename: true,
-        markdownBeautify: false,
-        folderCleanup: false,
-        frontmatterTags: false
-      },
-      schedule: "manual",
-      enabled: false
-    },
-    {
-      id: "auto-mechanical-markdown-beautify",
-      title: "机械化：Markdown 美化整理",
-      description: "Template for low-difficulty Markdown formatting and structure cleanup. Edit the folder/path scope before enabling; ordinary note edits still enter Cancip review.",
-      prompt: buildMechanicalAutomationTemplatePrompt("markdownBeautify"),
-      mechanical: "on",
-      mechanicalRoutes: {
-        contentRename: false,
-        markdownBeautify: true,
-        folderCleanup: false,
-        frontmatterTags: false
-      },
-      schedule: "manual",
-      enabled: false
-    },
-    {
-      id: "auto-mechanical-properties-tags",
-      title: "机械化：属性和标签整理",
-      description: "Template for low-difficulty frontmatter/property/tag cleanup. Edit the folder/path scope before enabling; keep batches small and review changes.",
-      prompt: buildMechanicalAutomationTemplatePrompt("frontmatterTags"),
-      mechanical: "on",
-      mechanicalRoutes: {
-        contentRename: false,
-        markdownBeautify: false,
-        folderCleanup: false,
-        frontmatterTags: true
-      },
-      schedule: "manual",
-      enabled: false
     }
   ];
 }
@@ -29524,22 +29707,6 @@ function formatAutomationTemplates(templates: AutomationTemplate[]): string {
 
 function newsBriefPeriodLabel(period: NewsBriefPeriod): string {
   return period === "evening" ? "晚间" : "早间";
-}
-
-function buildMechanicalAutomationTemplatePrompt(kind: MechanicalTaskRouteKey): string {
-  const labels: Record<MechanicalTaskRouteKey, string> = {
-    contentRename: "按文件内容批量重命名笔记",
-    markdownBeautify: "批量美化和规范 Markdown 笔记结构",
-    folderCleanup: "按文件夹范围做低风险整理候选",
-    frontmatterTags: "批量整理 properties/frontmatter/tag"
-  };
-  return [
-    `任务类型：${labels[kind]}。`,
-    "范围：填写一个明确文件夹或文件列表后再启用。",
-    "执行范式：先 list/search/read 找到候选和当前内容；范围不明确时用 cancip.findTarget 搜索，不要编造路径。",
-    "改动策略：小批量处理，每批完成后读回或检查结果；普通 Vault 笔记改动按 Cancip 审核机制标记，等待用户通过/取消/指正。",
-    "禁止事项：不要宽泛删除、移动或重命名；不要把未验证候选说成已完成；不确定时输出具体缺口和下一步可执行动作。"
-  ].join("\n");
 }
 
 function buildNewsBriefPrompt(period: NewsBriefPeriod): string {
@@ -31502,10 +31669,6 @@ function mechanicalTaskRouteKindsForPrompt(prompt: string, routes: MechanicalTas
   return uniqueStrings(kinds) as MechanicalTaskRouteKey[];
 }
 
-function isMechanicalLowDifficultyTaskPrompt(prompt: string, routes: MechanicalTaskRoutes = DEFAULT_MECHANICAL_TASK_ROUTES): boolean {
-  return mechanicalTaskRouteKindsForPrompt(prompt, routes).length > 0;
-}
-
 function promptNeedsIdentityMemory(prompt: string): boolean {
   const text = prompt.trim();
   if (!text) return false;
@@ -32366,6 +32529,76 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string)
   });
 }
 
+function headerValue(headers: Record<string, string> | undefined, name: string): string {
+  if (!headers) return "";
+  const direct = headers[name] ?? headers[name.toLowerCase()] ?? headers[name.toUpperCase()];
+  if (typeof direct === "string") return direct.trim();
+  const lower = name.toLowerCase();
+  const hit = Object.entries(headers).find(([key]) => key.toLowerCase() === lower);
+  return typeof hit?.[1] === "string" ? hit[1].trim() : "";
+}
+
+function modelRetryAfterMsFromReason(reason: string): number | null {
+  const text = reason.trim();
+  if (!text) return null;
+  const retryAfterMatch = text.match(/\bretry[-_ ]?after\b["'\s:=]+([^"',;\s}]+)/i);
+  if (retryAfterMatch) {
+    const parsed = retryDelayTokenToMs(retryAfterMatch[1]);
+    if (parsed !== null) return parsed;
+  }
+  const retryAfterMsMatch = text.match(/\bretry[-_ ]?after[-_ ]?ms\b["'\s:=]+(\d{2,7})\b/i);
+  if (retryAfterMsMatch) {
+    const value = Number(retryAfterMsMatch[1]);
+    if (Number.isFinite(value) && value > 0) return value;
+  }
+  const bodyJson = parseFirstJsonObject(text);
+  const parsed = retryAfterMsFromJson(bodyJson);
+  return parsed;
+}
+
+function retryDelayTokenToMs(value: string): number | null {
+  const token = value.trim().replace(/^["']|["']$/g, "");
+  if (!token) return null;
+  const numeric = Number(token);
+  if (Number.isFinite(numeric) && numeric > 0) return Math.round(numeric * 1000);
+  const dateMs = Date.parse(token);
+  if (Number.isFinite(dateMs)) return Math.max(0, dateMs - Date.now());
+  return null;
+}
+
+function retryAfterMsFromJson(value: unknown): number | null {
+  if (!isRecord(value)) return null;
+  const candidates = [
+    value.retry_after_ms,
+    value.retryAfterMs,
+    value.retry_after,
+    value.retryAfter,
+    isRecord(value.error) ? value.error.retry_after_ms : undefined,
+    isRecord(value.error) ? value.error.retryAfterMs : undefined,
+    isRecord(value.error) ? value.error.retry_after : undefined,
+    isRecord(value.error) ? value.error.retryAfter : undefined
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === "number" && Number.isFinite(candidate) && candidate > 0) {
+      return candidate > 1000 ? Math.round(candidate) : Math.round(candidate * 1000);
+    }
+    if (typeof candidate === "string") {
+      const parsed = retryDelayTokenToMs(candidate);
+      if (parsed !== null) return parsed;
+    }
+  }
+  return null;
+}
+
+function isRateLimitRetryReason(reason: string): boolean {
+  return /(?:HTTP\s*429|\b429\b|rate[-_\s]?limit|too\s+many\s+requests|requests\s+per\s+(?:minute|day)|tokens\s+per\s+(?:minute|day)|quota|retry[-_ ]?after)/i.test(reason);
+}
+
+function isServiceRetryReason(reason: string): boolean {
+  return isRateLimitRetryReason(reason)
+    || /(?:HTTP\s*(?:408|425|500|502|503|504|529)\b|\b(?:408|425|500|502|503|504|529)\b|timeout|timed\s*out|temporarily\s+unavailable|overloaded|server\s+busy|upstream|gateway|connection\s+(?:reset|closed|aborted)|network\s+error|econnreset|etimedout)/i.test(reason);
+}
+
 function resolveLanguage(mode: LanguageMode): Language {
   if (isLanguage(mode)) return mode;
   return resolveLocaleLanguage(navigator.language || "en");
@@ -33119,11 +33352,11 @@ function runtimeI18nTemplate(key: I18nKey, template: string): string {
     )
     .replace(
       /Automation operations are add, update, remove, list, run; schedules are manual, hourly, daily and daily supports hour\+minute; sessionMode can be current, new, or session with sessionId, condition stores an optional trigger note, apiProfileId selects an API profile, and model selects a task-specific model while empty values follow the current model\./,
-      "Automation operations are add, update, remove, list, run; schedules are manual, hourly, daily and daily supports hour+minute; sessionMode can be current, new, or session with sessionId, condition stores an optional trigger note, apiProfileId selects an API profile, model selects a task-specific model, mechanical can be off/auto/on for simple mechanical automation routing, and mechanicalRoutes can limit contentRename, markdownBeautify, folderCleanup, and frontmatterTags."
+      "Automation operations are add, update, remove, list, run; schedules are manual, hourly, daily and daily supports hour+minute; sessionMode can be current, new, or session with sessionId, condition stores an optional trigger note, apiProfileId selects an API profile, and model selects a task-specific model while empty values follow the current model."
     )
     .replace(
       /automation 支持 add、update、remove、list、run；schedule 可用 manual、hourly、daily；daily 支持 hour\+minute；sessionMode 可用 current、new、session，session 需要 sessionId，condition 保存额外触发条件说明，apiProfileId 指定 API 配置，model 指定单任务模型，空值沿用当前模型。/,
-      "automation 支持 add、update、remove、list、run；schedule 可用 manual、hourly、daily；daily 支持 hour+minute；sessionMode 可用 current、new、session，session 需要 sessionId，condition 保存额外触发条件说明，apiProfileId 指定 API 配置，model 指定单任务模型，mechanical 可设 off/auto/on 用于机械化简单自动化路由，mechanicalRoutes 可限制 contentRename、markdownBeautify、folderCleanup、frontmatterTags。"
+      "automation 支持 add、update、remove、list、run；schedule 可用 manual、hourly、daily；daily 支持 hour+minute；sessionMode 可用 current、new、session，session 需要 sessionId，condition 保存额外触发条件说明，apiProfileId 指定 API 配置，model 指定单任务模型，空值沿用当前模型。"
     )
     .replace(
       /cancip\.tools\.index, obsidian\.listCommands, obsidian\.execute, obsidian\.currentView,/,
@@ -33322,26 +33555,8 @@ function normalizeModelOptions(raw: unknown, activeModel?: string): string[] {
   return uniqueStrings(values).slice(0, 80);
 }
 
-function inferMechanicalTaskModel(modelOptions: string[], activeModel: string): string {
-  const active = activeModel.trim().toLowerCase();
-  const options = normalizeModelOptions(modelOptions, activeModel).filter((model) => model.trim() && model.trim().toLowerCase() !== active);
-  const exact = (wanted: string): string => options.find((model) => model.toLowerCase() === wanted) ?? "";
-  for (const wanted of MECHANICAL_TASK_MODEL_PRIORITY) {
-    const hit = exact(wanted);
-    if (hit) return hit;
-  }
-  return options.find((model) =>
-    /(qwen|deepseek-chat|gpt-4o-mini|gpt-4\.1-mini|gemini.*flash|o4-mini|kimi|mini|flash|lite|small|fast)/i.test(model)
-    && !/(reasoner|reasoning|pro|opus|max)/i.test(model)
-  ) ?? "";
-}
-
 function isAutomationMechanicalMode(value: unknown): value is AutomationMechanicalMode {
   return value === "off" || value === "auto" || value === "on";
-}
-
-function enabledMechanicalRouteKeys(routes: MechanicalTaskRoutes): MechanicalTaskRouteKey[] {
-  return MECHANICAL_TASK_ROUTE_KEYS.filter((key) => routes[key]);
 }
 
 function normalizeMechanicalTaskRoutes(raw: unknown): MechanicalTaskRoutes {
@@ -33378,59 +33593,6 @@ function mechanicalTaskRouteKeyFromString(value: string): MechanicalTaskRouteKey
   if (compact === "foldercleanup" || compact === "cleanup" || compact === "folder" || compact === "整理" || compact === "文件夹整理") return "folderCleanup";
   if (compact === "frontmattertags" || compact === "frontmatter" || compact === "tags" || compact === "properties" || compact === "属性" || compact === "标签") return "frontmatterTags";
   return null;
-}
-
-function automationMechanicalDetectionPrompt(task: Pick<AutomationTask, "title" | "prompt" | "command">, fallbackPrompt = ""): string {
-  return [
-    task.title,
-    task.prompt,
-    fallbackPrompt,
-    task.command ? `command ${task.command}` : ""
-  ]
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .join("\n");
-}
-
-function wrapMechanicalAutomationPrompt(
-  prompt: string,
-  task: Pick<AutomationTask, "title" | "mechanical">,
-  routeKinds: MechanicalTaskRouteKey[],
-  language: Language
-): string {
-  if (!routeKinds.length) return prompt;
-  if (language.startsWith("zh")) {
-    return [
-      "机械化自动化任务范式：",
-      `- 任务：${task.title}`,
-      `- 路由：${routeKinds.join(", ")}`,
-      "- 这类任务可能由较小模型执行；必须动作优先、少废话、不要泛泛总结。",
-      "- 如果需要读、搜、写、补丁、移动、重命名或命令，输出且只输出一个 cancip-action JSON 块。",
-      "- 目标或当前内容不确定时，先 read/list/search/cancip.findTarget，不要编造路径。",
-      "- 写入、移动、重命名要小批量执行，执行后读回或检查结果验证。",
-      "- 普通 Vault 笔记改动照常写入，Cancip 审核层会标记 AI 改动供用户审核。",
-      "- 不要做宽泛删除、移动或重命名，除非自动化提示明确给出范围。",
-      "- 如果无需动作，只给具体原因，不要输出模板废话。",
-      "",
-      "原始自动化提示：",
-      prompt
-    ].join("\n");
-  }
-  return [
-    "Mechanical automation guardrails:",
-    `- task: ${task.title}`,
-    `- route: ${routeKinds.join(", ")}`,
-    "- This may run on a smaller model; be concrete, action-first, and avoid generic prose.",
-    "- If file/search/config/command work is needed, output exactly one cancip-action JSON block.",
-    "- Read/list/search/cancip.findTarget before writing when the target or current content is uncertain.",
-    "- Keep batches small and verify after writes, moves, or renames.",
-    "- Ordinary Vault note edits use normal actions; Cancip review gate marks AI edits for user review.",
-    "- Do not invent paths or broad delete, move, or rename scopes.",
-    "- If no action is needed, give a short concrete reason.",
-    "",
-    "Original automation prompt:",
-    prompt
-  ].join("\n");
 }
 
 function normalizeSkillRoots(raw: unknown): string[] {
@@ -33849,10 +34011,6 @@ function settingsToCancipConfig(settings: Settings): Record<string, unknown> {
     maxAutoSkills: settings.maxAutoSkills,
     maxSkillContextChars: settings.maxSkillContextChars,
     maxAutoSkillContextChars: settings.maxAutoSkillContextChars,
-    specialistRoutingEnabled: settings.specialistRoutingEnabled,
-    mechanicalTaskApiProfileId: settings.mechanicalTaskApiProfileId,
-    mechanicalTaskModel: settings.mechanicalTaskModel,
-    mechanicalTaskRoutes: settings.mechanicalTaskRoutes,
     skillExperienceHarvestEnabled: settings.skillExperienceHarvestEnabled,
     dailyLocalVersioning: settings.dailyLocalVersioning,
     localVersionHour: settings.localVersionHour,
@@ -33952,12 +34110,6 @@ function parseCancipConfig(raw: unknown): Partial<Settings> {
   if (typeof raw.maxAutoSkills === "number" || typeof raw.maxAutoSkills === "string") config.maxAutoSkills = Number.parseInt(String(raw.maxAutoSkills), 10);
   if (typeof raw.maxSkillContextChars === "number" || typeof raw.maxSkillContextChars === "string") config.maxSkillContextChars = Number.parseInt(String(raw.maxSkillContextChars), 10);
   if (typeof raw.maxAutoSkillContextChars === "number" || typeof raw.maxAutoSkillContextChars === "string") config.maxAutoSkillContextChars = Number.parseInt(String(raw.maxAutoSkillContextChars), 10);
-  if (typeof raw.specialistRoutingEnabled === "boolean") config.specialistRoutingEnabled = raw.specialistRoutingEnabled;
-  if (typeof raw.mechanicalTaskApiProfileId === "string") config.mechanicalTaskApiProfileId = raw.mechanicalTaskApiProfileId;
-  if (typeof raw.mechanicalTaskModel === "string") config.mechanicalTaskModel = raw.mechanicalTaskModel;
-  if (isRecord(raw.mechanicalTaskRoutes) || Array.isArray(raw.mechanicalTaskRoutes) || typeof raw.mechanicalTaskRoutes === "string") {
-    config.mechanicalTaskRoutes = normalizeMechanicalTaskRoutes(raw.mechanicalTaskRoutes);
-  }
   if (typeof raw.skillExperienceHarvestEnabled === "boolean") config.skillExperienceHarvestEnabled = raw.skillExperienceHarvestEnabled;
   if (typeof raw.dailyLocalVersioning === "boolean") config.dailyLocalVersioning = raw.dailyLocalVersioning;
   if (typeof raw.localVersionHour === "number" || typeof raw.localVersionHour === "string") config.localVersionHour = Number.parseInt(String(raw.localVersionHour), 10);
@@ -33990,8 +34142,6 @@ const CANCIP_CONFIG_STRING_KEYS = new Set([
   "apiUrl",
   "apiKey",
   "model",
-  "mechanicalTaskApiProfileId",
-  "mechanicalTaskModel",
   "memoryFolder",
   "codexMemoryImportPath",
   "githubApiBaseUrl",
@@ -34061,7 +34211,6 @@ const CANCIP_CONFIG_BOOLEAN_KEYS = new Set([
   "includeHistoryAnchors",
   "skillsEnabled",
   "skillAutoSelect",
-  "specialistRoutingEnabled",
   "skillExperienceHarvestEnabled",
   "dailyLocalVersioning",
   "automationsEnabled",
@@ -34118,10 +34267,6 @@ function assertCancipConfigWriteShape(config: Record<string, unknown>): void {
       if (!isValidApiProfilesConfigValue(value)) issues.push("apiProfiles must be an array of profile objects");
       continue;
     }
-    if (key === "mechanicalTaskRoutes") {
-      if (!isValidMechanicalTaskRoutesConfigValue(value)) issues.push("mechanicalTaskRoutes must be an object, string, or string[] of supported route keys");
-      continue;
-    }
     issues.push(`${key} is not a supported Cancip config key`);
   }
   if (issues.length) {
@@ -34140,13 +34285,6 @@ function isFiniteConfigNumber(value: unknown): boolean {
 function isValidStringArrayConfigValue(value: unknown): boolean {
   if (typeof value === "string") return Boolean(value.trim());
   return Array.isArray(value) && value.every((item) => typeof item === "string" && Boolean(item.trim()));
-}
-
-function isValidMechanicalTaskRoutesConfigValue(value: unknown): boolean {
-  if (typeof value === "string") return Boolean(mechanicalTaskRouteKeyFromString(value));
-  if (Array.isArray(value)) return value.every((item) => typeof item === "string" && Boolean(mechanicalTaskRouteKeyFromString(item)));
-  if (!isRecord(value)) return false;
-  return Object.entries(value).every(([key, item]) => MECHANICAL_TASK_ROUTE_KEYS.includes(key as MechanicalTaskRouteKey) && typeof item === "boolean");
 }
 
 function isValidApiProfilesConfigValue(value: unknown): boolean {
@@ -34636,6 +34774,15 @@ function isModelRunStatsLine(trimmed: string): boolean {
   return isOnlyRunStatsText(line);
 }
 
+function isModelFailureVisibleText(content: string): boolean {
+  const text = stripStructuredChoices(stripProgrammaticRunStats(content).content)
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!text) return false;
+  if (/^(?:模型调用失败|Model call failed|API 返回了空回复|The API returned an empty response|调用失败|Call failed)(?:\s|[:：.]|$)/i.test(text)) return true;
+  return /HTTP\s+\d{3}[\s\S]{0,220}(?:model_not_found|not supported by any configured account|rate_limit|insufficient_quota|timeout|timed out)/i.test(text);
+}
+
 function prepareMessageDisplay(content: string): MessageDisplay {
   const programmaticStats = stripProgrammaticRunStats(content);
   const baseContent = programmaticStats.content;
@@ -34643,7 +34790,8 @@ function prepareMessageDisplay(content: string): MessageDisplay {
   const processOnly = isProgressMessage(baseContent)
     || isToolFeedbackMessage(baseContent)
     || baseContent.includes(PROCESS_MESSAGE_MARKER)
-    || isLegacyProgressStatusMessage(baseContent);
+    || isLegacyProgressStatusMessage(baseContent)
+    || isModelFailureVisibleText(baseContent);
   let visibleContent = stripModelRunStatsLines(baseContent).replace(/```([^\n`]*)\n?([\s\S]*?)```/g, (full: string, rawLang: string, body: string) => {
     const lang = rawLang.trim().toLowerCase();
     const trimmed = body.trim();
@@ -35957,6 +36105,19 @@ function sanitizeModelVisibleAnswer(content: string): string {
   return stripModelReasoningArtifacts(content).replace(/\n{3,}/g, "\n\n").trim();
 }
 
+function sanitizeLiveModelProgress(content: string): string {
+  let text = content;
+  text = removeCancipActionBlocks(text);
+  text = stripStructuredChoices(text);
+  text = stripModelRunStatsLines(text);
+  text = stripModelReasoningArtifacts(text);
+  if (/```cancip-action/i.test(text) || /<cancip-action/i.test(text)) {
+    const beforeAction = text.split(/```cancip-action|<cancip-action/i)[0]?.trim() ?? "";
+    text = beforeAction || "正在生成可执行动作...";
+  }
+  return text.replace(/\n{3,}/g, "\n\n").trim();
+}
+
 function foldBeforeFinalOutputCue(content: string, hiddenToolBlocks: FoldedMessageBlock[]): { content: string; hadCue: boolean } {
   const lines = content.split(/\r?\n/);
   for (let index = 0; index < lines.length; index += 1) {
@@ -36190,7 +36351,7 @@ function isOnlyRunStatsText(text: string): boolean {
 function buildChoiceSuggestionPrompt(userPrompt: string, currentConclusion: string, previousConclusion: string, chinese: boolean): string {
   const languageRule = chinese ? "Use concise Simplified Chinese." : "Use concise English.";
   return [
-    "Generate exactly 3 next-step button labels for this assistant reply.",
+    "Generate 1 to 3 next-step button labels for this assistant reply only when there are real concrete choices.",
     languageRule,
     "Rules:",
     "- Each label must be a concrete next action based on the user's actual request and the assistant's actual answer, not a status sentence.",
@@ -36199,7 +36360,7 @@ function buildChoiceSuggestionPrompt(userPrompt: string, currentConclusion: stri
     "- Chinese labels should be 2-10 characters when possible and never exceed 16 Chinese characters.",
     "- English labels should be 2-5 words.",
     "- Avoid generic filler such as continue, add details, ask another; infer specific next actions from the actual task/result.",
-    '- Return only JSON: {"choices":["...","...","..."]}',
+    '- Return only JSON, using the real count: {"choices":["...","..."]}. If there are no useful choices, return {"choices":[]}.',
     "",
     `User request: ${trimContext(userPrompt.replace(/\s+/g, " "), 500) || "(empty)"}`,
     `Assistant final answer: ${trimContext(currentConclusion.replace(/\s+/g, " "), 900) || "(empty)"}`,
@@ -36286,32 +36447,6 @@ function choiceSpecificityScore(text: string): number {
     if (words > 7) score -= 2;
   }
   return score;
-}
-
-function choiceSubjectFromPrompt(prompt: string, content: string, chinese: boolean): string {
-  const source = `${prompt}\n${content}`;
-  const ordered: Array<{ pattern: RegExp; zh: string; en: string }> = [
-    { pattern: /审核|review/i, zh: "审核", en: "review" },
-    { pattern: /推荐|选项|choice|suggest/i, zh: "推荐按钮", en: "choices" },
-    { pattern: /附件|上传|图片|文件选择|attachment|upload/i, zh: "附件", en: "attachments" },
-    { pattern: /tts|朗读|语音|read aloud/i, zh: "朗读", en: "TTS" },
-    { pattern: /会话|历史|session|history/i, zh: "会话", en: "session" },
-    { pattern: /模型|api|token|上下文|prompt|提示词/i, zh: "模型上下文", en: "model context" },
-    { pattern: /按钮|界面|ui|面板|样式|css/i, zh: "界面", en: "UI" },
-    { pattern: /记忆|索引|memory|index|rag/i, zh: "记忆索引", en: "memory index" },
-    { pattern: /插件|skill|mcp|能力|plugin/i, zh: "能力", en: "capability" },
-    { pattern: /github|release|tag|推送|仓库/i, zh: "GitHub", en: "GitHub" },
-    { pattern: /文件|笔记|vault|note|file/i, zh: "文件", en: "files" }
-  ];
-  const hit = ordered.find((item) => item.pattern.test(source));
-  if (hit) return chinese ? hit.zh : hit.en;
-  const compact = prompt.replace(/\s+/g, " ").trim();
-  if (chinese) {
-    const cjk = compact.match(/[\u4e00-\u9fff]{2,8}/)?.[0];
-    return cjk ? trimContext(cjk, 8) : "任务";
-  }
-  const word = compact.match(/[a-z][a-z0-9-]{2,18}/i)?.[0];
-  return word || "task";
 }
 
 function isGenericChoiceText(text: string): boolean {
@@ -36911,14 +37046,7 @@ function uiButtonRuleStableIdInput(scope: UiButtonRule["scope"], selector: strin
 
 function uiButtonRulesReferToSameTarget(a: UiButtonRule, b: UiButtonRule): boolean {
   if (a.kind === "custom" || b.kind === "custom") {
-    const aAnchorLabel = normalizeUiButtonLabel(a.anchorLabel ?? "");
-    const bAnchorLabel = normalizeUiButtonLabel(b.anchorLabel ?? "");
-    return a.kind === "custom"
-      && b.kind === "custom"
-      && a.scope === b.scope
-      && a.anchorSelector === b.anchorSelector
-      && aAnchorLabel === bAnchorLabel
-      && a.commandId === b.commandId;
+    return Boolean(a.id && b.id && a.id === b.id);
   }
   if (a.id && b.id && a.id === b.id) {
     if (a.scope !== b.scope || a.selector !== b.selector) return false;
@@ -36999,12 +37127,19 @@ function uiButtonSelectorLooksMenuSelector(selector: string): boolean {
 }
 
 function workspaceLeafArea(leaf: WorkspaceLeaf): WorkspaceTabInfo["area"] {
-  const container = (leaf.view as unknown as { containerEl?: HTMLElement })?.containerEl;
-  if (!container) return "unknown";
-  if (container.closest(".mod-right-split, .workspace-split.mod-right-split")) return "right";
-  if (container.closest(".mod-left-split, .workspace-split.mod-left-split")) return "left";
-  if (container.closest(".workspace-popout, .mod-popout")) return "floating";
-  if (container.closest(".workspace-tabs, .workspace-leaf")) return "root";
+  const viewContainer = (leaf.view as unknown as { containerEl?: HTMLElement })?.containerEl;
+  const leafContainer = (leaf as unknown as { containerEl?: HTMLElement }).containerEl;
+  const parentContainer = (leaf.parent as unknown as { containerEl?: HTMLElement }).containerEl;
+  const candidates = [viewContainer, leafContainer, parentContainer].filter((item): item is HTMLElement => Boolean(item));
+  for (const container of candidates) {
+    if (container.closest(".mod-right-split, .workspace-split.mod-right-split, .workspace-drawer.mod-right, .workspace-drawer-right, .workspace-drawer.is-right, .workspace-drawer.mod-sidedock.mod-right")) return "right";
+    if (container.closest(".mod-left-split, .workspace-split.mod-left-split, .workspace-drawer.mod-left, .workspace-drawer-left, .workspace-drawer.is-left, .workspace-drawer.mod-sidedock.mod-left")) return "left";
+    if (container.closest(".workspace-popout, .mod-popout")) return "floating";
+  }
+  const haystack = candidates.map((container) => `${container.className ?? ""} ${container.getAttribute("aria-label") ?? ""}`).join(" ").toLowerCase();
+  if (/\bright\b|右侧|右側|右边|右邊/.test(haystack)) return "right";
+  if (/\bleft\b|左侧|左側|左边|左邊/.test(haystack)) return "left";
+  if (candidates.some((container) => container.closest(".workspace-tabs, .workspace-leaf"))) return "root";
   return "unknown";
 }
 
@@ -37026,7 +37161,7 @@ function workspaceLeafTabsContainer(leaf: WorkspaceLeaf): HTMLElement | null {
   const parentContainer = (leaf.parent as unknown as { containerEl?: HTMLElement }).containerEl;
   if (parentContainer?.matches(".workspace-tabs")) return parentContainer;
   const leafContainer = workspaceLeafContainer(leaf);
-  return leafContainer?.closest<HTMLElement>(".workspace-tabs") ?? parentContainer ?? null;
+  return leafContainer?.closest<HTMLElement>(".workspace-tabs, .workspace-drawer-tab-container, .workspace-drawer-tabs") ?? parentContainer ?? null;
 }
 
 function workspaceLeafIsDomActive(leaf: WorkspaceLeaf): boolean {
@@ -37443,8 +37578,6 @@ function parseCancipAction(input: unknown): CancipAction | null {
       args: isRecord(input.args) ? input.args : undefined,
       apiProfileId: typeof input.apiProfileId === "string" ? input.apiProfileId : undefined,
       model: typeof input.model === "string" ? input.model : undefined,
-      mechanical: isAutomationMechanicalMode(input.mechanical) ? input.mechanical : undefined,
-      mechanicalRoutes: input.mechanicalRoutes === undefined ? undefined : normalizeMechanicalTaskRoutes(input.mechanicalRoutes),
       schedule: isAutomationSchedule(input.schedule) ? input.schedule : undefined,
       enabled: typeof input.enabled === "boolean" ? input.enabled : undefined,
       intervalMinutes: typeof input.intervalMinutes === "number" ? input.intervalMinutes : Number.isFinite(Number.parseInt(String(input.intervalMinutes ?? ""), 10)) ? Number.parseInt(String(input.intervalMinutes), 10) : undefined,
@@ -37652,14 +37785,16 @@ async function applyApprovedReviewGateItem(app: App, item: ReviewGateManifestIte
     if ((change.kind === "rename" || change.kind === "move") && oldPath !== newPath) {
       if (!(await adapter.exists(oldPath))) {
         if (await adapter.exists(newPath)) {
-          applied.push(`${change.kind}: already at ${newPath}`);
+          const repaired = await repairApprovedMoveLinks(app, oldPath, newPath, collectApprovedMoveLinkSources(app, oldPath));
+          applied.push(`${change.kind}: already at ${newPath}${repaired.changedFiles ? `; links updated in ${repaired.changedFiles} file(s)` : ""}`);
           continue;
         }
         throw new Error(`review apply failed: source not found ${oldPath}`);
       }
       await ensureParentFolder(adapter, newPath);
-      await adapter.rename(oldPath, newPath);
-      applied.push(`${change.kind}: ${oldPath} -> ${newPath}`);
+      await renameApprovedPathWithLinks(app, oldPath, newPath);
+      await waitForMetadataResolve(app, [newPath]);
+      applied.push(`${change.kind}: ${oldPath} -> ${newPath}; links updated by Obsidian`);
     }
     if (change.kind === "copy" && oldPath !== newPath) {
       if (!(await adapter.exists(oldPath))) {
@@ -37690,10 +37825,161 @@ async function applyApprovedReviewGateItem(app: App, item: ReviewGateManifestIte
   if (item.old_text !== item.new_text && isReviewableVaultContentPath(textPath, obsidianConfigDir)) {
     await ensureParentFolder(adapter, textPath);
     await adapter.write(textPath, item.new_text ?? "");
+    await waitForMetadataResolve(app, [textPath]);
     applied.push(`write: ${textPath}`);
   }
 
   return applied.join("; ") || "approved";
+}
+
+async function renameApprovedPathWithLinks(app: App, oldPath: string, newPath: string): Promise<void> {
+  const adapter = app.vault.adapter;
+  const file = app.vault.getAbstractFileByPath(oldPath);
+  const fallbackSources = collectApprovedMoveLinkSources(app, oldPath);
+  if (file) {
+    try {
+      await app.fileManager.renameFile(file, newPath);
+      return;
+    } catch (error) {
+      console.warn("Cancip approved rename via FileManager failed, falling back to adapter rename", error);
+    }
+  }
+  await adapter.rename(oldPath, newPath);
+  await repairApprovedMoveLinks(app, oldPath, newPath, fallbackSources);
+}
+
+function collectApprovedMoveLinkSources(app: App, oldPath: string): string[] {
+  const oldNorm = normalizePath(oldPath);
+  const oldNoExt = oldNorm.replace(/\.md$/i, "");
+  const oldBase = oldNoExt.split("/").pop() ?? oldNoExt;
+  const sources = new Set<string>();
+  for (const [sourcePath, targets] of Object.entries(app.metadataCache.resolvedLinks ?? {})) {
+    for (const targetPath of Object.keys(targets ?? {})) {
+      const normalizedTarget = normalizePath(targetPath);
+      if (normalizedTarget === oldNorm || normalizedTarget.replace(/\.md$/i, "") === oldNoExt) {
+        sources.add(normalizePath(sourcePath));
+      }
+    }
+  }
+  for (const [sourcePath, targets] of Object.entries(app.metadataCache.unresolvedLinks ?? {})) {
+    for (const targetPath of Object.keys(targets ?? {})) {
+      if (approvedMoveMetadataTargetMatches(targetPath, oldNorm, oldNoExt, oldBase)) {
+        sources.add(normalizePath(sourcePath));
+      }
+    }
+  }
+  return Array.from(sources);
+}
+
+function approvedMoveMetadataTargetMatches(target: string, oldPath: string, oldNoExt: string, oldBase: string): boolean {
+  const normalized = normalizePath(target.trim()).replace(/\.md$/i, "");
+  if (!normalized) return false;
+  return normalized === oldNoExt || normalized === oldPath.replace(/\.md$/i, "") || normalized === oldBase;
+}
+
+async function repairApprovedMoveLinks(app: App, oldPath: string, newPath: string, sourcePaths?: string[]): Promise<{ changedFiles: number; replacements: number }> {
+  const oldNorm = normalizePath(oldPath);
+  const newNorm = normalizePath(newPath);
+  if (!oldNorm || !newNorm || oldNorm === newNorm) return { changedFiles: 0, replacements: 0 };
+  const newFile = app.vault.getAbstractFileByPath(newNorm);
+  const oldNoExt = oldNorm.replace(/\.md$/i, "");
+  const oldBase = oldNoExt.split("/").pop() ?? oldNoExt;
+  const sourceSet = sourcePaths?.length ? new Set(sourcePaths.map((path) => normalizePath(path))) : null;
+  const markdownFiles = sourceSet
+    ? app.vault.getMarkdownFiles().filter((file) => sourceSet.has(normalizePath(file.path)))
+    : app.vault.getMarkdownFiles();
+  const allowBaseOnlyMatch = !!sourceSet;
+  let changedFiles = 0;
+  let replacements = 0;
+  for (const source of markdownFiles) {
+    const oldText = await app.vault.cachedRead(source);
+    const newLinkText = newFile instanceof TFile
+      ? app.metadataCache.fileToLinktext(newFile, source.path, true)
+      : newNorm.replace(/\.md$/i, "");
+    const repaired = replaceApprovedMoveLinksInText(oldText, oldNorm, newNorm, oldNoExt, oldBase, newLinkText, allowBaseOnlyMatch);
+    if (repaired.text === oldText) continue;
+    await app.vault.modify(source, repaired.text);
+    changedFiles += 1;
+    replacements += repaired.replacements;
+  }
+  if (changedFiles) await waitForMetadataResolve(app, markdownFiles.map((file) => file.path));
+  return { changedFiles, replacements };
+}
+
+function replaceApprovedMoveLinksInText(
+  text: string,
+  oldPath: string,
+  newPath: string,
+  oldNoExt: string,
+  oldBase: string,
+  newLinkText: string,
+  allowBaseOnlyMatch: boolean
+): { text: string; replacements: number } {
+  let replacements = 0;
+  const next = text
+    .replace(/(!?)\[\[([^\]\n]+)\]\]/g, (full, embed: string, body: string) => {
+      const replaced = replaceApprovedMoveWikiBody(body, oldPath, oldNoExt, oldBase, newLinkText, allowBaseOnlyMatch);
+      if (replaced === body) return full;
+      replacements += 1;
+      return `${embed}[[${replaced}]]`;
+    })
+    .replace(/(\[[^\]\n]*\]\()([^)#\n]+)(#[^)\n]*)?(\))/g, (full, prefix: string, rawTarget: string, hash: string | undefined, suffix: string) => {
+      const cleanTarget = rawTarget.trim();
+      if (!approvedMoveMarkdownTargetMatches(cleanTarget, oldPath, oldNoExt, oldBase, allowBaseOnlyMatch)) return full;
+      replacements += 1;
+      const encoded = encodeURI(newPath).replace(/[()]/g, (match) => `%${match.charCodeAt(0).toString(16).toUpperCase()}`);
+      return `${prefix}${encoded}${hash ?? ""}${suffix}`;
+    });
+  return { text: next, replacements };
+}
+
+function replaceApprovedMoveWikiBody(body: string, oldPath: string, oldNoExt: string, oldBase: string, newLinkText: string, allowBaseOnlyMatch: boolean): string {
+  const pipeIndex = body.indexOf("|");
+  const linkPart = pipeIndex >= 0 ? body.slice(0, pipeIndex) : body;
+  const aliasPart = pipeIndex >= 0 ? body.slice(pipeIndex) : "";
+  const hashIndex = linkPart.indexOf("#");
+  const target = hashIndex >= 0 ? linkPart.slice(0, hashIndex) : linkPart;
+  const subpath = hashIndex >= 0 ? linkPart.slice(hashIndex) : "";
+  if (!approvedMoveWikiTargetMatches(target, oldPath, oldNoExt, oldBase, allowBaseOnlyMatch)) return body;
+  return `${newLinkText}${subpath}${aliasPart}`;
+}
+
+function approvedMoveWikiTargetMatches(target: string, oldPath: string, oldNoExt: string, oldBase: string, allowBaseOnlyMatch: boolean): boolean {
+  const normalized = normalizePath(target.trim()).replace(/\.md$/i, "");
+  if (!normalized) return false;
+  return normalized === oldNoExt || normalized === oldPath.replace(/\.md$/i, "") || (allowBaseOnlyMatch && normalized === oldBase);
+}
+
+function approvedMoveMarkdownTargetMatches(target: string, oldPath: string, oldNoExt: string, oldBase: string, allowBaseOnlyMatch: boolean): boolean {
+  let decoded = target;
+  try {
+    decoded = decodeURI(target);
+  } catch {
+    decoded = target;
+  }
+  const clean = normalizePath(decoded.replace(/^<|>$/g, "").replace(/^\.\//, "")).replace(/\.md$/i, "");
+  return clean === oldNoExt || clean === oldPath.replace(/\.md$/i, "") || (allowBaseOnlyMatch && clean === oldBase);
+}
+
+async function waitForMetadataResolve(app: App, paths: string[], timeoutMs = 1200): Promise<void> {
+  const wanted = new Set(paths.map((path) => normalizePath(path)).filter(Boolean));
+  if (!wanted.size) return;
+  await new Promise<void>((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      window.clearTimeout(timer);
+      app.metadataCache.offref(refResolved);
+      app.metadataCache.offref(refResolve);
+      resolve();
+    };
+    const timer = window.setTimeout(finish, timeoutMs);
+    const refResolved = app.metadataCache.on("resolved", finish);
+    const refResolve = app.metadataCache.on("resolve", (file: TFile) => {
+      if (wanted.has(normalizePath(file.path))) finish();
+    });
+  });
 }
 
 async function revertReviewGateItem(app: App, item: ReviewGateManifestItem, obsidianConfigDir: string): Promise<string> {
@@ -39049,6 +39335,37 @@ async function copyTextToClipboard(text: string, status: string, t: (key: I18nKe
 function copyTextWithHiddenTextarea(text: string): boolean {
   void text;
   return false;
+}
+
+function extractCompatibleStreamDelta(json: unknown): string {
+  if (!isRecord(json) || !Array.isArray(json.choices)) return "";
+  return json.choices
+    .map((choice) => {
+      if (!isRecord(choice)) return "";
+      const delta = isRecord(choice.delta) ? choice.delta : {};
+      if (isReasoningResponseFragment(delta)) return "";
+      return (
+        extractTextFragment(delta.content) ||
+        extractTextFragment(delta.text) ||
+        extractTextFragment(choice.text) ||
+        ""
+      );
+    })
+    .filter(Boolean)
+    .join("");
+}
+
+function extractResponsesStreamDelta(json: unknown): string {
+  if (!isRecord(json)) return "";
+  const type = typeof json.type === "string" ? json.type.toLowerCase() : "";
+  if (/(?:reasoning|thinking|thought|analysis)/i.test(type)) return "";
+  if (type && !/(?:output_text\.delta|message\.delta|content\.delta|text\.delta|delta)/i.test(type)) return "";
+  return (
+    extractTextFragment(json.delta) ||
+    extractTextFragment(json.text) ||
+    extractTextFragment(json.output_text) ||
+    extractCompatibleStreamDelta(json)
+  );
 }
 
 function extractChoicesText(choices: unknown): string {

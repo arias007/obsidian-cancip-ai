@@ -968,22 +968,47 @@ if (-not $Case -or 'programmatic.model-retry-progress-visible'.Contains($Case)) 
   }
 }
 
+if (-not $Case -or 'programmatic.model-retry-backoff-pacing'.Contains($Case)) {
+  try {
+    $code = @'
+(async()=>{
+  const t=Date.now();
+  const p=app.plugins.plugins.cancip;
+  const v=p&&typeof p.activateView==='function'?await p.activateView():app.workspace.getLeavesOfType('cancip-view')[0]?.view??null;
+  if(!v)throw new Error('Cancip view unavailable');
+  if(typeof v.modelRetryDelayMs!=='function')throw new Error('modelRetryDelayMs unavailable');
+  const rate=v.modelRetryDelayMs(1,'HTTP 429 retry-after=2 rate limit');
+  const service=v.modelRetryDelayMs(1,'HTTP 503 overloaded');
+  const generic=v.modelRetryDelayMs(1,'synthetic retry failure');
+  return JSON.stringify({id:'programmatic.model-retry-backoff-pacing',elapsedMs:Date.now()-t,rate,service,generic});
+})()
+'@
+    $item = Invoke-CancipEval -Code $code -TimeoutSeconds 45
+    if ([int]$item.rate -lt 18000) { throw "rate-limit retry delay too short: $($item.rate)" }
+    if ([int]$item.service -lt 9000) { throw "service retry delay too short: $($item.service)" }
+    if ([int]$item.generic -lt 4000) { throw "generic retry delay too short: $($item.generic)" }
+    Add-CaseResult -Group 'programmaticCases' -Item @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs; rate = $item.rate; service = $item.service; generic = $item.generic }
+  } catch {
+    Add-CaseResult -Group 'programmaticCases' -Item @{ id = 'programmatic.model-retry-backoff-pacing'; pass = $false; error = $_.Exception.Message }
+  }
+}
+
 if (-not $Case -or 'programmatic.final-answer-keeps-numbered-sections'.Contains($Case)) {
   try {
     $finalNumberedContent = @'
-已完成重命名：`Cancip测试-审核流程.md` -> `Cancip测试 审核流程2.md`。
+Completed rename: `Smoke-old.md` -> `Smoke-new.md`.
 
-1. 动作
-已执行 Vault 文件重命名。
+1. Actions
+Renamed one vault file.
 
-2. 改动的文件
-- 原文件：`Cancip测试-审核流程.md`
-- 新文件：`Cancip测试 审核流程2.md`
+2. Files
+- Old: `Smoke-old.md`
+- New: `Smoke-new.md`
 
-3. 验证/结果
-工具返回重命名成功。
+3. Verification
+The rename result was successful.
 
-<!-- cancip-choices {"choices":["查看本次审核记录","继续重命名另一个测试文件","打开新文件核对"]} -->
+<!-- cancip-choices {"choices":["Open review panel","Verify changed file","Test another rename"]} -->
 '@
     $finalNumberedBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($finalNumberedContent))
     $code = @'
@@ -996,6 +1021,10 @@ if (-not $Case -or 'programmatic.final-answer-keeps-numbered-sections'.Contains(
   const oldActive=v.activeRequest;
   try{
     v.activeRequest=null;
+    v.userInteractingWithMessages=false;
+    v.pendingMessageRender=false;
+    if(v.messageInteractionIdleTimer!==null){clearTimeout(v.messageInteractionIdleTimer);v.messageInteractionIdleTimer=null;}
+    if(typeof v.cancelScheduledMessageRender==='function')v.cancelScheduledMessageRender();
     const finalContent=new TextDecoder().decode(Uint8Array.from(atob('__FINAL_NUMBERED_CONTENT_BASE64__'),(char)=>char.charCodeAt(0)));
     v.messages=[
       {id:'smoke-user-final-numbered',role:'user',content:'rename smoke',createdAt:Date.now()-1000},
@@ -1005,6 +1034,7 @@ if (-not $Case -or 'programmatic.final-answer-keeps-numbered-sections'.Contains(
     v.renderMessages();
     const text=String(v.messagesEl?.textContent||'');
     const processDetails=v.messagesEl?.querySelectorAll('.obcc-tool-json,.obcc-process-summary').length||0;
+    const parsedChoices=typeof v.choiceOptionsForMessage==='function'?v.choiceOptionsForMessage(finalContent):[];
     const choices=v.messagesEl?.querySelectorAll('.obcc-choice-card').length||0;
     const numberedLineBreak=new RegExp('\\r?\\n');
     const numberedLines=finalContent.split(numberedLineBreak).map((line)=>line.trim()).filter((line)=>{
@@ -1013,7 +1043,7 @@ if (-not $Case -or 'programmatic.final-answer-keeps-numbered-sections'.Contains(
       return (first==='1'||first==='2'||first==='3')&&(second==='.'||second===')'||second.charCodeAt(0)===12289);
     });
     const numberedVisible=numberedLines.map((line)=>line.slice(2).trim()).every((label)=>label&&text.includes(label));
-    return JSON.stringify({id:'programmatic.final-answer-keeps-numbered-sections',elapsedMs:Date.now()-t,numberedLines:numberedLines.length,numberedVisible,processDetails,choices});
+    return JSON.stringify({id:'programmatic.final-answer-keeps-numbered-sections',elapsedMs:Date.now()-t,numberedLines:numberedLines.length,numberedVisible,processDetails,parsedChoices:parsedChoices.length,choices});
   } finally {
     v.messages=oldMessages;
     v.activeRequest=oldActive;
@@ -1025,10 +1055,109 @@ if (-not $Case -or 'programmatic.final-answer-keeps-numbered-sections'.Contains(
     $item = Invoke-CancipEval -Code $code -TimeoutSeconds 45
     if ([int]$item.numberedLines -ne 3) { throw "final numbered source did not contain expected sections: $($item | ConvertTo-Json -Compress)" }
     if ([int]$item.processDetails -ne 0) { throw "final answer still rendered process/details folds: $($item | ConvertTo-Json -Compress)" }
+    if ([int]$item.parsedChoices -ne 3) { throw "final structured choices did not parse exactly three: $($item | ConvertTo-Json -Compress)" }
     if ([int]$item.choices -ne 3) { throw "final choices missing or not exactly three: $($item | ConvertTo-Json -Compress)" }
     Add-CaseResult -Group 'programmaticCases' -Item @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs }
   } catch {
     Add-CaseResult -Group 'programmaticCases' -Item @{ id = 'programmatic.final-answer-keeps-numbered-sections'; pass = $false; error = $_.Exception.Message }
+  }
+}
+
+if (-not $Case -or 'programmatic.choice-cards-no-local-fallback'.Contains($Case)) {
+  try {
+    $failureContent = @'
+1. No final answer was available.
+
+Files:
+changed: none
+
+Result:
+- The model returned empty content or the API failed.
+'@
+    $failureContentBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($failureContent))
+    $failurePromptBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('fix choice cards without local fallback'))
+    $code = @'
+(async()=>{
+  const t=Date.now();
+  const p=app.plugins.plugins.cancip;
+  const v=p&&typeof p.activateView==='function'?await p.activateView():app.workspace.getLeavesOfType('cancip-view')[0]?.view??null;
+  if(!v)throw new Error('Cancip view unavailable');
+  const oldMessages=(v.messages||[]).slice();
+  const oldActive=v.activeRequest;
+  try{
+    v.activeRequest=null;
+    const decodeBase64=(text)=>new TextDecoder().decode(Uint8Array.from(atob(text),(char)=>char.charCodeAt(0)));
+    const failureContent=decodeBase64('__FAILURE_CONTENT_BASE64__');
+    const userPrompt=decodeBase64('__FAILURE_PROMPT_BASE64__');
+    v.messages=[
+      {id:'smoke-user-no-local-choice',role:'user',content:userPrompt,createdAt:Date.now()-1000},
+      {id:'smoke-assistant-no-local-choice',role:'assistant',createdAt:Date.now(),content:failureContent,choiceOptionsStatus:'failed'}
+    ];
+    v.renderMessages();
+    const choices=v.messagesEl?.querySelectorAll('.obcc-choice-card').length||0;
+    const metadata=String(v.messages[1]?.content||'').includes('cancip-choices');
+    return JSON.stringify({id:'programmatic.choice-cards-no-local-fallback',elapsedMs:Date.now()-t,choices,metadata,status:v.messages[1]?.choiceOptionsStatus||''});
+  } finally {
+    v.messages=oldMessages;
+    v.activeRequest=oldActive;
+    if(typeof v.renderMessages==='function')v.renderMessages();
+  }
+})()
+'@
+    $code = $code.Replace('__FAILURE_CONTENT_BASE64__', $failureContentBase64).Replace('__FAILURE_PROMPT_BASE64__', $failurePromptBase64)
+    $item = Invoke-CancipEval -Code $code -TimeoutSeconds 45
+    if ($null -eq $item) { throw "eval returned null item" }
+    if ([int]$item.choices -ne 0) { throw "local fallback choices rendered without model choices: $($item | ConvertTo-Json -Compress)" }
+    if ($item.metadata) { throw "programmatic fallback content gained synthetic cancip-choices metadata: $($item | ConvertTo-Json -Compress)" }
+    Add-CaseResult -Group 'programmaticCases' -Item @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs }
+  } catch {
+    Add-CaseResult -Group 'programmaticCases' -Item @{ id = 'programmatic.choice-cards-no-local-fallback'; pass = $false; error = $_.Exception.Message }
+  }
+}
+
+if (-not $Case -or 'programmatic.choice-cards-model-generated'.Contains($Case)) {
+  try {
+    $modelChoicePromptBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('fix choice cards'))
+    $modelChoiceAnswerBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('Choice card source was fixed.'))
+    $modelChoicePayload = ConvertTo-CompactJson -Value @{ choices = @('check retry delay', 'verify model choices', 'open regression report') }
+    $modelChoicePayloadBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($modelChoicePayload))
+    $code = @'
+(async()=>{
+  const t=Date.now();
+  const p=app.plugins.plugins.cancip;
+  const v=p&&typeof p.activateView==='function'?await p.activateView():app.workspace.getLeavesOfType('cancip-view')[0]?.view??null;
+  if(!v)throw new Error('Cancip view unavailable');
+  const oldMessages=(v.messages||[]).slice();
+  const oldActive=v.activeRequest;
+  const oldCall=v.callChoiceSuggestionModel;
+  try{
+    v.activeRequest=null;
+    const decodeBase64=(text)=>new TextDecoder().decode(Uint8Array.from(atob(text),(char)=>char.charCodeAt(0)));
+    v.callChoiceSuggestionModel=async()=>decodeBase64('__MODEL_CHOICE_PAYLOAD_BASE64__');
+    v.messages=[
+      {id:'smoke-user-model-choice',role:'user',content:decodeBase64('__MODEL_CHOICE_PROMPT_BASE64__'),createdAt:Date.now()-1000},
+      {id:'smoke-assistant-model-choice',role:'assistant',createdAt:Date.now(),content:decodeBase64('__MODEL_CHOICE_ANSWER_BASE64__')}
+    ];
+    v.renderMessages();
+    await new Promise((resolve)=>setTimeout(resolve,120));
+    const choices=Array.from(v.messagesEl?.querySelectorAll('.obcc-choice-card')||[]).map((el)=>String(el.textContent||'').trim()).filter(Boolean);
+    return JSON.stringify({id:'programmatic.choice-cards-model-generated',elapsedMs:Date.now()-t,choices,status:v.messages[1]?.choiceOptionsStatus||''});
+  } finally {
+    v.callChoiceSuggestionModel=oldCall;
+    v.messages=oldMessages;
+    v.activeRequest=oldActive;
+    if(typeof v.renderMessages==='function')v.renderMessages();
+  }
+})()
+'@
+    $code = $code.Replace('__MODEL_CHOICE_PAYLOAD_BASE64__', $modelChoicePayloadBase64).Replace('__MODEL_CHOICE_PROMPT_BASE64__', $modelChoicePromptBase64).Replace('__MODEL_CHOICE_ANSWER_BASE64__', $modelChoiceAnswerBase64)
+    $item = Invoke-CancipEval -Code $code -TimeoutSeconds 45
+    if ($null -eq $item) { throw "eval returned null item" }
+    if (@($item.choices).Count -ne 3) { throw "model-generated choices did not render exactly three buttons: $($item | ConvertTo-Json -Compress)" }
+    if ([string]$item.status -ne 'ready') { throw "model-generated choices did not set ready status: $($item | ConvertTo-Json -Compress)" }
+    Add-CaseResult -Group 'programmaticCases' -Item @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs; choices = @($item.choices).Count }
+  } catch {
+    Add-CaseResult -Group 'programmaticCases' -Item @{ id = 'programmatic.choice-cards-model-generated'; pass = $false; error = $_.Exception.Message }
   }
 }
 
@@ -1086,13 +1215,13 @@ if (-not $Case -or 'programmatic.process-record-live-open-final-collapsed'.Conta
 if (-not $Case -or 'programmatic.choice-cards-render-at-message-bottom'.Contains($Case)) {
   try {
     $choiceBottomContent = @'
-已完成测试。
+Completed smoke layout test.
 
 ```json
 {"type":"read","path":"Smoke.md"}
 ```
 
-<!-- cancip-choices {"choices":["查看测试结果","继续测试布局","检查过程记录"]} -->
+<!-- cancip-choices {"choices":["Open smoke report","Verify card order","Test folded details"]} -->
 '@
     $choiceBottomJson = $choiceBottomContent | ConvertTo-Json -Compress
     $code = @'
@@ -1105,14 +1234,19 @@ if (-not $Case -or 'programmatic.choice-cards-render-at-message-bottom'.Contains
   const oldActive=v.activeRequest;
   try{
     v.activeRequest=null;
+    v.userInteractingWithMessages=false;
+    v.pendingMessageRender=false;
+    if(v.messageInteractionIdleTimer!==null){clearTimeout(v.messageInteractionIdleTimer);v.messageInteractionIdleTimer=null;}
+    if(typeof v.cancelScheduledMessageRender==='function')v.cancelScheduledMessageRender();
     const choiceContent=__CHOICE_BOTTOM_CONTENT__;
     v.messages=[{id:'smoke-choice-bottom',role:'assistant',createdAt:Date.now(),content:choiceContent}];
     v.renderMessages();
     const tool=v.messagesEl?.querySelector('.obcc-tool-json');
     const choices=v.messagesEl?.querySelector('.obcc-choice-cards');
+    const parsedChoices=typeof v.choiceOptionsForMessage==='function'?v.choiceOptionsForMessage(choiceContent):[];
     const follows=!!(tool&&choices&&(tool.compareDocumentPosition(choices)&Node.DOCUMENT_POSITION_FOLLOWING));
     const lastClass=v.messagesEl?.querySelector('.obcc-message')?.lastElementChild?.className||'';
-    return JSON.stringify({id:'programmatic.choice-cards-render-at-message-bottom',elapsedMs:Date.now()-t,hasTool:!!tool,hasChoices:!!choices,follows,lastClass:String(lastClass)});
+    return JSON.stringify({id:'programmatic.choice-cards-render-at-message-bottom',elapsedMs:Date.now()-t,hasTool:!!tool,hasChoices:!!choices,parsedChoices:parsedChoices.length,follows,lastClass:String(lastClass)});
   } finally {
     v.messages=oldMessages;
     v.activeRequest=oldActive;
@@ -1122,6 +1256,7 @@ if (-not $Case -or 'programmatic.choice-cards-render-at-message-bottom'.Contains
 '@
     $code = $code.Replace('__CHOICE_BOTTOM_CONTENT__', $choiceBottomJson)
     $item = Invoke-CancipEval -Code $code -TimeoutSeconds 45
+    if ([int]$item.parsedChoices -ne 3) { throw "structured choices did not parse exactly three: $($item | ConvertTo-Json -Compress)" }
     if (-not $item.hasTool -or -not $item.hasChoices) { throw "test did not render both folded detail and choices: $($item | ConvertTo-Json -Compress)" }
     if (-not $item.follows) { throw "choice cards are not after folded details: $($item | ConvertTo-Json -Compress)" }
     if ([string]$item.lastClass -notmatch 'obcc-choice-cards') { throw "choice cards are not the last block in the message: $($item | ConvertTo-Json -Compress)" }
