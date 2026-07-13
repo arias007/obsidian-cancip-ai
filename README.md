@@ -312,6 +312,40 @@ Currently supported command names:
 - `github.file`: read a repository file or directory via Contents API, e.g. `{"path":"README.md"}`.
 - `github.createIssue`: create an issue with `{"title":"...","body":"..."}`; requires a GitHub token.
 
+Automation examples included in the source release:
+
+List built-in automation templates:
+
+````text
+```cancip-action
+{"actions":[{"type":"command","command":"cancip.automation.templates"}]}
+```
+````
+
+Add the daily Vault maintenance report:
+
+````text
+```cancip-action
+{"actions":[{"type":"command","command":"cancip.automation.addTemplate","args":{"id":"auto-vault-daily-maintenance-report"}}]}
+```
+````
+
+Add the unified new/old note curation task:
+
+````text
+```cancip-action
+{"actions":[{"type":"command","command":"cancip.automation.addVaultCuration"}]}
+```
+````
+
+Create a manual one-off automation:
+
+````text
+```cancip-action
+{"actions":[{"type":"automation","op":"add","title":"Review pending notes","prompt":"Summarize recent unreviewed notes and list concrete next actions.","schedule":"manual","enabled":true}]}
+```
+````
+
 JS boundary: this is an Obsidian WebView/API bridge, not an OS shell. `obsidian.js.help/probe` are read-only. `obsidian.eval` and aliases are effect-capable and follow Cancip access mode: confirmation mode queues Approve/Reject, while full-access executes directly.
 
 GitHub settings live in the advanced Command bus group and mirror to `.cancip/config.json`:
@@ -387,3 +421,10 @@ mobile GitHub and local versioning design.
 
 - Fixed Obsidian review errors by moving dynamic UI hiding/render scratch styles into `styles.css`, using Obsidian CSS helpers for runtime positions/order, and rendering Markdown with a short-lived component.
 - Fixed release automation so semver tags such as `2.6.11` trigger GitHub release asset upload and artifact attestation.
+
+## 2.6.12
+
+- Added stable `CTX-*` and `REQ-*` trace IDs so process records can link prepared context, model request body, raw response, retries, and filtered visible answer.
+- Shows model request trace details before the request returns for normal chat, automation runs, tool continuation, forced action recovery, and read-only answer continuation.
+- Replaces generic continuation progress text with concrete tool-result verification/final-answer status.
+- Documents automation action examples in the source release README.

@@ -62,6 +62,27 @@ type ChatMessage = {
   };
 };
 
+type ContextTraceEntry = {
+  id: string;
+  title: string;
+  chars: number;
+  source?: string;
+  path?: string;
+  detail?: string;
+};
+
+type ModelContext = {
+  system: string;
+  contextText: string;
+  searchHits: SearchHit[];
+  images: ImageAttachmentContext[];
+  traceId?: string;
+  trace?: ContextTraceEntry[];
+  builtAt?: string;
+};
+
+type ModelCallContext = Pick<ModelContext, "system" | "contextText"> & Partial<Pick<ModelContext, "images" | "traceId" | "trace" | "builtAt">>;
+
 type ComposerMode = "ask" | "search" | "plan" | "edit";
 type ApiMode = "auto" | "compatible" | "responses";
 type TtsProvider = "auto" | "builtin-prime-tts" | "android-system" | "web-speech" | "custom-url";
@@ -142,9 +163,14 @@ type ApiProfile = {
 };
 
 type ModelCallAudit = {
+  traceId?: string;
   mode: Exclude<ApiMode, "auto">;
   url: string;
   requestBody: unknown;
+  startedAt?: string;
+  completedAt?: string;
+  inputChars?: number;
+  outputChars?: number;
   status?: number;
   responseText?: string;
   responseJson?: unknown;
@@ -220,6 +246,7 @@ function promptTextModal(app: App, title: string, initialValue: string): Promise
 }
 
 type ModelCharStats = {
+  traceId?: string;
   inputChars: number;
   outputChars: number;
   streaming: boolean;
@@ -1682,7 +1709,7 @@ const EN = {
   toolRunFinished: "Tool run finished.",
   toolFeedbackStep: "Tool feedback: {status} · {summary}",
   toolFeedbackSaved: "Tool feedback saved",
-  toolContinueStatus: "Continuing from tool results...",
+  toolContinueStatus: "Organizing tool results and preparing the next step...",
   toolRunResult: "Tool result",
   toolContinuationPrompt: "Tool results from the previous action:\n\n{summary}\n\nContinue the task using these results. Tool failures are authoritative and must not be ignored: explain the failure, choose a smaller corrected next action, or give the final answer. If a patch failed because find text was not found, do not retry the same find text; read the current file with a focused query/maxChars snippet, then use a smaller anchored exact patch or regex:true patch. If the user asked for an implementation/change and only read/search/todo/list steps have run so far, you are not done: continue with the next concrete patch/write/command action unless a real blocker is shown. If a write/patch/command already succeeded, verify it by reading the changed path or checking the command result, then give a final user-readable conclusion. If more tool actions are needed, output one cancip-action block; otherwise give the final answer with status, changed paths, verification, and any blocker.",
   invalidActionBlock: "Cancip found an action block, but it was not valid executable JSON. Use one fenced ```cancip-action JSON block or <cancip-action>JSON</cancip-action>.",
@@ -2234,7 +2261,7 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     toolRunFinished: "工具执行完成。",
     toolFeedbackStep: "工具反馈：{status} · {summary}",
     toolFeedbackSaved: "工具反馈已记录",
-    toolContinueStatus: "正在根据工具结果继续...",
+    toolContinueStatus: "正在整理工具结果并准备下一步...",
     toolRunResult: "工具结果",
     toolContinuationPrompt: "上一步工具执行结果：\n\n{summary}\n\n请根据这些结果继续完成任务。工具失败是权威上下文，不能忽略：要解释失败原因，改用更小且更明确的下一步，或直接给最终回答。如果 patch 因 find text was not found 失败，绝对不要重复同一个 find；先用 query/maxChars 读取当前文件片段，再换更小的精确锚点或 regex:true 补丁。如果用户要求实现/修改，而目前只执行了读取、搜索、待办或列表步骤，说明还没完成：除非有真实阻塞，否则继续给出下一个 patch/write/command 具体动作。如果写入、补丁或命令已经成功，必须再通过读取改动路径或检查命令结果验证，然后给用户能直接看懂的最终结论。若还需要工具动作，只输出一个 cancip-action 块；否则最终回答必须写明状态、改动路径、验证结果和阻塞项。",
     invalidActionBlock: "Cancip 找到了动作块，但里面不是可执行的 JSON。请使用一个 fenced ```cancip-action JSON 块，或 <cancip-action>JSON</cancip-action>。",
@@ -7917,6 +7944,8 @@ class CancipView extends ItemView {
   private sourceHits: SearchHit[] = [];
   private lastModelCallAudit: ModelCallAudit | null = null;
   private activeModelCharStats: ModelCharStats | null = null;
+  private contextTraceCounter = 0;
+  private modelTraceCounter = 0;
   private lastResponsesState: { profileId: string; model: string; responseId: string } | null = null;
   private hiddenContextKeys = new Set<string>();
   private messagesEl!: HTMLElement;
@@ -10453,7 +10482,9 @@ class CancipView extends ItemView {
       this.setStatus(this.t("generating"));
       generationStep = this.addProgressStep(this.modelCharProgressSummary(this.t("generating")));
       requestProgressSteps.push(generationStep);
-      const answer = await withTimeout(this.callModel(modelPrompt, context, rawPrompt), MODEL_CALL_TIMEOUT_MS, "model request timed out");
+      const modelTraceId = this.nextModelTraceId();
+      this.updateRunningProgressStep(generationStep, this.modelCharProgressSummary(this.t("generating")), this.formatModelRequestTraceDetail(modelTraceId, modelPrompt, context, activeProfile, rawPrompt));
+      const answer = await withTimeout(this.callModel(modelPrompt, context, rawPrompt, modelTraceId), MODEL_CALL_TIMEOUT_MS, "model request timed out");
       if (request.signal.aborted || !this.hasRequest(request)) return;
       const requestSessionId = this.requestSessionId(request);
       if (requestSessionId && requestSessionId !== this.sessionId) {
@@ -10802,6 +10833,12 @@ class CancipView extends ItemView {
     this.renderMessages();
   }
 
+  private updateRunningProgressStep(message: ChatMessage | null | undefined, summary: ProgressStepSummary, detail = "", status = this.t("toolRunExecuting")): void {
+    if (!message) return;
+    this.startProgressStepTimer(message, summary, detail, status);
+    this.renderMessages();
+  }
+
   private startProgressStepTimer(message: ChatMessage, summary: ProgressStepSummary, detail: string, status: string): void {
     this.stopProgressStepTimer(message.id);
     let lastElapsedBucket = -1;
@@ -10920,7 +10957,9 @@ class CancipView extends ItemView {
     try {
       const generationSummary = this.t("automationStarted", { title: task.title });
       generationStep = this.addProgressStep(this.modelCharProgressSummary(generationSummary));
-      const answer = await this.callModel(task.prompt, context, task.prompt);
+      const modelTraceId = this.nextModelTraceId();
+      this.updateRunningProgressStep(generationStep, this.modelCharProgressSummary(generationSummary), this.formatModelRequestTraceDetail(modelTraceId, task.prompt, context, activeProfile, task.prompt));
+      const answer = await this.callModel(task.prompt, context, task.prompt, modelTraceId);
       if (request.signal.aborted || !this.isCurrentRequest(request)) return this.t("stopped");
       this.updateProgressStep(generationStep, this.generationStepSummary(generationSummary, this.currentModelCharUsageText()), this.formatGenerationAuditDetail(task.prompt, context, activeProfile, answer, answer.trim(), task.prompt));
       const assistantMessage = this.addMessage("assistant", answer);
@@ -11014,8 +11053,10 @@ class CancipView extends ItemView {
 
       const generationSummary = this.t("automationStarted", { title: task.title });
       generationStep = this.addProgressStep(this.modelCharProgressSummary(generationSummary));
+      const modelTraceId = this.nextModelTraceId();
+      this.updateRunningProgressStep(generationStep, this.modelCharProgressSummary(generationSummary), this.formatModelRequestTraceDetail(modelTraceId, commandContext.prompt, context, activeProfile, rawPrompt));
       const answer = await withTimeout(
-        this.callModel(commandContext.prompt, context, rawPrompt),
+        this.callModel(commandContext.prompt, context, rawPrompt, modelTraceId),
         MODEL_CALL_TIMEOUT_MS,
         "automation model request timed out"
       );
@@ -12299,13 +12340,20 @@ class CancipView extends ItemView {
     return String(mode ?? "");
   }
 
-  private async buildContext(prompt: string, rawPrompt = prompt): Promise<{
-    system: string;
-    contextText: string;
-    searchHits: SearchHit[];
-    images: ImageAttachmentContext[];
-  }> {
+  private nextContextTraceId(): string {
+    this.contextTraceCounter += 1;
+    return `CTX-${String(this.contextTraceCounter).padStart(3, "0")}`;
+  }
+
+  private nextModelTraceId(): string {
+    this.modelTraceCounter += 1;
+    return `REQ-${String(this.modelTraceCounter).padStart(3, "0")}`;
+  }
+
+  private async buildContext(prompt: string, rawPrompt = prompt): Promise<ModelContext> {
     const parts: string[] = [];
+    const traceId = this.nextContextTraceId();
+    const trace: ContextTraceEntry[] = [];
     const searchHits: SearchHit[] = [];
     const images: ImageAttachmentContext[] = [];
     const settings = this.plugin.settings;
@@ -12315,10 +12363,26 @@ class CancipView extends ItemView {
     if (!this.taskControl && prompt.trim()) {
       this.ensureTaskControl(rawPrompt, prompt);
     }
+    const addTraceOnly = (title: string, meta: Omit<ContextTraceEntry, "id" | "title" | "chars"> & { chars?: number } = {}): void => {
+      trace.push({
+        id: `${traceId}-${String(trace.length + 1).padStart(2, "0")}`,
+        title,
+        chars: Math.max(0, Math.floor(meta.chars ?? 0)),
+        source: meta.source,
+        path: meta.path,
+        detail: meta.detail
+      });
+    };
+    const addContextPart = (title: string, content: string, meta: Omit<ContextTraceEntry, "id" | "title" | "chars"> = {}): void => {
+      const trimmed = String(content ?? "").trim();
+      if (!trimmed) return;
+      parts.push(`## ${title}\n${trimmed}`);
+      addTraceOnly(title, { ...meta, chars: trimmed.length });
+    };
 
     if (policy.includeWorkingState) {
       const workingState = this.sessionWorkingState();
-      if (workingState) parts.push(`## Current session working state\n${workingState}`);
+      addContextPart("Current session working state", workingState, { source: "session" });
     }
 
     if (policy.includeMemoryIndex) {
@@ -12328,7 +12392,7 @@ class CancipView extends ItemView {
         "",
         CONTEXT_STEP_TIMEOUT_MS
       );
-      if (memoryIndex) parts.push(`## Memory router index\n${memoryIndex}`);
+      addContextPart("Memory router index", memoryIndex, { source: "memory-index" });
     }
 
     if (settings.includeCoreMemory && policy.includeCoreMemory) {
@@ -12341,7 +12405,7 @@ class CancipView extends ItemView {
         "",
         CONTEXT_STEP_TIMEOUT_MS
       );
-      if (memory) parts.push(`## ${this.t("coreMemory")}\n${memory}`);
+      addContextPart(this.t("coreMemory"), memory, { source: "core-memory" });
     }
 
     if (policy.includeProjectMemory) {
@@ -12351,7 +12415,7 @@ class CancipView extends ItemView {
         "",
         CONTEXT_STEP_TIMEOUT_MS
       );
-      if (projectMemory) parts.push(`## Project memory\n${projectMemory}`);
+      addContextPart("Project memory", projectMemory, { source: "project-memory" });
     }
 
     if (policy.includePluginMemory) {
@@ -12361,12 +12425,12 @@ class CancipView extends ItemView {
         "",
         CONTEXT_STEP_TIMEOUT_MS
       );
-      if (pluginMemory) parts.push(`## Plugin and Obsidian command memory\n${pluginMemory}`);
+      addContextPart("Plugin and Obsidian command memory", pluginMemory, { source: "plugin-memory" });
     }
 
     if (policy.includeExperience) {
       const experience = await this.safeContextStep(this.t("taskExperience"), () => this.readTaskExperience(prompt), "", CONTEXT_STEP_TIMEOUT_MS);
-      if (experience) parts.push(`## ${this.t("taskExperience")}\n${experience}`);
+      addContextPart(this.t("taskExperience"), experience, { source: "experience" });
     }
 
     if (settings.codexMemoryAutoSearch && shouldAutoSearchForPrompt(prompt)) {
@@ -12377,19 +12441,19 @@ class CancipView extends ItemView {
         CONTEXT_STEP_TIMEOUT_MS
       );
       if (codexMemory.text) {
-        parts.push(`## ${this.t("codexMemory")}\n${codexMemory.text}`);
+        addContextPart(this.t("codexMemory"), codexMemory.text, { source: "codex-memory", detail: `${codexMemory.hits.length} hit(s)` });
         searchHits.push(...codexMemory.hits);
       }
     }
 
     if (settings.includeCurrentFile && this.includeCurrentFileForSession && policy.includeCurrentFile) {
       const current = await this.safeContextStep(this.t("currentFile"), () => this.getCurrentFileContext(), null, CONTEXT_STEP_TIMEOUT_MS);
-      if (current) parts.push(`## ${this.t("currentFile")}\n${current}`);
+      if (current) addContextPart(this.t("currentFile"), current, { source: "current-file" });
     }
 
     if (policy.includeDraftContext && this.draftContext.length) {
       for (const item of this.draftContext) {
-        parts.push(`## ${item.label}\n${item.content}`);
+        addContextPart(item.label, item.content, { source: item.source ?? "manual-context", path: item.path, detail: item.mimeType });
         if (item.dataUrl && item.mimeType?.startsWith("image/")) {
           images.push({
             name: item.label,
@@ -12406,7 +12470,7 @@ class CancipView extends ItemView {
       const content = await this.safeContextStep(`@${target.path}`, () => this.readMentionTarget(target), "", CONTEXT_STEP_TIMEOUT_MS);
       if (!content) continue;
       if (target.kind === "skill") activeSkillPaths.add(normalizePath(target.path));
-      parts.push(`## @${target.path}\n${content}`);
+      addContextPart(`@${target.path}`, content, { source: `mention:${target.kind}`, path: target.path, detail: target.detail });
       searchHits.push({
         path: target.path,
         title: target.title,
@@ -12423,11 +12487,13 @@ class CancipView extends ItemView {
     );
     if (autoSkills.length) {
       const skillBlocks: string[] = [];
+      const skillDetails: string[] = [];
       for (const skill of autoSkills) {
         const content = await this.safeContextStep(`skill:${skill.id}`, () => this.readSkillContext(skill, this.plugin.settings.maxAutoSkillContextChars), "", CONTEXT_STEP_TIMEOUT_MS);
         if (!content) continue;
         activeSkillPaths.add(normalizePath(skill.path));
         skillBlocks.push(content);
+        skillDetails.push(`${skill.name} (${skill.id}) -> ${skill.path}`);
         searchHits.push({
           path: skill.path,
           title: skill.name,
@@ -12435,19 +12501,23 @@ class CancipView extends ItemView {
           score: skill.priority
         });
       }
-      if (skillBlocks.length) parts.push(`## ${this.t("activeSkills")}\n${skillBlocks.join("\n\n")}`);
+      if (skillBlocks.length) addContextPart(this.t("activeSkills"), skillBlocks.join("\n\n"), { source: "auto-skills", detail: skillDetails.join("; ") });
     }
 
     if ((settings.useVaultSearchByDefault && shouldAutoSearchForPrompt(prompt)) || this.mode === "search") {
       const hits = await this.safeContextStep(this.t("vaultSearch"), () => this.searchVault(prompt, settings.maxContextFiles), [] as SearchHit[], CONTEXT_STEP_TIMEOUT_MS);
       searchHits.push(...hits.map((hit) => ({ ...hit, excerpt: "" })));
+      addTraceOnly(this.t("vaultSearch"), { source: "vault-search", chars: 0, detail: `${hits.length} hit(s)` });
     }
 
     return {
       system: this.modePrompt(prompt),
       contextText: parts.join("\n\n---\n\n"),
       searchHits,
-      images
+      images,
+      traceId,
+      trace,
+      builtAt: new Date().toISOString()
     };
   }
 
@@ -12566,10 +12636,22 @@ class CancipView extends ItemView {
     rawPrompt: string,
     taskGoal: string,
     modelPrompt: string,
-    context: { system: string; contextText: string; searchHits: SearchHit[]; images?: ImageAttachmentContext[] }
+    context: ModelContext
   ): string {
+    const traceSummary = this.formatContextTraceSummary(context);
     return this.formatAuditSections([
-      { title: "Summary", content: `${this.t("obsidianContext")}: ${context.contextText.length} chars\n${this.t("hitCount", { count: context.searchHits.length })}\nimages: ${context.images?.length ?? 0}` },
+      {
+        title: "Summary",
+        content: [
+          `context id: ${context.traceId ?? "CTX-unknown"}`,
+          `${this.t("obsidianContext")}: ${context.contextText.length} chars`,
+          `context blocks: ${context.trace?.filter((item) => item.chars > 0).length ?? 0}`,
+          `${this.t("hitCount", { count: context.searchHits.length })}`,
+          `images: ${context.images?.length ?? 0}`,
+          context.builtAt ? `built at: ${context.builtAt}` : ""
+        ].filter(Boolean).join("\n")
+      },
+      { title: "Context index", content: traceSummary || this.t("none") },
       { title: "Raw user prompt", content: rawPrompt },
       { title: "Resolved task goal", content: taskGoal },
       { title: "Model prompt for this turn", content: modelPrompt },
@@ -12581,7 +12663,7 @@ class CancipView extends ItemView {
 
   private formatGenerationAuditDetail(
     prompt: string,
-    context: { system: string; contextText: string },
+    context: ModelCallContext,
     profile: ApiProfile,
     rawAnswer: string,
     visibleAnswer: string,
@@ -12590,17 +12672,25 @@ class CancipView extends ItemView {
     const endpoint = normalizeApiUrl(profile.apiUrl);
     const requestedMode = profile.apiMode;
     const resolvedMode = resolveApiMode(profile.apiMode, endpoint);
+    const audit = this.lastModelCallAudit;
     return this.formatAuditSections([
       {
         title: "Summary",
         content: [
+          `request id: ${audit?.traceId ?? "REQ-unknown"}`,
+          `context id: ${context.traceId ?? "CTX-unknown"}`,
           `${this.t("settingsModel")}: ${profile.model || this.t("none")}`,
           `api mode: ${resolvedMode}${requestedMode !== resolvedMode ? ` (requested ${requestedMode})` : ""}`,
           `input context: ${context.contextText.length} chars`,
+          audit?.inputChars ? `request input: ${audit.inputChars} chars` : "",
           rawAnswer ? `raw reply: ${rawAnswer.length} chars` : "raw reply: empty",
-          visibleAnswer ? `visible reply: ${visibleAnswer.length} chars` : "visible reply: empty"
-        ].join("\n")
+          visibleAnswer ? `visible reply: ${visibleAnswer.length} chars` : "visible reply: empty",
+          audit?.status ? `http status: ${audit.status}` : "",
+          audit?.startedAt ? `started: ${audit.startedAt}` : "",
+          audit?.completedAt ? `completed: ${audit.completedAt}` : ""
+        ].filter(Boolean).join("\n")
       },
+      { title: "Context index used", content: this.formatContextTraceSummary(context) || this.t("none") },
       {
         title: "API profile",
         content: JSON.stringify({
@@ -12618,8 +12708,11 @@ class CancipView extends ItemView {
           maxOutputTokens: this.plugin.settings.maxOutputTokens
         }, null, 2)
       },
-      { title: "Token usage", content: this.lastModelCallAudit?.usage ? this.formatTokenUsage(this.lastModelCallAudit.usage) : this.t("none") },
-      { title: "Actual API call audit", content: this.lastModelCallAudit ?? this.t("none") },
+      { title: "Token usage", content: audit?.usage ? this.formatTokenUsage(audit.usage) : this.t("none") },
+      { title: "Actual API request body", content: audit?.requestBody ?? this.t("none") },
+      { title: "Raw API response text", content: audit?.responseText || this.t("none") },
+      { title: "Raw API response JSON", content: audit?.responseJson ?? this.t("none") },
+      { title: "Previous API attempts", content: audit?.previousAttempts?.length ? audit.previousAttempts : this.t("none") },
       { title: "System prompt sent", content: context.system },
       { title: "User input sent to model", content: this.modelInputText(prompt, context, rawPrompt) },
       { title: "Raw model reply", content: rawAnswer || this.t("none") },
@@ -12627,13 +12720,78 @@ class CancipView extends ItemView {
     ]);
   }
 
+  private formatModelRequestTraceDetail(
+    traceId: string,
+    prompt: string,
+    context: ModelCallContext,
+    profile: ApiProfile,
+    rawPrompt = prompt
+  ): string {
+    const endpoint = normalizeApiUrl(profile.apiUrl);
+    const requestedMode = profile.apiMode;
+    const resolvedMode = resolveApiMode(profile.apiMode, endpoint);
+    const inputText = this.modelInputText(prompt, context, rawPrompt);
+    return this.formatAuditSections([
+      {
+        title: "Summary",
+        content: [
+          `request id: ${traceId}`,
+          `context id: ${context.traceId ?? "CTX-unknown"}`,
+          `${this.t("settingsModel")}: ${profile.model || this.t("none")}`,
+          `api mode: ${resolvedMode}${requestedMode !== resolvedMode ? ` (requested ${requestedMode})` : ""}`,
+          `system: ${context.system.length} chars`,
+          `input: ${inputText.length} chars`,
+          `context: ${context.contextText.length} chars`,
+          `images: ${context.images?.length ?? 0}`
+        ].join("\n")
+      },
+      { title: "Context index used", content: this.formatContextTraceSummary(context) || this.t("none") },
+      { title: "System prompt to send", content: context.system },
+      { title: "User input to send", content: inputText },
+      {
+        title: "Resolved endpoint",
+        content: {
+          requestedMode,
+          resolvedMode,
+          chatUrl: endpoint.chatUrl,
+          responsesUrl: endpoint.responsesUrl
+        }
+      }
+    ]);
+  }
+
   private formatAuditSections(sections: Array<{ title: string; content: unknown }>): string {
     return sections
       .map((section) => {
-        const content = ensureDisplayText(section.content).trim() || this.t("none");
+        const content = this.formatAuditContent(section.content).trim() || this.t("none");
         return `## ${section.title}\n${content}`;
       })
       .join("\n\n---\n\n");
+  }
+
+  private formatAuditContent(value: unknown): string {
+    if (typeof value === "string") return value;
+    try {
+      const json = JSON.stringify(value, null, 2);
+      if (json) return json;
+    } catch {
+      // Fall through to display extraction.
+    }
+    return ensureDisplayText(value);
+  }
+
+  private formatContextTraceSummary(context: Pick<ModelContext, "traceId" | "trace">): string {
+    const trace = context.trace ?? [];
+    if (!trace.length) return "";
+    const lines = trace.map((item) => [
+      `- ${item.id}`,
+      item.title,
+      `${item.chars} chars`,
+      item.source ? `source:${item.source}` : "",
+      item.path ? `path:${item.path}` : "",
+      item.detail ? `detail:${item.detail}` : ""
+    ].filter(Boolean).join(" · "));
+    return [`${context.traceId ?? "CTX-unknown"} sections:`, ...lines].join("\n");
   }
 
   private modelCallAuditSnapshot(error?: string): ModelCallAudit | null {
@@ -12642,13 +12800,14 @@ class CancipView extends ItemView {
     return error ? { ...audit, error } : { ...audit };
   }
 
-  private async callModel(prompt: string, context: { system: string; contextText: string; images?: ImageAttachmentContext[] }, rawPrompt = prompt): Promise<string> {
+  private async callModel(prompt: string, context: ModelCallContext, rawPrompt = prompt, traceId = this.nextModelTraceId()): Promise<string> {
     const profile = this.plugin.activeApiProfile();
     const inputText = this.modelInputText(prompt, context, rawPrompt);
     const endpoint = normalizeApiUrl(profile.apiUrl);
     const mode = resolveApiMode(profile.apiMode, endpoint);
     this.lastModelCallAudit = null;
     this.activeModelCharStats = {
+      traceId,
       inputChars: `${context.system}\n\n${inputText}`.length,
       outputChars: 0,
       streaming: false,
@@ -12666,22 +12825,22 @@ class CancipView extends ItemView {
 
     try {
       if (mode === "responses") {
-        return finish(await this.callResponsesApi(profile, endpoint.responsesUrl, context.system, inputText, context.images ?? []));
+        return finish(await this.callResponsesApi(profile, endpoint.responsesUrl, context.system, inputText, context.images ?? [], traceId));
       }
 
       if (mode === "compatible") {
         this.lastResponsesState = null;
-        return finish(await this.callCompatibleApi(profile, endpoint.chatUrl, context.system, inputText, context.images ?? []));
+        return finish(await this.callCompatibleApi(profile, endpoint.chatUrl, context.system, inputText, context.images ?? [], traceId));
       }
 
       try {
-        return finish(await this.callResponsesApi(profile, endpoint.responsesUrl, context.system, inputText, context.images ?? []));
+        return finish(await this.callResponsesApi(profile, endpoint.responsesUrl, context.system, inputText, context.images ?? [], traceId));
       } catch (error) {
         const firstError = error instanceof Error ? error.message : String(error);
         const firstAudit = this.modelCallAuditSnapshot(firstError);
         try {
           this.lastResponsesState = null;
-          const answer = await this.callCompatibleApi(profile, endpoint.chatUrl, context.system, inputText, context.images ?? []);
+          const answer = await this.callCompatibleApi(profile, endpoint.chatUrl, context.system, inputText, context.images ?? [], traceId);
           const currentAudit = this.modelCallAuditSnapshot();
           if (firstAudit && currentAudit) {
             this.lastModelCallAudit = {
@@ -12708,8 +12867,9 @@ class CancipView extends ItemView {
     }
   }
 
-  private async callCompatibleApi(profile: ApiProfile, url: string, system: string, inputText: string, images: ImageAttachmentContext[] = []): Promise<string> {
+  private async callCompatibleApi(profile: ApiProfile, url: string, system: string, inputText: string, images: ImageAttachmentContext[] = [], traceId = this.nextModelTraceId()): Promise<string> {
     const settings = this.plugin.settings;
+    const startedAt = new Date().toISOString();
     const userContent = images.length
       ? [
           { type: "text", text: inputText },
@@ -12728,12 +12888,14 @@ class CancipView extends ItemView {
         { role: "user", content: userContent }
       ]
     };
-    this.lastModelCallAudit = { mode: "compatible", url, requestBody: redactImagePayloads(body) };
+    this.lastModelCallAudit = { traceId, mode: "compatible", url, requestBody: redactImagePayloads(body), startedAt, inputChars: `${system}\n\n${inputText}`.length };
     const response = await this.postJson(url, body, profile.apiKey);
     const text = extractResponseText(response.json) || extractNonJsonText(response.text);
     const usage = extractTokenUsage(response.json, estimateRequestTokens(system, inputText), text);
     this.lastModelCallAudit = {
-      ...(this.lastModelCallAudit ?? { mode: "compatible", url, requestBody: redactImagePayloads(body) }),
+      ...(this.lastModelCallAudit ?? { traceId, mode: "compatible", url, requestBody: redactImagePayloads(body), startedAt }),
+      completedAt: new Date().toISOString(),
+      outputChars: text.length,
       status: response.status,
       responseText: response.text,
       responseJson: response.json,
@@ -12744,8 +12906,9 @@ class CancipView extends ItemView {
     throw new Error(`Chat Completions returned no assistant text (${describeResponseShape(response.json)})`);
   }
 
-  private async callResponsesApi(profile: ApiProfile, url: string, instructions: string, inputText: string, images: ImageAttachmentContext[] = []): Promise<string> {
+  private async callResponsesApi(profile: ApiProfile, url: string, instructions: string, inputText: string, images: ImageAttachmentContext[] = [], traceId = this.nextModelTraceId()): Promise<string> {
     const settings = this.plugin.settings;
+    const startedAt = new Date().toISOString();
     const input = images.length
       ? [{
           role: "user",
@@ -12767,7 +12930,7 @@ class CancipView extends ItemView {
     } as Record<string, unknown>;
     const previousResponseId = this.previousResponseIdFor(profile);
     if (previousResponseId) body.previous_response_id = previousResponseId;
-    this.lastModelCallAudit = { mode: "responses", url, requestBody: redactImagePayloads(body) };
+    this.lastModelCallAudit = { traceId, mode: "responses", url, requestBody: redactImagePayloads(body), startedAt, inputChars: `${instructions}\n\n${inputText}`.length };
     const response = await this.postJson(url, body, profile.apiKey);
     const text = extractResponseText(response.json) || extractNonJsonText(response.text);
     const usage = extractTokenUsage(response.json, estimateRequestTokens(instructions, inputText), text);
@@ -12776,7 +12939,9 @@ class CancipView extends ItemView {
       this.lastResponsesState = { profileId: profile.id, model: profile.model, responseId };
     }
     this.lastModelCallAudit = {
-      ...(this.lastModelCallAudit ?? { mode: "responses", url, requestBody: redactImagePayloads(body) }),
+      ...(this.lastModelCallAudit ?? { traceId, mode: "responses", url, requestBody: redactImagePayloads(body), startedAt }),
+      completedAt: new Date().toISOString(),
+      outputChars: text.length,
       status: response.status,
       responseText: response.text,
       responseJson: response.json,
@@ -13996,16 +14161,16 @@ class CancipView extends ItemView {
     const summary = trimContext((latest?.summary ?? "").replace(/\s+/g, " "), 110);
     const prefix = iteration > 0 ? `${iteration + 1}. ` : "";
     if (isChineseLanguage(this.plugin.language())) {
-      if (!latest) return `${prefix}正在检查上一轮结果和下一步`;
+      if (!latest) return `${prefix}准备下一个具体工具动作或最终回答`;
       if (latest.status === "failed") return `${prefix}工具失败：${summary}，正在按错误继续修复`;
       if (latest.status === "pending") return `${prefix}等待批准：${summary}`;
-      if (latest.status === "executed") return `${prefix}工具已完成：${summary}，正在判断是否还要继续`;
+      if (latest.status === "executed") return `${prefix}工具已完成：${summary}，正在验证结果或生成最终回答`;
       return `${prefix}正在处理工具结果：${summary}`;
     }
-    if (!latest) return `${prefix}Checking previous results and the next step`;
+    if (!latest) return `${prefix}Preparing the next concrete tool action or final answer`;
     if (latest.status === "failed") return `${prefix}Tool failed: ${summary}; continuing from the error`;
     if (latest.status === "pending") return `${prefix}Waiting for approval: ${summary}`;
-    if (latest.status === "executed") return `${prefix}Tool finished: ${summary}; deciding the next step`;
+    if (latest.status === "executed") return `${prefix}Tool finished: ${summary}; verifying result or writing final answer`;
     return `${prefix}Processing tool result: ${summary}`;
   }
 
@@ -14152,7 +14317,7 @@ class CancipView extends ItemView {
 
   private async forceToolActionForImplementationTask(
     rawPrompt: string,
-    context: { system: string; contextText: string },
+    context: ModelCallContext,
     request: AbortController,
     reason: "missing" | "low-commitment" = "missing"
   ): Promise<ActionHandlingResult | null> {
@@ -14165,12 +14330,15 @@ class CancipView extends ItemView {
     let continueStep: ChatMessage | null = null;
     let hardStep: ChatMessage | null = null;
     try {
+      const activeProfile = this.plugin.activeApiProfile();
       const prompt = this.t(reason === "low-commitment" ? "toolActionLowCommitmentPrompt" : "toolActionRequiredPrompt", { task: rawPrompt });
       continueStep = this.addProgressStep(this.modelCharProgressSummary(progressSummary));
-      const answer = await withTimeout(this.callModel(prompt, context, rawPrompt), MODEL_CALL_TIMEOUT_MS, "model request timed out");
+      const modelTraceId = this.nextModelTraceId();
+      this.updateRunningProgressStep(continueStep, this.modelCharProgressSummary(progressSummary), this.formatModelRequestTraceDetail(modelTraceId, prompt, context, activeProfile, rawPrompt));
+      const answer = await withTimeout(this.callModel(prompt, context, rawPrompt, modelTraceId), MODEL_CALL_TIMEOUT_MS, "model request timed out");
       if (request.signal.aborted || !this.isCurrentRequest(request)) return null;
-      this.updateProgressStep(continueStep, this.generationStepSummary(progressSummary, this.currentModelCharUsageText()), this.t("done"));
       const visibleAnswer = visibleAssistantAnswer(answer, true);
+      this.updateProgressStep(continueStep, this.generationStepSummary(progressSummary, this.currentModelCharUsageText()), this.formatGenerationAuditDetail(prompt, context, activeProfile, answer, visibleAnswer, rawPrompt));
       const assistantMessage = visibleAnswer ? this.addMessage("assistant", visibleAnswer) : undefined;
       if (assistantMessage) this.attachChoiceSource(assistantMessage, answer);
       if (assistantMessage) this.renderMessages();
@@ -14180,10 +14348,12 @@ class CancipView extends ItemView {
       const hardPrompt = this.t("toolActionHardRequiredPrompt", { task: rawPrompt });
       const hardSummary = this.forceToolActionProgressSummary(rawPrompt, "missing");
       hardStep = this.addProgressStep(this.modelCharProgressSummary(hardSummary));
-      const hardAnswer = await withTimeout(this.callModel(hardPrompt, context, rawPrompt), MODEL_CALL_TIMEOUT_MS, "model request timed out");
+      const hardTraceId = this.nextModelTraceId();
+      this.updateRunningProgressStep(hardStep, this.modelCharProgressSummary(hardSummary), this.formatModelRequestTraceDetail(hardTraceId, hardPrompt, context, activeProfile, rawPrompt));
+      const hardAnswer = await withTimeout(this.callModel(hardPrompt, context, rawPrompt, hardTraceId), MODEL_CALL_TIMEOUT_MS, "model request timed out");
       if (request.signal.aborted || !this.isCurrentRequest(request)) return null;
-      this.updateProgressStep(hardStep, this.generationStepSummary(hardSummary, this.currentModelCharUsageText()), this.t("done"));
       const hardVisibleAnswer = visibleAssistantAnswer(hardAnswer, true);
+      this.updateProgressStep(hardStep, this.generationStepSummary(hardSummary, this.currentModelCharUsageText()), this.formatGenerationAuditDetail(hardPrompt, context, activeProfile, hardAnswer, hardVisibleAnswer, rawPrompt));
       const hardAssistantMessage = hardVisibleAnswer ? this.addMessage("assistant", hardVisibleAnswer) : undefined;
       if (hardAssistantMessage) this.attachChoiceSource(hardAssistantMessage, hardAnswer);
       if (hardAssistantMessage) this.renderMessages();
@@ -14212,7 +14382,7 @@ class CancipView extends ItemView {
   }
 
   private async continueAfterToolRuns(
-    context: { system: string; contextText: string },
+    context: ModelCallContext,
     previous: ActionHandlingResult,
     request: AbortController,
     originalPrompt = ""
@@ -14243,24 +14413,29 @@ class CancipView extends ItemView {
       const progressSummary = this.toolContinuationProgressSummary(current, iteration);
       this.setStatus(progressSummary);
       let continueStep: ChatMessage | null = null;
-      let continuationContext: { system: string; contextText: string } = { system: this.modePrompt(originalPrompt), contextText: context.contextText };
+      let continuationContext: ModelCallContext = { system: this.modePrompt(originalPrompt), contextText: context.contextText, traceId: context.traceId, trace: context.trace };
       try {
+        const activeProfile = this.plugin.activeApiProfile();
         const experience = await this.safeContextStep(this.t("taskExperience"), () => this.readTaskExperience(originalPrompt), "", CONTEXT_STEP_TIMEOUT_MS);
         continuationContext = {
           system: this.modePrompt(originalPrompt),
           contextText: [
             trimContext(context.contextText, implementationTask ? 9000 : 7000),
             experience ? `## ${this.t("taskExperience")}\n${experience}` : ""
-          ].filter(Boolean).join("\n\n---\n\n")
+          ].filter(Boolean).join("\n\n---\n\n"),
+          traceId: context.traceId,
+          trace: context.trace
         };
         const prompt = this.t("toolContinuationPrompt", {
           summary: `${this.conversationForToolContinuation(implementationTask ? 8 : undefined, implementationTask ? 500 : undefined)}\n\n${this.toolRunsForPrompt(current.runs, implementationTask ? 1200 : 1800, implementationTask ? 6 : undefined)}`.trim()
         });
         continueStep = this.addProgressStep(this.modelCharProgressSummary(progressSummary));
-        const answer = await withTimeout(this.callModel(prompt, continuationContext, originalPrompt), MODEL_CALL_TIMEOUT_MS, "model request timed out");
+        const modelTraceId = this.nextModelTraceId();
+        this.updateRunningProgressStep(continueStep, this.modelCharProgressSummary(progressSummary), this.formatModelRequestTraceDetail(modelTraceId, prompt, continuationContext, activeProfile, originalPrompt));
+        const answer = await withTimeout(this.callModel(prompt, continuationContext, originalPrompt, modelTraceId), MODEL_CALL_TIMEOUT_MS, "model request timed out");
         if (request.signal.aborted || !this.isCurrentRequest(request)) return null;
-        this.updateProgressStep(continueStep, this.generationStepSummary(progressSummary, this.currentModelCharUsageText()), this.t("done"));
         const visibleAnswer = visibleAssistantAnswer(answer, false);
+        this.updateProgressStep(continueStep, this.generationStepSummary(progressSummary, this.currentModelCharUsageText()), this.formatGenerationAuditDetail(prompt, continuationContext, activeProfile, answer, visibleAnswer, originalPrompt));
         const assistantMessage = visibleAnswer ? this.addMessage("assistant", visibleAnswer) : undefined;
         if (assistantMessage) this.attachChoiceSource(assistantMessage, answer);
         this.renderMessages();
@@ -14322,7 +14497,7 @@ class CancipView extends ItemView {
   }
 
   private async answerInformationTaskFromToolRuns(
-    context: { system: string; contextText: string },
+    context: ModelCallContext,
     result: ActionHandlingResult,
     request: AbortController,
     originalPrompt: string
@@ -14332,12 +14507,15 @@ class CancipView extends ItemView {
     this.setStatus(progressSummary);
     let continueStep: ChatMessage | null = null;
     try {
-      const continuationContext = {
+      const activeProfile = this.plugin.activeApiProfile();
+      const continuationContext: ModelCallContext = {
         system: this.modePrompt(originalPrompt),
         contextText: [
           trimContext(context.contextText, 7000),
           `## ${this.t("toolRunResult")}\n${this.toolRunsForPrompt(result.runs, 1800, 6)}`
-        ].filter(Boolean).join("\n\n---\n\n")
+        ].filter(Boolean).join("\n\n---\n\n"),
+        traceId: context.traceId,
+        trace: context.trace
       };
       const prompt = [
         "Answer the user's original read/list/explain question using the tool results above.",
@@ -14349,10 +14527,12 @@ class CancipView extends ItemView {
         `Original question: ${originalPrompt}`
       ].join("\n");
       continueStep = this.addProgressStep(this.modelCharProgressSummary(progressSummary));
-      const answer = await withTimeout(this.callModel(prompt, continuationContext, originalPrompt), INFORMATIONAL_ANSWER_TIMEOUT_MS, "informational answer timed out");
+      const modelTraceId = this.nextModelTraceId();
+      this.updateRunningProgressStep(continueStep, this.modelCharProgressSummary(progressSummary), this.formatModelRequestTraceDetail(modelTraceId, prompt, continuationContext, activeProfile, originalPrompt));
+      const answer = await withTimeout(this.callModel(prompt, continuationContext, originalPrompt, modelTraceId), INFORMATIONAL_ANSWER_TIMEOUT_MS, "informational answer timed out");
       if (request.signal.aborted || !this.isCurrentRequest(request)) return;
-      this.updateProgressStep(continueStep, this.generationStepSummary(progressSummary, this.currentModelCharUsageText()), this.t("done"));
       const visibleAnswer = visibleAssistantAnswer(answer, true);
+      this.updateProgressStep(continueStep, this.generationStepSummary(progressSummary, this.currentModelCharUsageText()), this.formatGenerationAuditDetail(prompt, continuationContext, activeProfile, answer, visibleAnswer, originalPrompt));
       if (!visibleAnswer) {
         this.addMessage("assistant", this.t("emptyApiReplyWithSuppressedTools"));
         this.renderMessages();
@@ -16379,7 +16559,10 @@ class CancipView extends ItemView {
     const recentMessages = this.messages.slice(-8);
     const lines: string[] = [];
     const recentUsers = recentMessages.filter((message) => message.role === "user").slice(-2);
-    const recentAssistants = recentMessages.filter((message) => message.role === "assistant").slice(-1);
+    const recentAssistants = recentMessages
+      .filter((message) => message.role === "assistant")
+      .filter((message) => !prepareMessageDisplay(redactSensitiveText(message.content)).processOnly)
+      .slice(-1);
     const recentRuns = recentMessages.flatMap((message) => message.toolRuns ?? []).slice(-6);
     if (recentUsers.length) {
       lines.push(`Recent user goals:\n${recentUsers.map((message) => `- ${trimContext(redactSensitiveText(messageOutlineText(message.content) || message.content), 220)}`).join("\n")}`);
