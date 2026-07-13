@@ -1,6 +1,6 @@
 import { type DataAdapter, normalizePath } from "obsidian";
 
-export type ReviewGateStructureKind = "rename" | "move" | "merge" | "split" | "folder";
+export type ReviewGateStructureKind = "rename" | "move" | "copy" | "merge" | "split" | "folder";
 
 export type ReviewGateStructureChange = {
   kind: ReviewGateStructureKind;
@@ -57,8 +57,6 @@ export type ReviewGateBuildResult = {
   changedCount: number;
   structureCount: number;
 };
-
-export const REVIEW_GATE_SCHEMA_VERSION = 1;
 
 type PreparedReviewItem = {
   index: number;
@@ -138,7 +136,7 @@ async function buildManifest(adapter: DataAdapter, options: ReviewGateBuildOptio
     throw new Error("No reviewable files or manifest items found.");
   }
   return {
-    schemaVersion: REVIEW_GATE_SCHEMA_VERSION,
+    schemaVersion: 1,
     title,
     vault_label: cleanText(options.vaultLabel) || "note",
     folder: outputDir,
@@ -246,7 +244,7 @@ async function readTextIfExists(adapter: DataAdapter, path: string, maxFileChars
     const stat = await adapter.stat(path);
     if (!stat || stat.type !== "file") return null;
     const text = await adapter.read(path);
-    return truncateText(removeNulCharacters(text), maxFileChars);
+    return truncateText(text.replace(/\0/g, ""), maxFileChars);
   } catch {
     return null;
   }
@@ -306,7 +304,7 @@ function lineDelta(oldText: string, newText: string): { added: number; removed: 
 
 function reviewOutputDir(options: ReviewGateBuildOptions): string {
   if (options.output && options.output.trim()) return safeVaultPath(options.output);
-  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z").replace("T", "-");
+  const stamp = new Date().toISOString().replace(/[-:.]/g, "").replace("T", "-");
   return safeVaultPath(`${options.outputRoot}/review-${stamp}`);
 }
 
@@ -433,11 +431,7 @@ function basename(path: string): string {
 }
 
 function cleanText(value: unknown): string {
-  return typeof value === "string" ? removeNulCharacters(value).trim() : "";
-}
-
-function removeNulCharacters(value: string): string {
-  return value.split("\0").join("");
+  return typeof value === "string" ? value.replace(/\0/g, "").trim() : "";
 }
 
 function truncateText(value: string, maxChars: number): string {
@@ -450,5 +444,5 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isStructureKind(value: string): value is ReviewGateStructureKind {
-  return value === "rename" || value === "move" || value === "merge" || value === "split" || value === "folder";
+  return value === "rename" || value === "move" || value === "copy" || value === "merge" || value === "split" || value === "folder";
 }

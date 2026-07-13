@@ -1,11 +1,12 @@
 {
   "name": "cancip",
-  "version": "2.7.0",
+  "version": "2.8.0",
   "private": true,
   "main": "main.js",
   "scripts": {
-    "build": "node scripts/prepare-release-output.mjs && tsc --noEmit --skipLibCheck && node esbuild.config.mjs production",
-    "check": "node scripts/prepare-release-output.mjs && tsc --noEmit --skipLibCheck"
+    "verify:source-parity": "node scripts/verify-source-runtime-parity.mjs",
+    "build": "npm run verify:source-parity && tsc --noEmit --skipLibCheck && node scripts/prepare-release-output.mjs && node esbuild.config.mjs production",
+    "check": "tsc --noEmit --skipLibCheck"
   },
   "devDependencies": {
     "@types/node": "^20.14.10",
