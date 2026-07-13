@@ -10,6 +10,9 @@
 - Source archive SHA256: `AAC009E30E42B2161CFE255517DFBB4E22ED453AB389279B6C8CEEB205A346A3`.
 - Runtime patch-chain archive: `C:/Users/35007/Documents/Codex/backups/cancip-runtime-patch-chain-2.5.4-to-2.6.10-20260713.zip`.
 - Patch-chain archive SHA256: `7ACD20FA4A09D1393A34FA8E73EBA29B09C7168B813BD2759FDFDCC5BB1765FA`.
+- Closest recovered source candidate found later: `C:/Users/35007/Documents/Codex/github-staging/cancip-2.3.9-skills`, dirty worktree manifest `2.5.3`.
+- Closest source candidate archive: `C:/Users/35007/Documents/Codex/backups/cancip-source-2.5.3-dirty-near-2.6.10-20260713.zip`.
+- Closest source candidate SHA256: `EAD0732DE06CC79B23551EF2F520A61DB5DD9E7BC30FC19FCA57B21E17A41FBD`.
 
 ## Why 2.6.10 is not a valid source base
 
@@ -30,8 +33,31 @@ Therefore the released runtime and committed source diverged. Rebuilding from th
 - `2.2.9`: source has 1,068 named methods; released runtime has 1,103. The release changed only built `main.js`/`styles.css`, not TypeScript.
 - A clean build from the `2.2.9` source produces the exact `2.1.9` `main.js` Git blob `c5440eb495ebc052f6fb021efe9d37fcefa5f97f`.
 - `2.6.10`: committed source has only 603 named methods while the released runtime has 1,153; 576 runtime methods are absent from the tagged source and 26 source methods are absent from the runtime.
+- Local dirty `cancip-2.3.9-skills` worktree: manifest `2.5.3`, source has 1,114 named methods. Compared with the released `2.6.10` runtime, only 39 runtime methods are absent and there are zero extra source methods. This is the closest recovered TypeScript source candidate, but it is still not a complete `2.6.10` source.
 
 The `2.8.0` recovery tree therefore preserves the released `2.2.9` runtime files and blocks normal builds until the runtime-only behavior has been restored to TypeScript.
+
+## Closest recovered source candidate
+
+The best local candidate is no longer the tagged `2.2.9` source. A later dirty worktree exists at:
+
+`C:/Users/35007/Documents/Codex/github-staging/cancip-2.3.9-skills`
+
+Important facts:
+
+- Branch: `codex/2.3.9-builtin-skills`.
+- Last commit: `9303d04 Migrate Cancip automation improvements`.
+- Working tree is dirty and must be preserved.
+- Committed `9303d04` manifest is `2.4.1` with 1,073 source methods.
+- Dirty worktree manifest is `2.5.3` with 1,114 source methods.
+- Released `2.6.10` runtime has 1,153 methods.
+- Dirty `2.5.3` source is missing 39 methods from the released `2.6.10` runtime and has no extra methods compared with that runtime.
+
+This candidate should be evaluated as the practical migration base before starting from `2.2.9`. The remaining 39 methods can be ported from the preserved `2.5.4 -> 2.6.10` runtime patch chain.
+
+Missing from the closest source candidate compared with released `2.6.10` runtime:
+
+`applyUiButtonRuleToElement`, `applyUiButtonRulesInternal`, `applyUiButtonRulesToMutationRecords`, `applyUiButtonRulesToMutationRecordsInternal`, `cachedPendingReviewGateItemPaths`, `cachedReviewGatePackage`, `clearUiButtonRuleApplyTimer`, `clearUiRuleMarksInDocument`, `curationAutomationActionGate`, `currentSessionTimeline`, `currentTurnNeedsVisibleFinal`, `displayCommonSettings`, `driveStructuredFinal`, `ensureCurrentSessionTimelineStatus`, `excludeAiCreatedReviewItemsFromVaultCuration`, `invalidateReviewGateSnapshot`, `liveChangedFileEntries`, `liveChangedFileTotals`, `meaningfulProcessBlocks`, `migrateHiddenReviewGatesToVisible`, `migrateVisibleExportJsonToHidden`, `openLiveFilesMenu`, `playEnglishTtsPartIfAvailable`, `prewarmReviewGateData`, `processStepDetailText`, `processStepHeadline`, `refreshChatViewsForSession`, `renderHeaderLiveStatus`, `reviewGateSnapshot`, `setStatusBarStylesIfChanged`, `toggleLiveFilesMenu`, `uiButtonDocuments`, `uiButtonIdentityForElement`, `uiButtonMenuGroupGuardForElement`, `uiButtonRuleMatchesElement`, `uiButtonViewTypeForTarget`, `updateMobileStatusBarMetrics`, `vaultCurationPreflight`, and `visibleFinalAssistantForMessages`.
 
 ### Runtime-only methods already present in released 2.2.9
 
@@ -45,7 +71,7 @@ The first recovery batch is the following 35 methods:
 - GitHub tags and commit history checked back through the button-management versions.
 - GitHub Actions artifacts: zero retained artifacts.
 - Local Cancip Git object database: no unreachable commits containing another source tree.
-- Local Codex workspace, Desktop, Downloads, and `D:/share`: no second `main.ts` containing the complete button editor.
+- Local Codex workspace, Desktop, Downloads, and `D:/share`: no complete `2.6.10` TypeScript source found. However, `C:/Users/35007/Documents/Codex/github-staging/cancip-2.3.9-skills` contains the closest recovered dirty `2.5.3` TypeScript source candidate.
 - Local `work/cancip-2.5.4` through `work/cancip-2.6.10`: no TypeScript source, but the sequential runtime patch scripts, version tests, screenshots, README, and final runtime are preserved.
 
 ## Functional improvements after 2.2.9
@@ -161,9 +187,9 @@ High-risk replacement areas include Review Gate reconciliation, automation-state
 
 ## Migration rule for 2.8.0
 
-1. Keep the `2.2.9` TypeScript tree as the editable recovery base, while recognizing that its source-built runtime is equivalent to `2.1.9`.
-2. Restore the 35 released-`2.2.9` runtime-only methods and related CSS first.
-3. Port one later functional group at a time from the preserved `2.5.4 -> 2.6.10` patch chain into TypeScript/CSS.
+1. Prefer evaluating the dirty `2.5.3` source candidate as the new editable recovery base because it is much closer to the released `2.6.10` runtime than tagged `2.2.9`.
+2. If the dirty `2.5.3` candidate cannot be stabilized, fall back to the tagged `2.2.9` source plus the existing parity guard.
+3. Restore the remaining runtime-only methods and related CSS from the preserved `2.5.4 -> 2.6.10` patch chain into TypeScript/CSS.
 4. Recreate each version's regression checks against source-built output.
 5. Build after every group and compare required runtime methods and user-visible behavior.
 6. Keep `npm run build` guarded by `verify:source-parity` until the known runtime-only method set is restored.
