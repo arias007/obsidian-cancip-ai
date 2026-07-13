@@ -4,9 +4,9 @@
   "private": true,
   "main": "main.js",
   "scripts": {
+    "verify:source-parity": "node scripts/verify-source-runtime-parity.mjs",
     "build": "npm run verify:source-parity && tsc --noEmit --skipLibCheck && node scripts/prepare-release-output.mjs && node esbuild.config.mjs production",
-    "check": "tsc --noEmit --skipLibCheck",
-    "verify:source-parity": "node scripts/verify-source-runtime-parity.mjs"
+    "check": "tsc --noEmit --skipLibCheck"
   },
   "devDependencies": {
     "@types/node": "^20.14.10",

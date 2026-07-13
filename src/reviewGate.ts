@@ -304,7 +304,7 @@ function lineDelta(oldText: string, newText: string): { added: number; removed: 
 
 function reviewOutputDir(options: ReviewGateBuildOptions): string {
   if (options.output && options.output.trim()) return safeVaultPath(options.output);
-  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z").replace("T", "-");
+  const stamp = new Date().toISOString().replace(/[-:.]/g, "").replace("T", "-");
   return safeVaultPath(`${options.outputRoot}/review-${stamp}`);
 }
 

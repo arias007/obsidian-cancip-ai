@@ -195,3 +195,23 @@ High-risk replacement areas include Review Gate reconciliation, automation-state
 6. Keep `npm run build` guarded by `verify:source-parity` until the known runtime-only method set is restored.
 7. Never patch or treat minified `main.js` as the authoritative source again.
 8. Do not call a release source-complete unless a clean checkout builds the same feature inventory that the release tests require.
+
+## 2.8.0 recovery status on 2026-07-13
+
+- Active recovery repo: `C:/Users/35007/Documents/Codex/2026-07-13/cancip-2.8.0-recovery`.
+- Branch: `codex/2.8.0-recovery`.
+- Build version: `2.8.0`.
+- Source/runtime parity after rebuild: source methods `1154`, runtime methods `1154`, missing `0`, extra `0`.
+- Validation run: `npm run check`, `npm run verify:source-parity`, `npm run build`, then `npm run verify:source-parity` again.
+
+Recovered from the released `2.6.10` runtime and patch chain into TypeScript:
+
+1. Button-rule hardening already restored before this checkpoint: multi-WebView rule application, identity guards, recent-first modified button rules, live observer cleanup, and same-name menu item separation.
+2. Header live status already restored before this checkpoint: live plan/file-change pills beside the Cancip title with expandable changed-file details.
+3. Session timeline already restored before this checkpoint: created/start/complete/stop/fail timestamps in session snapshots, history entries, tooltips, export snapshots, and cross-view running-session refresh.
+4. Structured final driver restored in source: `driveStructuredFinal`, five bounded final/continue retries, visible-final guards, and completion rejection when tool/process work has no user-visible final answer.
+5. Process record cleanup restored in source: `processStepHeadline`, `processStepDetailText`, and `meaningfulProcessBlocks`; empty/generic process blocks are filtered and raw details remain folded.
+6. Horizontal settings pages restored in source: `displayCommonSettings` plus peer tabs for interface, context, skills, plan, command bus, versioning, automation, notifications, TTS, export, and model advanced settings.
+7. Vault curation preflight restored in source: programmatic candidate filtering, bounded meaningful candidates, isolated minimal context for curation automation, AI-created review-item exclusion, scanned-path completion, and cosmetic-only write rejection at execution time.
+
+Current parity guard now compares the source-built output rather than relying on preserved runtime-only `main.js`. This makes `src/main.ts` the working source again for the recovered method inventory.

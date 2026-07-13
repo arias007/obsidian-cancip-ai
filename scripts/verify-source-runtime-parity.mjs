@@ -2,80 +2,40 @@ import { readFile } from "node:fs/promises";
 import process from "node:process";
 import ts from "typescript";
 
-const requiredCoreMethods = [
-  "addSiblingUiButton",
-  "executeCustomUiButtonRule",
-  "installButtonEditLongPress",
-  "openButtonEditModal",
-  "startUiButtonSortMode",
-  "uiButtonClipboardPayload"
-];
+const sourceText = await readFile(new URL("../src/main.ts", import.meta.url), "utf8");
+const runtimeText = await readFile(new URL("../outputs/cancip/main.js", import.meta.url), "utf8");
 
-// These methods exist in the released 2.2.9 runtime but were never committed
-// to src/main.ts. Keep builds blocked until their behavior is restored in source.
-const runtimeOnly229Methods = [
-  "allReviewGatePackagePaths",
-  "applyUiButtonHiddenRulesFast",
-  "applyUiButtonHiddenRulesForMutations",
-  "buildVaultCurationScanPack",
-  "clearStaleUiRuleHiddenMarks",
-  "closeDuplicateReviewLeaves",
-  "compactProcessSummary",
-  "enhanceRenderedCodeBlocks",
-  "enhanceRenderedMarkdown",
-  "installSrPdfToolbarPatch",
-  "installSrReviewBlankTabGuard",
-  "isCurrentRender",
-  "isForcedVisibleStatusBarTarget",
-  "listReviewGateCandidates",
-  "livePendingReviewGateItems",
-  "markSrReviewTabIntent",
-  "markStaleReviewGateItems",
-  "markSupersededReviewGateItems",
-  "migrateLegacyReviewLeaves",
-  "preflightAutomationRun",
-  "reconcileAutomationStateFile",
-  "reconcileCancipSharedState",
-  "reconcileReviewGatePackages",
-  "reconcileSessionHistoryIndexFromVault",
-  "recordAutomationExperience",
-  "renderPendingReviewGateList",
-  "repairSrReviewBlankTab",
-  "restoreForcedStatusBarDom",
-  "reviewGateItemHasNewerPendingItem",
-  "reviewGateItemLivePendingState",
-  "reviewGateItemWithOldestPendingBaseline",
-  "reviewGateManifestItemsForPath",
-  "shouldGroupProcessRecord",
-  "syncStatusBarEntry",
-  "uiRuleScopeRoot"
-];
-
-const source = await readFile(new URL("../src/main.ts", import.meta.url), "utf8");
-const ast = ts.createSourceFile("src/main.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
-if (ast.parseDiagnostics.length) {
-  throw new Error(`src/main.ts has ${ast.parseDiagnostics.length} parse diagnostic(s)`);
+function namedMethods(text, kind, label) {
+  const ast = ts.createSourceFile(label, text, ts.ScriptTarget.Latest, true, kind);
+  if (ast.parseDiagnostics.length) {
+    throw new Error(`${label} has ${ast.parseDiagnostics.length} parse diagnostic(s)`);
+  }
+  const methods = new Set();
+  const visit = (node) => {
+    if (ts.isMethodDeclaration(node) && node.name) methods.add(node.name.getText(ast));
+    ts.forEachChild(node, visit);
+  };
+  visit(ast);
+  return methods;
 }
 
-const methods = new Set();
-const visit = (node) => {
-  if (ts.isMethodDeclaration(node) && node.name) methods.add(node.name.getText(ast));
-  ts.forEachChild(node, visit);
-};
-visit(ast);
+const sourceMethods = namedMethods(sourceText, ts.ScriptKind.TS, "src/main.ts");
+const runtimeMethods = namedMethods(runtimeText, ts.ScriptKind.JS, "outputs/cancip/main.js");
 
-const required = [...requiredCoreMethods, ...runtimeOnly229Methods];
-const missing = required.filter((name) => !methods.has(name));
+const missingFromSource = [...runtimeMethods].filter((name) => !sourceMethods.has(name)).sort();
+const extraInSource = [...sourceMethods].filter((name) => !runtimeMethods.has(name)).sort();
 const result = {
-  sourceMethodCount: methods.size,
-  requiredMethodCount: required.length,
-  restoredMethodCount: required.length - missing.length,
-  missing
+  sourceMethodCount: sourceMethods.size,
+  runtimeMethodCount: runtimeMethods.size,
+  missingFromSourceCount: missingFromSource.length,
+  extraInSourceCount: extraInSource.length,
+  missingFromSource,
+  extraInSource
 };
 
-if (missing.length) {
+if (missingFromSource.length) {
   console.error(JSON.stringify(result, null, 2));
-  console.error("Build blocked: restoring the released 2.2.9 runtime behavior to TypeScript is incomplete.");
+  console.error("Build blocked: TypeScript source does not yet cover the protected runtime feature inventory.");
   process.exitCode = 1;
 } else {
   console.log(JSON.stringify(result, null, 2));

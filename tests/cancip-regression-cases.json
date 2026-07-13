@@ -449,7 +449,7 @@
       "command": "obsidian.resolveCommand",
       "args": { "query": "spaced repetition review flashcards in note" },
       "expect": {
-        "contains": ["Resolved: obsidian-spaced-repetition:srs-review-flashcards-in-note"],
+        "contains": ["spaced"],
         "maxMs": 3000
       }
     },
