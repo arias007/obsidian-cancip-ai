@@ -224,17 +224,6 @@ function hasCjkText(input: string): boolean {
   return /[\u3400-\u9fff]/.test(input);
 }
 
-function looksLikeEnglishTtsText(input: string): boolean {
-  const text = input.replace(/https?:\/\/\S+/gi, " ").replace(/`[^`]*`/g, " ").trim();
-  if (!text || hasCjkText(text)) return false;
-  const latinCount = (text.match(/[A-Za-z]/g) ?? []).length;
-  if (latinCount < 3) return false;
-  const letterCount = ([...text.matchAll(/\p{L}/gu)]).length;
-  if (letterCount && latinCount / letterCount < 0.8) return false;
-  const wordCount = (text.match(/[A-Za-z]{2,}/g) ?? []).length;
-  return wordCount >= 1 || latinCount >= 8;
-}
-
 function chineseNumberReadingMode(input: string): "none" | "context" | "full" {
   const compact = input.replace(/\s+/g, "");
   const cjkCount = (compact.match(/[\u3400-\u9fff]/g) ?? []).length;

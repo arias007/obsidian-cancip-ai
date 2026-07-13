@@ -428,3 +428,8 @@ mobile GitHub and local versioning design.
 - Shows model request trace details before the request returns for normal chat, automation runs, tool continuation, forced action recovery, and read-only answer continuation.
 - Replaces generic continuation progress text with concrete tool-result verification/final-answer status.
 - Documents automation action examples in the source release README.
+
+## 2.6.13
+
+- Uses the active Vault config directory for the optional PrimeTTS local package instead of assuming `.obsidian`.
+- Cleans review-reported source warnings by removing unused helpers, using owner-document DOM access, and wrapping non-Error Promise rejections.

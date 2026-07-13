@@ -89,28 +89,22 @@ type TtsProvider = "auto" | "builtin-prime-tts" | "android-system" | "web-speech
 type TtsQualityMode = "quality-first";
 type TtsPlaybackMode = "idle" | "starting" | "playing" | "paused" | "stopped" | "failed";
 const CANCIP_REVIEW_VIEW_TYPE = "cancip-review-view";
-const BUILTIN_PRIME_TTS_BASE = ".obsidian/plugins/cancip/tts/prime-tts";
-const BUILTIN_PRIME_TTS_ENCODER = `${BUILTIN_PRIME_TTS_BASE}/acoustic_encoder.onnx`;
-const BUILTIN_PRIME_TTS_DECODER = `${BUILTIN_PRIME_TTS_BASE}/acoustic_decoder.onnx`;
-const BUILTIN_PRIME_TTS_VOCODER = `${BUILTIN_PRIME_TTS_BASE}/vocoder.onnx`;
-const BUILTIN_PRIME_TTS_META = `${BUILTIN_PRIME_TTS_BASE}/meta.json`;
-const BUILTIN_PRIME_TTS_SYMBOLS = `${BUILTIN_PRIME_TTS_BASE}/symbol_table.json`;
-const BUILTIN_PRIME_TTS_ORT_BASE = `${BUILTIN_PRIME_TTS_BASE}/ort`;
+const BUILTIN_PRIME_TTS_RELATIVE_BASE = "tts/prime-tts";
 const BUILTIN_PRIME_TTS_PACKAGE_TAG = "prime-tts";
 const BUILTIN_PRIME_TTS_PACKAGE_ASSET = "prime-tts.zip";
 const BUILTIN_PRIME_TTS_PACKAGE_URL = `https://github.com/arias007/cancip/releases/download/${BUILTIN_PRIME_TTS_PACKAGE_TAG}/${BUILTIN_PRIME_TTS_PACKAGE_ASSET}`;
 const BUILTIN_PRIME_TTS_REQUIRED_ASSETS = [
-  { relative: "acoustic_encoder.onnx", path: BUILTIN_PRIME_TTS_ENCODER },
-  { relative: "acoustic_decoder.onnx", path: BUILTIN_PRIME_TTS_DECODER },
-  { relative: "vocoder.onnx", path: BUILTIN_PRIME_TTS_VOCODER },
-  { relative: "meta.json", path: BUILTIN_PRIME_TTS_META },
-  { relative: "symbol_table.json", path: BUILTIN_PRIME_TTS_SYMBOLS },
-  { relative: "ort/ort-wasm-simd-threaded.wasm", path: `${BUILTIN_PRIME_TTS_ORT_BASE}/ort-wasm-simd-threaded.wasm` },
-  { relative: "ort/ort-wasm-simd-threaded.mjs", path: `${BUILTIN_PRIME_TTS_ORT_BASE}/ort-wasm-simd-threaded.mjs` }
+  { relative: "acoustic_encoder.onnx" },
+  { relative: "acoustic_decoder.onnx" },
+  { relative: "vocoder.onnx" },
+  { relative: "meta.json" },
+  { relative: "symbol_table.json" },
+  { relative: "ort/ort-wasm-simd-threaded.wasm" },
+  { relative: "ort/ort-wasm-simd-threaded.mjs" }
 ] as const;
 const BUILTIN_PRIME_TTS_OPTIONAL_ASSETS = [
-  { relative: "manifest.json", path: `${BUILTIN_PRIME_TTS_BASE}/manifest.json` },
-  { relative: "README.md", path: `${BUILTIN_PRIME_TTS_BASE}/README.md` }
+  { relative: "manifest.json" },
+  { relative: "README.md" }
 ] as const;
 const BUILTIN_PRIME_TTS_INSTALL_STALE_MS = 120000;
 const BUILTIN_PRIME_TTS_PREFETCH_AHEAD = 3;
@@ -1155,10 +1149,8 @@ const PROCESS_INLINE_DETAIL_MAX_CHARS = 560;
 const LIVE_TIMER_INTERVAL_MS = 2000;
 const REVIEW_GATE_DIR = `${CANCIP_AI_DIR}/Review`;
 const REVIEW_GATE_HIDDEN_DIR = `${CANCIP_CONFIG_DIR}/review-gates`;
-const REVIEW_GATE_SCHEMA_VERSION = 1;
 const REVIEW_GATE_MAX_FILES = 80;
 const REVIEW_GATE_MAX_FILE_CHARS = 120000;
-const RUNTIME_STATE_PATH = `${CANCIP_CONFIG_DIR}/runtime.json`;
 const CONTEXT_STEP_TIMEOUT_MS = 3500;
 const VAULT_SEARCH_TIME_BUDGET_MS = 2200;
 const VAULT_SEARCH_MAX_SCAN_FILES = 160;
@@ -1670,7 +1662,7 @@ const EN = {
   settingsTtsChunkChars: "TTS chunk characters",
   settingsTtsCustomUrl: "TTS custom URL",
   settingsTtsCustomUrlDesc: "Optional relay/fallback. Placeholders GET: {text}, {lang}, {voice}, {rate}, {pitch}, {provider}. Without placeholders Cancip POSTs JSON and accepts audio bytes, {url}, or {audioBase64,mimeType}.",
-  settingsTtsHighQualityHint: "Local package route: .obsidian/plugins/cancip/tts/prime-tts/. It borrows the 0.1.207 method that generated WAV audio locally; voice quality is limited, but it can work when Android WebView exposes no system TTS bridge.",
+  settingsTtsHighQualityHint: "Local package route: installed plugin folder / tts/prime-tts. It borrows the 0.1.207 method that generated WAV audio locally; voice quality is limited, but it can work when Android WebView exposes no system TTS bridge.",
   settingsTtsInstallLocalPackage: "Download/install local PrimeTTS package",
   ttsProbe: "Probe TTS",
   settingsShowSupportCodes: "Show payment QR codes",
@@ -2222,7 +2214,7 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     settingsTtsChunkChars: "TTS 分块字符数",
     settingsTtsCustomUrl: "TTS 自定义 URL",
     settingsTtsCustomUrlDesc: "可选 relay/兜底。GET 占位符：{text}/{lang}/{voice}/{rate}/{pitch}/{provider}；无占位符时 POST JSON，并接受音频字节、{url} 或 {audioBase64,mimeType}。",
-    settingsTtsHighQualityHint: "本地包路线：.obsidian/plugins/cancip/tts/prime-tts/。这是借回 0.1.207 的本地生成 WAV 方法，音质有限，但在安卓 WebView 没暴露系统 TTS 桥时仍可能出声。",
+    settingsTtsHighQualityHint: "本地包路线：已安装插件目录 / tts/prime-tts。这是借回 0.1.207 的本地生成 WAV 方法，音质有限，但在安卓 WebView 没暴露系统 TTS 桥时仍可能出声。",
     settingsTtsInstallLocalPackage: "下载/安装本地 PrimeTTS 包",
     ttsProbe: "探测 TTS",
     settingsShowSupportCodes: "显示我的两个收款码",
@@ -4153,6 +4145,14 @@ export default class CancipPlugin extends Plugin {
     return `${this.obsidianPluginsDir()}/${pluginId}`;
   }
 
+  builtinPrimeTtsBasePath(): string {
+    return `${this.pluginInstallDir()}/${BUILTIN_PRIME_TTS_RELATIVE_BASE}`;
+  }
+
+  builtinPrimeTtsPath(relative: string): string {
+    return `${this.builtinPrimeTtsBasePath()}/${relative}`;
+  }
+
   accelerateGithubDownloadUrl(url: string): string {
     const prefix = this.settings.githubDownloadBaseUrl.trim().replace(/\/+$/, "");
     if (!prefix) return url;
@@ -4388,7 +4388,8 @@ export default class CancipPlugin extends Plugin {
 
   private createTtsOverlay(): TtsOverlayElements {
     if (this.ttsOverlay) return this.ttsOverlay;
-    const root = document.body.createDiv({ cls: "obcc-tts-floating is-hidden is-collapsed" });
+    const doc = this.app.workspace.containerEl.ownerDocument;
+    const root = doc.body.createDiv({ cls: "obcc-tts-floating is-hidden is-collapsed" });
     root.setAttribute("role", "region");
     root.setAttribute("aria-label", this.t("ttsFloatingTitle"));
     const bubble = root.createEl("button", {
@@ -4641,7 +4642,8 @@ export default class CancipPlugin extends Plugin {
     overlay.pitch.value = String(pitch);
     overlay.pitchLabel.setText(`${this.t("settingsTtsPitch")} ${pitch.toFixed(2)}x`);
     overlay.providerSelect.value = isTtsProvider(this.settings.ttsProvider) ? this.settings.ttsProvider : "auto";
-    if (document.activeElement !== overlay.voiceInput) {
+    const doc = overlay.root.ownerDocument;
+    if (doc.activeElement !== overlay.voiceInput) {
       overlay.voiceInput.value = this.settings.ttsVoice.trim();
     }
     overlay.installButton.disabled = Boolean(this.builtinPrimeTtsInstallPromise);
@@ -4685,13 +4687,14 @@ export default class CancipPlugin extends Plugin {
       this.ttsOverlayDragging = false;
       overlay.root.removeClass("is-dragging");
       this.persistTtsOverlayPosition(overlay.root);
-      document.removeEventListener("pointermove", move);
-      document.removeEventListener("pointerup", up);
-      document.removeEventListener("pointercancel", up);
+      doc.removeEventListener("pointermove", move);
+      doc.removeEventListener("pointerup", up);
+      doc.removeEventListener("pointercancel", up);
     };
-    document.addEventListener("pointermove", move, { passive: false });
-    document.addEventListener("pointerup", up);
-    document.addEventListener("pointercancel", up);
+    const doc = overlay.root.ownerDocument;
+    doc.addEventListener("pointermove", move, { passive: false });
+    doc.addEventListener("pointerup", up);
+    doc.addEventListener("pointercancel", up);
   }
 
   private restoreTtsOverlayPosition(root: HTMLElement): void {
@@ -4768,16 +4771,18 @@ export default class CancipPlugin extends Plugin {
   }
 
   private clearTtsSourceHighlight(): void {
+    const doc = this.app.workspace.containerEl.ownerDocument;
+    const win = doc.defaultView ?? window;
     for (const node of this.activeTtsSourceHighlightNodes) {
       if (!node.isConnected) continue;
-      const text = document.createTextNode(node.textContent ?? "");
+      const text = doc.createTextNode(node.textContent ?? "");
       node.replaceWith(text);
       text.parentElement?.normalize();
     }
     this.activeTtsSourceHighlightNodes = [];
-    document.querySelectorAll(".obcc-tts-source-highlight").forEach((node) => {
-      if (!(node instanceof HTMLElement)) return;
-      const text = document.createTextNode(node.textContent ?? "");
+    doc.querySelectorAll(".obcc-tts-source-highlight").forEach((node) => {
+      if (!(node instanceof win.HTMLElement)) return;
+      const text = doc.createTextNode(node.textContent ?? "");
       node.replaceWith(text);
       text.parentElement?.normalize();
     });
@@ -4810,9 +4815,10 @@ export default class CancipPlugin extends Plugin {
     const leaf = this.app.workspace.activeLeaf;
     const container = (leaf?.view as unknown as { containerEl?: HTMLElement } | null)?.containerEl;
     if (!container) return;
+    const win = container.ownerDocument.defaultView ?? window;
     const roots = Array.from(container.querySelectorAll(".markdown-preview-view, .pdf-viewer, .pdf-container, .pdfViewer, .textLayer"));
     for (const root of roots) {
-      if (!(root instanceof HTMLElement)) continue;
+      if (!(root instanceof win.HTMLElement)) continue;
       if (this.wrapFirstTextMatch(root, current)) return;
     }
   }
@@ -4837,21 +4843,23 @@ export default class CancipPlugin extends Plugin {
   private wrapFirstTextMatch(root: HTMLElement, current: string): boolean {
     const needle = this.ttsHighlightNeedle(current);
     if (!needle) return false;
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    const doc = root.ownerDocument;
+    const win = doc.defaultView ?? window;
+    const walker = doc.createTreeWalker(root, win.NodeFilter.SHOW_TEXT, {
       acceptNode: (node) => {
         const parent = node.parentElement;
-        if (!parent || parent.closest(".obcc-tts-floating, .obcc-view-tts-action, script, style, textarea, input, button")) return NodeFilter.FILTER_REJECT;
-        return node.textContent?.includes(needle) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
+        if (!parent || parent.closest(".obcc-tts-floating, .obcc-view-tts-action, script, style, textarea, input, button")) return win.NodeFilter.FILTER_REJECT;
+        return node.textContent?.includes(needle) ? win.NodeFilter.FILTER_ACCEPT : win.NodeFilter.FILTER_SKIP;
       }
     });
     const node = walker.nextNode();
     if (!node || !node.textContent) return false;
     const index = node.textContent.indexOf(needle);
     if (index < 0) return false;
-    const range = document.createRange();
+    const range = doc.createRange();
     range.setStart(node, index);
     range.setEnd(node, index + needle.length);
-    const mark = document.createElement("span");
+    const mark = doc.createElement("span");
     mark.addClass("obcc-tts-source-highlight");
     try {
       range.surroundContents(mark);
@@ -5057,11 +5065,11 @@ export default class CancipPlugin extends Plugin {
   private async createBuiltinPrimeTtsMainRuntime(): Promise<PrimeTtsMainRuntime> {
     const ort = await import("onnxruntime-web/wasm") as unknown as OrtModuleLike;
     const [encoderBuffer, decoderBuffer, vocoderBuffer, metaText, wasmBuffer] = await Promise.all([
-      this.app.vault.adapter.readBinary(BUILTIN_PRIME_TTS_ENCODER),
-      this.app.vault.adapter.readBinary(BUILTIN_PRIME_TTS_DECODER),
-      this.app.vault.adapter.readBinary(BUILTIN_PRIME_TTS_VOCODER),
-      this.app.vault.adapter.read(BUILTIN_PRIME_TTS_META),
-      this.app.vault.adapter.readBinary(`${BUILTIN_PRIME_TTS_ORT_BASE}/ort-wasm-simd-threaded.wasm`)
+      this.app.vault.adapter.readBinary(this.builtinPrimeTtsPath("acoustic_encoder.onnx")),
+      this.app.vault.adapter.readBinary(this.builtinPrimeTtsPath("acoustic_decoder.onnx")),
+      this.app.vault.adapter.readBinary(this.builtinPrimeTtsPath("vocoder.onnx")),
+      this.app.vault.adapter.read(this.builtinPrimeTtsPath("meta.json")),
+      this.app.vault.adapter.readBinary(this.builtinPrimeTtsPath("ort/ort-wasm-simd-threaded.wasm"))
     ]);
     this.configureBuiltinPrimeOrt(ort, wasmBuffer.slice(0));
     const meta = parsePrimeTtsMeta(metaText);
@@ -5076,11 +5084,11 @@ export default class CancipPlugin extends Plugin {
 
   private async createBuiltinPrimeTtsWorkerRuntime(): Promise<PrimeTtsWorkerRuntime> {
     const [encoderBuffer, decoderBuffer, vocoderBuffer, metaText, wasmBuffer] = await Promise.all([
-      this.app.vault.adapter.readBinary(BUILTIN_PRIME_TTS_ENCODER),
-      this.app.vault.adapter.readBinary(BUILTIN_PRIME_TTS_DECODER),
-      this.app.vault.adapter.readBinary(BUILTIN_PRIME_TTS_VOCODER),
-      this.app.vault.adapter.read(BUILTIN_PRIME_TTS_META),
-      this.app.vault.adapter.readBinary(`${BUILTIN_PRIME_TTS_ORT_BASE}/ort-wasm-simd-threaded.wasm`)
+      this.app.vault.adapter.readBinary(this.builtinPrimeTtsPath("acoustic_encoder.onnx")),
+      this.app.vault.adapter.readBinary(this.builtinPrimeTtsPath("acoustic_decoder.onnx")),
+      this.app.vault.adapter.readBinary(this.builtinPrimeTtsPath("vocoder.onnx")),
+      this.app.vault.adapter.read(this.builtinPrimeTtsPath("meta.json")),
+      this.app.vault.adapter.readBinary(this.builtinPrimeTtsPath("ort/ort-wasm-simd-threaded.wasm"))
     ]);
     const meta = parsePrimeTtsMeta(metaText);
     const workerUrl = createPrimeTtsWorkerUrl();
@@ -5133,7 +5141,7 @@ export default class CancipPlugin extends Plugin {
         client.worker.postMessage({ id, type, ...payload }, transfer);
       } catch (error) {
         client.pending.delete(id);
-        reject(error);
+        reject(error instanceof Error ? error : new Error(String(error)));
       }
     });
   }
@@ -5163,7 +5171,8 @@ export default class CancipPlugin extends Plugin {
     const adapter = this.app.vault.adapter;
     const missing: string[] = [];
     for (const asset of BUILTIN_PRIME_TTS_REQUIRED_ASSETS) {
-      if (!(await adapter.exists(asset.path))) missing.push(asset.path);
+      const path = this.builtinPrimeTtsPath(asset.relative);
+      if (!(await adapter.exists(path))) missing.push(path);
     }
     return missing;
   }
@@ -5216,7 +5225,7 @@ export default class CancipPlugin extends Plugin {
   private async completeBuiltinPrimeTtsStatus(): Promise<string> {
     const missing = await this.missingBuiltinPrimeTtsAssets();
     if (missing.length) return "";
-    const result = `complete (${BUILTIN_PRIME_TTS_BASE})`;
+    const result = `complete (${this.builtinPrimeTtsBasePath()})`;
     this.builtinPrimeTtsInstallPromise = null;
     this.builtinPrimeTtsInstallStartedAt = 0;
     this.builtinPrimeTtsInstallStatus = result;
@@ -5243,7 +5252,7 @@ export default class CancipPlugin extends Plugin {
       const afterMissing = await this.missingBuiltinPrimeTtsAssets();
       if (afterMissing.length) throw new Error(`still missing ${afterMissing.join(", ")}`);
       const result = this.t("ttsLocalPackageInstalled", { count: installed });
-      this.builtinPrimeTtsInstallStatus = `${result} (${BUILTIN_PRIME_TTS_BASE})`;
+      this.builtinPrimeTtsInstallStatus = `${result} (${this.builtinPrimeTtsBasePath()})`;
       this.builtinPrimeTtsInstallLastError = "";
       if (showNotice) new Notice(result, 8000);
       return this.builtinPrimeTtsInstallStatus;
@@ -5280,8 +5289,9 @@ export default class CancipPlugin extends Plugin {
       }
       const data = await extractZipEntryBytes(entry, bytes, warnings);
       if (!data.byteLength) throw new Error(`PrimeTTS package entry is empty: ${asset.relative}`);
-      await ensureParentFolder(adapter, asset.path);
-      await adapter.writeBinary(asset.path, uint8ArrayToArrayBuffer(data));
+      const path = this.builtinPrimeTtsPath(asset.relative);
+      await ensureParentFolder(adapter, path);
+      await adapter.writeBinary(path, uint8ArrayToArrayBuffer(data));
       written += 1;
     }
     if (warnings.length) console.debug("Cancip PrimeTTS package warnings", warnings);
@@ -5925,20 +5935,20 @@ export default class CancipPlugin extends Plugin {
 
   private async localPrimeTtsAssetStatus(): Promise<string> {
     const paths = [
-      BUILTIN_PRIME_TTS_ENCODER,
-      BUILTIN_PRIME_TTS_DECODER,
-      BUILTIN_PRIME_TTS_VOCODER,
-      BUILTIN_PRIME_TTS_META,
-      BUILTIN_PRIME_TTS_SYMBOLS,
-      `${BUILTIN_PRIME_TTS_ORT_BASE}/ort-wasm-simd-threaded.wasm`,
-      `${BUILTIN_PRIME_TTS_ORT_BASE}/ort-wasm-simd-threaded.mjs`
+      this.builtinPrimeTtsPath("acoustic_encoder.onnx"),
+      this.builtinPrimeTtsPath("acoustic_decoder.onnx"),
+      this.builtinPrimeTtsPath("vocoder.onnx"),
+      this.builtinPrimeTtsPath("meta.json"),
+      this.builtinPrimeTtsPath("symbol_table.json"),
+      this.builtinPrimeTtsPath("ort/ort-wasm-simd-threaded.wasm"),
+      this.builtinPrimeTtsPath("ort/ort-wasm-simd-threaded.mjs")
     ];
     const missing: string[] = [];
     for (const path of paths) {
       if (!(await this.app.vault.adapter.exists(path))) missing.push(path);
     }
     if (!missing.length) return await this.completeBuiltinPrimeTtsStatus();
-    if (missing.length === paths.length) return `not installed (${BUILTIN_PRIME_TTS_BASE})`;
+    if (missing.length === paths.length) return `not installed (${this.builtinPrimeTtsBasePath()})`;
     return `incomplete, missing ${missing.slice(0, 3).join(", ")}${missing.length > 3 ? ` +${missing.length - 3}` : ""}`;
   }
 
@@ -5987,9 +5997,10 @@ export default class CancipPlugin extends Plugin {
 
   private async readMarkdownRenderedText(file: TFile, maxChars: number): Promise<string> {
     const markdown = await this.app.vault.cachedRead(file);
-    const container = document.createElement("div");
+    const doc = this.app.workspace.containerEl.ownerDocument;
+    const container = doc.createElement("div");
     container.addClass("obcc-tts-render-scratch");
-    document.body.appendChild(container);
+    doc.body.appendChild(container);
     const renderComponent = new Component();
     try {
       renderComponent.load();
@@ -6396,7 +6407,8 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
   }
 
   private clearUiRuleMarks(): void {
-    for (const el of Array.from(document.querySelectorAll<HTMLElement>("[data-cancip-ui-hidden], [data-cancip-ui-order], [data-cancip-tag-hidden]"))) {
+    const doc = this.app.workspace.containerEl.ownerDocument;
+    for (const el of Array.from(doc.querySelectorAll<HTMLElement>("[data-cancip-ui-hidden], [data-cancip-ui-order], [data-cancip-tag-hidden]"))) {
       delete el.dataset.cancipUiHidden;
       delete el.dataset.cancipTagHidden;
       if (el.dataset.cancipUiOrder !== undefined) {
@@ -6404,7 +6416,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
         el.setCssStyles({ order: "" });
       }
     }
-    for (const parent of Array.from(document.querySelectorAll<HTMLElement>("[data-cancip-ui-rule-flex-parent]"))) {
+    for (const parent of Array.from(doc.querySelectorAll<HTMLElement>("[data-cancip-ui-rule-flex-parent]"))) {
       delete parent.dataset.cancipUiRuleFlexParent;
       parent.removeClass("obcc-ui-rule-flex-parent");
       parent.removeClass("obcc-ui-rule-inline-flex-parent");
@@ -6412,11 +6424,12 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
   }
 
   private uiRuleElements(rule: UiButtonRule): HTMLElement[] {
+    const doc = this.app.workspace.containerEl.ownerDocument;
     const root = rule.scope === "active"
-      ? ((this.app.workspace.activeLeaf?.view as unknown as { containerEl?: HTMLElement })?.containerEl ?? document)
+      ? ((this.app.workspace.activeLeaf?.view as unknown as { containerEl?: HTMLElement })?.containerEl ?? doc)
       : rule.scope === "cancip"
-        ? (this.app.workspace.getLeavesOfType(VIEW_TYPE)[0]?.view as unknown as { containerEl?: HTMLElement })?.containerEl ?? document
-        : document;
+        ? (this.app.workspace.getLeavesOfType(VIEW_TYPE)[0]?.view as unknown as { containerEl?: HTMLElement })?.containerEl ?? doc
+        : doc;
     try {
       return Array.from(root.querySelectorAll<HTMLElement>(rule.selector));
     } catch {
@@ -6425,8 +6438,9 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
   }
 
   private rightSidebarTagElements(): Array<{ el: HTMLElement; tag: string }> {
-    const right = document.querySelector<HTMLElement>(".mod-right-split, .workspace-split.mod-right-split");
-    const root = right ?? document;
+    const doc = this.app.workspace.containerEl.ownerDocument;
+    const right = doc.querySelector<HTMLElement>(".mod-right-split, .workspace-split.mod-right-split");
+    const root = right ?? doc;
     const elements = Array.from(root.querySelectorAll<HTMLElement>(".tree-item-self, .tag-pane-tag, [data-tag], [href^='#']"));
     const seen = new Set<string>();
     const results: Array<{ el: HTMLElement; tag: string }> = [];
@@ -8099,7 +8113,7 @@ class CancipView extends ItemView {
     this.render();
     this.registerEvent(this.app.workspace.on("file-open", () => this.renderContextChips()));
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.renderContextChips()));
-    this.registerDomEvent(document, "pointerdown", (event) => this.handleDocumentPointerDown(event));
+    this.registerDomEvent(this.containerEl.ownerDocument, "pointerdown", (event) => this.handleDocumentPointerDown(event));
     await this.ensureCurrentSessionRecord();
     await this.refreshVaultIndex(false);
   }
@@ -9549,7 +9563,8 @@ class CancipView extends ItemView {
 
   private scrollToMessage(messageId: string): void {
     const target = this.messagesEl.querySelector(`[data-message-id="${CSS.escape(messageId)}"]`);
-    if (target instanceof HTMLElement) {
+    const win = this.messagesEl.ownerDocument.defaultView ?? window;
+    if (target instanceof win.HTMLElement) {
       target.scrollIntoView({ block: "center", behavior: "smooth" });
       target.addClass("is-outline-target");
       window.setTimeout(() => target.removeClass("is-outline-target"), 1200);
@@ -12358,7 +12373,6 @@ class CancipView extends ItemView {
     const images: ImageAttachmentContext[] = [];
     const settings = this.plugin.settings;
     const policy = this.promptPayloadPolicy(prompt);
-    const lightContext = policy.intent === "trivial";
     const implementationContext = policy.intent === "implementation";
     if (!this.taskControl && prompt.trim()) {
       this.ensureTaskControl(rawPrompt, prompt);
@@ -13861,7 +13875,6 @@ class CancipView extends ItemView {
 
     const runs = actions.map((action) => this.createToolRun(action));
     if (message) message.toolRuns = runs;
-    const summary = runs.map((run) => run.summary).join("\n");
     if (options.readOnlyOnly) {
       const executable = runs.filter((run) => isReadOnlyAction(run.action));
       const blocked = runs.filter((run) => !isReadOnlyAction(run.action));
@@ -15942,7 +15955,7 @@ class CancipView extends ItemView {
       "- Cancip has message/session/note read-aloud buttons.",
       "- Providers: auto, builtin-prime-tts optional local package, android-system/native bridge, custom-url local neural bridge, web-speech probe.",
       "- Command bus: cancip.tts.probe, cancip.tts.voices, cancip.tts.status, cancip.tts.installLocal, cancip.tts.speak {text,label,provider}, cancip.tts.readActive, cancip.tts.pause/resume/stop, cancip.tts.seek {part}. provider can be auto, builtin-prime-tts, android-system, web-speech, or custom-url.",
-      "- builtin-prime-tts borrows the old 0.1.207 route: read .obsidian/plugins/cancip/tts/prime-tts, run ONNX locally, generate WAV, play with audio/WebAudio. If assets are missing during use, Cancip tries to download and install the optional prime-tts.zip package automatically.",
+      "- builtin-prime-tts borrows the old 0.1.207 route: read the installed plugin folder's tts/prime-tts package, run ONNX locally, generate WAV, play with audio/WebAudio. If assets are missing during use, Cancip tries to download and install the optional prime-tts.zip package automatically.",
       "- Review-clean releases do not bundle model assets in release files. Optional installed assets are detected at runtime and can be repaired with cancip.tts.installLocal.",
       "- custom-url contract: use URL placeholders {text}/{lang}/{voice}/{rate}/{pitch}, or POST JSON {text,lang,voice,rate,pitch,provider}. Return audio bytes, {url}, or {audioBase64,mimeType}.",
       "- Android/system uses a native TTS bridge only when Obsidian exposes one; Web Speech is separate. On Android, an empty voice list does not block a real speak attempt.",
@@ -16082,7 +16095,8 @@ class CancipView extends ItemView {
     const append = Boolean(args.append);
     const result = this.domTarget(args);
     const el = result.element;
-    if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+    const win = el.ownerDocument.defaultView ?? window;
+    if (el instanceof win.HTMLInputElement || el instanceof win.HTMLTextAreaElement) {
       el.focus();
       el.value = append ? `${el.value}${text}` : text;
       el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
@@ -18247,7 +18261,7 @@ class CancipSettingTab extends PluginSettingTab {
       .setDesc(this.plugin.t("settingsTtsHighQualityHint"));
     new Setting(parent)
       .setName(this.plugin.t("settingsTtsInstallLocalPackage"))
-      .setDesc(`${BUILTIN_PRIME_TTS_BASE} · ${BUILTIN_PRIME_TTS_PACKAGE_ASSET}`)
+      .setDesc(`${this.plugin.builtinPrimeTtsBasePath()} · ${BUILTIN_PRIME_TTS_PACKAGE_ASSET}`)
       .addButton((button) => {
         button
           .setButtonText(this.plugin.t("ttsInstallLocalPackage"))
@@ -18580,15 +18594,6 @@ function safeVaultFileName(name: string): string {
 function isImportedCodexMemoryFile(path: string): boolean {
   const name = path.split("/").pop() ?? "";
   return (CODEX_CORE_MEMORY_FILES as readonly string[]).includes(name) || name === "README.md";
-}
-
-function sanitizeImportedMemory(content: string): string {
-  return content
-    .replace(/\0/g, "")
-    .replace(/sk-[A-Za-z0-9_-]{20,}/g, "[REDACTED_OPENAI_KEY]")
-    .replace(/ghp_[A-Za-z0-9_]{20,}/g, "[REDACTED_GITHUB_TOKEN]")
-    .replace(/github_pat_[A-Za-z0-9_]{20,}/g, "[REDACTED_GITHUB_TOKEN]")
-    .replace(/AKIA[0-9A-Z]{16}/g, "[REDACTED_AWS_KEY]");
 }
 
 function makeMemorySnippet(content: string, tokens: string[], maxChars: number): string {
@@ -19300,10 +19305,6 @@ function makeReviewDiffLines(oldText: string, newText: string): ReviewDiffLine[]
     if (newLine !== undefined) rows.push({ kind: "added", newLine: index + 1, text: newLine });
   }
   return rows;
-}
-
-function changedReviewDiffLines(oldText: string, newText: string): ReviewDiffLine[] {
-  return makeReviewDiffLines(oldText, newText).filter((line) => line.kind === "added" || line.kind === "removed");
 }
 
 function reviewDiffHunks(oldText: string, newText: string, contextRadius = 2): ReviewDiffHunk[] {
@@ -20354,16 +20355,6 @@ function usefulResultLines(result: string): string[] {
     .map((line) => trimContext(redactSensitiveText(line), 220));
 }
 
-function summarizeFolderListing(result: string): string {
-  const lines = usefulResultLines(result);
-  const folderLine = lines.find((line) => /^folder\s+/i.test(line));
-  const folderCount = lines.find((line) => /^folders:\s*\d+/i.test(line));
-  const fileCount = lines.find((line) => /^files:\s*\d+/i.test(line));
-  const entries = lines.filter((line) => /^\[(file|folder)\]\s+/i.test(line)).slice(0, 50);
-  if (!folderLine && !folderCount && !fileCount && !entries.length) return "";
-  return [folderLine, folderCount, fileCount, entries.length ? entries.join("\n") : ""].filter(Boolean).join("\n");
-}
-
 function describeActionPlain(action: CancipAction): string {
   if (action.type === "read") return `read ${action.path}`;
   if (action.type === "command") return `command ${action.command}`;
@@ -20707,22 +20698,6 @@ function defaultTtsVoiceForLanguage(lang: string): string {
   if (lower.startsWith("tr")) return "tr-TR-EmelNeural";
   if (lower.startsWith("ar")) return "ar-SA-ZariyahNeural";
   return "en-US-AvaMultilingualNeural";
-}
-
-function mimeTypeForPath(path: string): string {
-  const lower = path.toLowerCase();
-  if (lower.endsWith(".json")) return "application/json";
-  if (lower.endsWith(".wasm")) return "application/wasm";
-  if (lower.endsWith(".mjs") || lower.endsWith(".js")) return "text/javascript";
-  if (lower.endsWith(".onnx")) return "application/octet-stream";
-  if (lower.endsWith(".wav")) return "audio/wav";
-  if (lower.endsWith(".mp3")) return "audio/mpeg";
-  return "application/octet-stream";
-}
-
-function languageFromVoiceName(voice: string): string {
-  const match = voice.trim().match(/^([a-z]{2,3}(?:-[A-Z]{2})?)(?:-|$)/);
-  return match?.[1] ?? "";
 }
 
 function base64ToArrayBuffer(input: string): ArrayBuffer {
@@ -22361,15 +22336,16 @@ function cleanTtsText(input: string): string {
 function extractVisibleRenderedText(root: HTMLElement): string {
   const ignored = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "SVG", "CANVAS", "BUTTON", "INPUT", "TEXTAREA", "SELECT"]);
   const chunks: string[] = [];
+  const win = root.ownerDocument.defaultView ?? window;
   const walk = (node: Node): void => {
-    if (node.nodeType === Node.TEXT_NODE) {
+    if (node.nodeType === win.Node.TEXT_NODE) {
       const text = node.textContent?.replace(/\s+/g, " ").trim();
       if (text) chunks.push(text);
       return;
     }
-    if (!(node instanceof HTMLElement)) return;
+    if (!(node instanceof win.HTMLElement)) return;
     if (ignored.has(node.tagName)) return;
-    const style = window.getComputedStyle(node);
+    const style = win.getComputedStyle(node);
     if (style.display === "none" || style.visibility === "hidden") return;
     for (const child of Array.from(node.childNodes)) walk(child);
     if (["P", "DIV", "LI", "TR", "BLOCKQUOTE", "H1", "H2", "H3", "H4", "H5", "H6", "PRE", "TABLE"].includes(node.tagName)) {
