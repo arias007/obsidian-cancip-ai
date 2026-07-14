@@ -1221,6 +1221,7 @@ type AiVaultMutationCaptureState = {
   before: Map<string, AiVaultMutationSnapshot>;
   operations: Map<string, Set<AiVaultMutationKind>>;
   structure: AiVaultMutationStructure[];
+  broadSnapshotPrimed: boolean;
   pendingOperations: number;
   lastMutationAt: number;
 };
@@ -5522,10 +5523,20 @@ export default class CancipPlugin extends Plugin {
     }).catch((error) => {
       console.warn("Cancip plugin load event record failed", error);
     });
-    this.registerEvent(this.app.vault.on("create", (file) => this.handleCancipVaultFileChanged(file.path)));
-    this.registerEvent(this.app.vault.on("modify", (file) => this.handleCancipVaultFileChanged(file.path)));
-    this.registerEvent(this.app.vault.on("delete", (file) => this.handleCancipVaultFileChanged(file.path)));
+    this.registerEvent(this.app.vault.on("create", (file) => {
+      this.captureAiVaultEventMutation("create", file.path);
+      this.handleCancipVaultFileChanged(file.path);
+    }));
+    this.registerEvent(this.app.vault.on("modify", (file) => {
+      this.captureAiVaultEventMutation("modify", file.path);
+      this.handleCancipVaultFileChanged(file.path);
+    }));
+    this.registerEvent(this.app.vault.on("delete", (file) => {
+      this.captureAiVaultEventMutation("delete", file.path);
+      this.handleCancipVaultFileChanged(file.path);
+    }));
     this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
+      this.captureAiVaultEventMutation("rename", file.path, oldPath);
       this.handleCancipVaultFileChanged(oldPath);
       this.handleCancipVaultFileChanged(file.path);
     }));
@@ -11953,10 +11964,13 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       const added = typeof rawItem.added_lines === "number" ? rawItem.added_lines : 0;
       const removed = typeof rawItem.removed_lines === "number" ? rawItem.removed_lines : 0;
       const changed = rawItem.changed !== false && (Boolean(added || removed || changes.length || structure.length));
+      const hasContentChange = Boolean(added || removed || changes.some((change) =>
+        change === "create" || change === "delete" || change === "write" || change === "append" || change === "patch"
+      ));
       items.push({
         path: normalizePath(rawItem.path),
-        old_text: changed ? "__cancip_summary_old__" : "",
-        new_text: changed ? "__cancip_summary_new__" : "",
+        old_text: hasContentChange ? "__cancip_summary_old__" : "",
+        new_text: hasContentChange ? "__cancip_summary_new__" : "",
         changes,
         links: {},
         structure,
@@ -13679,6 +13693,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       before: new Map(),
       operations: new Map(),
       structure: [],
+      broadSnapshotPrimed: false,
       pendingOperations: 0,
       lastMutationAt: Date.now()
     };
@@ -13697,6 +13712,42 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       operations: [...state.operations.entries()].map(([path, kinds]) => ({ path, kinds: [...kinds] })),
       structure: [...state.structure]
     };
+  }
+
+  async primeAiVaultMutationCaptureReviewScope(
+    handle: AiVaultMutationCaptureHandle,
+    timeBudgetMs = 2500,
+    maxFiles = 2500
+  ): Promise<number> {
+    const state = this.aiVaultMutationCaptureStack.find((item) => item.id === handle.id);
+    if (!state || state.broadSnapshotPrimed) return 0;
+    state.broadSnapshotPrimed = true;
+    const startedAt = Date.now();
+    const adapter = this.app.vault.adapter;
+    const paths = await listVaultReviewableFilePaths(
+      adapter,
+      "",
+      this.obsidianConfigDir(),
+      timeBudgetMs,
+      startedAt,
+      maxFiles
+    );
+    let captured = 0;
+    for (const path of paths) {
+      if (Date.now() - startedAt > timeBudgetMs) break;
+      const normalized = normalizePath(path);
+      if (!normalized || state.before.has(normalized) || !isReviewableVaultContentPath(normalized, this.obsidianConfigDir())) continue;
+      try {
+        const stat = await adapter.stat(normalized);
+        if (stat?.type !== "file") continue;
+        const text = await readTextIfExists(adapter, normalized, "");
+        state.before.set(normalized, { path: normalized, text, exists: true });
+        captured += 1;
+      } catch {
+        // A file can disappear while a command is starting; the later event capture handles real mutations.
+      }
+    }
+    return captured;
   }
 
   async settleAiVaultMutationCapture(
@@ -13725,6 +13776,37 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
 
   private activeAiVaultMutationCapture(): AiVaultMutationCaptureState | null {
     return this.aiVaultMutationCaptureStack[this.aiVaultMutationCaptureStack.length - 1] ?? null;
+  }
+
+  private captureAiVaultEventMutation(kind: "create" | "modify" | "delete" | "rename", rawPath: string, rawOldPath = ""): void {
+    const state = this.activeAiVaultMutationCapture();
+    if (!state) return;
+    const path = normalizePath(String(rawPath ?? "").replace(/\\/g, "/"));
+    if (!path) return;
+    if (kind === "rename") {
+      const oldPath = normalizePath(String(rawOldPath ?? "").replace(/\\/g, "/"));
+      if (!oldPath || oldPath === path) return;
+      if (!isReviewableVaultContentPath(oldPath, this.obsidianConfigDir()) && !isReviewableVaultContentPath(path, this.obsidianConfigDir())) return;
+      const structureKind: AiVaultMutationStructure["kind"] = vaultPathParent(oldPath) === vaultPathParent(path) ? "rename" : "move";
+      this.rememberAiVaultMutationOperation(state, oldPath, structureKind);
+      this.rememberAiVaultMutationOperation(state, path, structureKind);
+      if (!state.before.has(path)) state.before.set(path, { path, text: "", exists: false });
+      if (!state.structure.some((item) => item.kind === structureKind && item.oldPath === oldPath && item.newPath === path)) {
+        state.structure.push({ kind: structureKind, oldPath, newPath: path });
+      }
+      state.lastMutationAt = Date.now();
+      return;
+    }
+    if (!isReviewableVaultContentPath(path, this.obsidianConfigDir())) return;
+    if (kind === "create" && !state.before.has(path)) {
+      state.before.set(path, { path, text: "", exists: false });
+    }
+    if (kind === "delete" && !state.before.has(path)) {
+      state.before.set(path, { path, text: "", exists: true });
+    }
+    const mutationKind: AiVaultMutationKind = kind === "delete" ? "delete" : "write";
+    this.rememberAiVaultMutationOperation(state, path, mutationKind);
+    state.lastMutationAt = Date.now();
   }
 
   private async captureAiVaultAdapterOperation(state: AiVaultMutationCaptureState, method: AiVaultAdapterMethod, args: unknown[]): Promise<void> {
@@ -13808,7 +13890,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     let curationPaths: string[] = [];
     const finishCapture = async (): Promise<void> => {
       if (!capture) return;
-      await this.settleAiVaultMutationCapture(capture, 2000, 5000, 200);
+      await this.settleAiVaultMutationCapture(capture, 5000, 9000, 300);
       const result = this.endAiVaultMutationCapture(capture);
       capture = null;
       if (view) await view.registerCapturedAiMutationReview(result, `Automation: ${task.title}`);
@@ -13829,6 +13911,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       await view.prepareAutomationSession(task);
       new Notice(this.t("automationStarted", { title: task.title }));
       capture = this.beginAiVaultMutationCapture(`automation:${task.id}:${task.title}`);
+      if (task.command) await this.primeAiVaultMutationCaptureReviewScope(capture);
       const result = task.command
         ? await view.runAutomationCommand(task)
         : await view.runAutomationPrompt(task, curationPack);
@@ -25220,9 +25303,9 @@ class CancipView extends ItemView {
     const finishMutationCapture = async (): Promise<ReviewGateManifestItem[]> => {
       if (!mutationCapture) return plannedReviewItems;
       if (run.action.type === "command" && !isReadOnlyAction(run.action)) {
-        await this.plugin.settleAiVaultMutationCapture(mutationCapture, 2000, 5000, 200);
+        await this.plugin.settleAiVaultMutationCapture(mutationCapture, 5000, 9000, 300);
       } else if (run.action.type === "automation") {
-        await this.plugin.settleAiVaultMutationCapture(mutationCapture, 2000, 5000, 200);
+        await this.plugin.settleAiVaultMutationCapture(mutationCapture, 5000, 9000, 300);
       }
       const captured = this.plugin.endAiVaultMutationCapture(mutationCapture);
       mutationCapture = null;
@@ -25245,6 +25328,9 @@ class CancipView extends ItemView {
       }
       if (cachedResult === null) {
         mutationCapture = this.plugin.beginAiVaultMutationCapture(`session:${this.sessionId}:tool:${run.id}:${run.summary}`);
+        if (run.action.type === "command" || run.action.type === "automation") {
+          await this.plugin.primeAiVaultMutationCaptureReviewScope(mutationCapture);
+        }
       }
       const result = cachedResult ?? await this.executeAction(run.action, run.automationTaskId);
       const reviewItems = await finishMutationCapture();
@@ -27287,13 +27373,18 @@ class CancipView extends ItemView {
       const normalizedFinal = normalizePath(finalPath);
       if (!isReviewableVaultContentPath(before.path, this.plugin.obsidianConfigDir())
         && !isReviewableVaultContentPath(normalizedFinal, this.plugin.obsidianConfigDir())) return;
-      const finalStat = await this.app.vault.adapter.stat(normalizedFinal).catch(() => null);
-      if (finalStat?.type === "folder") return;
-      const baseline = await this.manualReviewBaselineForPath(before.path, { text: before.text, exists: before.exists });
-      const after = await this.readReviewableTextSnapshot(normalizedFinal);
       const kinds = operationKindsForPath(before.path);
       for (const value of operationKindsForPath(normalizedFinal)) kinds.add(value);
       const hasStructure = Boolean(structure && structure.old_path !== structure.new_path);
+      if (!hasStructure && !kinds.size) return;
+      const finalStat = await this.app.vault.adapter.stat(normalizedFinal).catch(() => null);
+      if (finalStat?.type === "folder") return;
+      const baseline = await this.manualReviewBaselineForPath(
+        before.path,
+        { text: before.text, exists: before.exists },
+        normalizedFinal && normalizedFinal !== normalizePath(before.path) ? [normalizedFinal] : []
+      );
+      const after = await this.readReviewableTextSnapshot(normalizedFinal);
       if (!hasStructure && baseline.exists === after.exists && baseline.text === after.text) return;
       const change = !baseline.exists && after.exists
         ? "create"
@@ -27485,18 +27576,29 @@ class CancipView extends ItemView {
     }
   }
 
-  private async manualReviewBaselineForPath(path: string, disk?: { text: string; exists: boolean }): Promise<{ text: string; exists: boolean; source: "pending-review" | "disk" }> {
-    const pending = await this.findPendingReviewBaselineItem(path);
-    if (pending) {
-      const createsNew = pending.changes.includes("create") && !pending.structure.some((change) => change.kind === "rename" || change.kind === "move");
-      return { text: pending.old_text ?? "", exists: !createsNew, source: "pending-review" };
-    }
+  private async manualReviewBaselineForPath(
+    path: string,
+    disk?: { text: string; exists: boolean },
+    relatedPaths: string[] = []
+  ): Promise<{ text: string; exists: boolean; source: "pending-review" | "disk" }> {
+    const targets = uniqueStrings([path, ...relatedPaths]
+      .map((item) => normalizeActionPath(item))
+      .filter(Boolean));
     const current = disk ?? await this.readReviewableTextSnapshot(path);
+    const pending = await this.findPendingReviewBaselineItemForPaths(targets);
+    if (pending) {
+      const expected = this.pendingReviewExpectedStateForPath(pending, path);
+      if (expected && (expected.exists !== current.exists || (expected.exists && expected.text !== current.text))) {
+        return { text: current.text, exists: current.exists, source: "disk" };
+      }
+      return { text: pending.old_text ?? "", exists: !(pending.changes ?? []).includes("create"), source: "pending-review" };
+    }
     return { text: current.text, exists: current.exists, source: "disk" };
   }
 
-  private async findPendingReviewBaselineItem(path: string): Promise<ReviewGateManifestItem | null> {
-    const target = normalizeActionPath(path);
+  private async findPendingReviewBaselineItemForPaths(paths: string[]): Promise<ReviewGateManifestItem | null> {
+    const targets = uniqueStrings(paths.map((path) => normalizeActionPath(path)).filter(Boolean));
+    if (!targets.length) return null;
     const adapter = this.app.vault.adapter;
     let packages: string[] = [];
     try {
@@ -27518,11 +27620,35 @@ class CancipView extends ItemView {
         for (const item of items) {
           if (decided.has(normalizePath(item.path))) continue;
           if (!isReviewGateItemChanged(item) || !isReviewGateItemReviewable(item, this.plugin.obsidianConfigDir())) continue;
-          if (this.reviewGateItemTouchesPath(item, target)) return item;
+          if (targets.some((target) => this.reviewGateItemBaselineTouchesPath(item, target))) return item;
         }
       } catch {
         // Ignore stale or malformed review packages; they must not block new work.
       }
+    }
+    return null;
+  }
+
+  private async findPendingReviewBaselineItem(path: string): Promise<ReviewGateManifestItem | null> {
+    return await this.findPendingReviewBaselineItemForPaths([path]);
+  }
+
+  private pendingReviewExpectedStateForPath(item: ReviewGateManifestItem, path: string): { text: string; exists: boolean } | null {
+    const target = normalizeActionPath(path);
+    if (!target) return null;
+    const changes = item.changes ?? [];
+    for (const change of normalizeReviewStructureChanges(item.structure)) {
+      const oldPath = normalizeActionPath(change.old_path);
+      const newPath = normalizeActionPath(change.new_path);
+      if ((change.kind === "rename" || change.kind === "move") && oldPath && this.pathsTouchForReview(oldPath, target)) {
+        return { text: "", exists: false };
+      }
+      if (newPath && this.pathsTouchForReview(newPath, target)) {
+        return { text: item.new_text ?? "", exists: !changes.includes("delete") };
+      }
+    }
+    if (this.pathsTouchForReview(item.path, target)) {
+      return { text: item.new_text ?? "", exists: !changes.includes("delete") };
     }
     return null;
   }
@@ -27546,7 +27672,7 @@ class CancipView extends ItemView {
 
   private async supersedePendingReviewItemsForNewItems(newItems: ReviewGateManifestItem[], sourceRunId: string): Promise<void> {
     if (!newItems.length) return;
-    const newPaths = uniqueStrings(newItems.flatMap((item) => this.reviewGateItemRelatedPaths(item)));
+    const newPaths = uniqueStrings(newItems.flatMap((item) => this.reviewGateItemSupersedePaths(item)));
     if (!newPaths.length) return;
     const adapter = this.app.vault.adapter;
     let packages: string[] = [];
@@ -27569,7 +27695,7 @@ class CancipView extends ItemView {
           !decided.has(normalizePath(item.path))
           && isReviewGateItemChanged(item)
           && isReviewGateItemReviewable(item, this.plugin.obsidianConfigDir())
-          && newPaths.some((path) => this.reviewGateItemTouchesPath(item, path))
+          && newPaths.some((path) => this.reviewGateItemSupersedePaths(item).some((candidate) => this.pathsTouchForReview(candidate, path)))
         );
         if (!superseded.length) continue;
         const dir = `${folder}/review-corrections`;
@@ -27606,6 +27732,34 @@ class CancipView extends ItemView {
       for (const related of change.related_files ?? []) paths.add(normalizePath(related));
     }
     return [...paths].filter(Boolean);
+  }
+
+  private reviewGateItemBaselinePaths(item: ReviewGateManifestItem): string[] {
+    const paths = new Set<string>([normalizePath(item.path)]);
+    for (const change of normalizeReviewStructureChanges(item.structure)) {
+      if (change.kind === "copy") {
+        if (change.new_path) paths.add(normalizePath(change.new_path));
+        continue;
+      }
+      if (change.old_path) paths.add(normalizePath(change.old_path));
+      if (change.new_path) paths.add(normalizePath(change.new_path));
+    }
+    return [...paths].filter(Boolean);
+  }
+
+  private reviewGateItemSupersedePaths(item: ReviewGateManifestItem): string[] {
+    return this.reviewGateItemBaselinePaths(item);
+  }
+
+  private pathsTouchForReview(candidatePath: string, path: string): boolean {
+    const candidate = normalizeActionPath(candidatePath);
+    const target = normalizeActionPath(path);
+    if (!candidate || !target) return false;
+    return candidate === target || isPathInFolder(target, candidate) || isPathInFolder(candidate, target);
+  }
+
+  private reviewGateItemBaselineTouchesPath(item: ReviewGateManifestItem, path: string): boolean {
+    return this.reviewGateItemBaselinePaths(item).some((candidate) => this.pathsTouchForReview(candidate, path));
   }
 
   private reviewGateItemTouchesPath(item: ReviewGateManifestItem, path: string): boolean {
@@ -36518,12 +36672,16 @@ async function listVaultReviewableFilePaths(
   maxResults = 6000
 ): Promise<string[]> {
   const normalized = normalizePath(root);
-  if (!normalized || Date.now() - startedAt > timeBudgetMs || maxResults <= 0) return [];
+  if (Date.now() - startedAt > timeBudgetMs || maxResults <= 0) return [];
   let stat: Awaited<ReturnType<DataAdapter["stat"]>>;
-  try {
-    stat = await adapter.stat(normalized);
-  } catch {
-    stat = null;
+  if (normalized) {
+    try {
+      stat = await adapter.stat(normalized);
+    } catch {
+      stat = null;
+    }
+  } else {
+    stat = { type: "folder", ctime: 0, mtime: 0, size: 0 } as Awaited<ReturnType<DataAdapter["stat"]>>;
   }
   if (!stat) return [];
   if (stat.type === "file") {
@@ -36541,6 +36699,7 @@ async function listVaultReviewableFilePaths(
     .slice(0, maxResults);
   for (const child of listing.folders) {
     if (Date.now() - startedAt > timeBudgetMs || results.length >= maxResults) break;
+    if (isConfigOrRuntimeVaultPath(child, obsidianConfigDir)) continue;
     results.push(...await listVaultReviewableFilePaths(
       adapter,
       child,

@@ -3092,11 +3092,14 @@ if ($Write -and (-not $Case -or 'programmatic.ai-vault-review-registration'.Cont
   const adapter=app.vault.adapter;
   const root='Cancip Smoke/review-registration-'+Date.now();
   const path=root+'/note.md';
+  const renamePath=root+'/rename-source.md';
+  const renamedPath=root+'/rename-target.md';
   let handle=null;
   const reviewPaths=[];
   try{
     await app.vault.createFolder(root);
     await app.vault.create(path,'manual baseline\n');
+    await app.vault.create(renamePath,'rename baseline\n');
     handle=p.beginAiVaultMutationCapture('automation:smoke:registration');
     await adapter.write(path,'AI automation edit\n');
     const captured=p.endAiVaultMutationCapture(handle);handle=null;
@@ -3114,6 +3117,15 @@ if ($Write -and (-not $Case -or 'programmatic.ai-vault-review-registration'.Cont
     const firstFolder=firstReviewPath.replace(/\/manifest\.json$/,'');
     const supersedeLog=await adapter.read(firstFolder+'/review-corrections/pending.jsonl');
     const superseded=supersedeLog.split(/\r?\n/).filter(Boolean).some((line)=>{try{return JSON.parse(line).superseded===true;}catch{return false;}});
+    await adapter.write(path,'manual hand edit\n');
+    handle=p.beginAiVaultMutationCapture('automation:smoke:registration-third');
+    await adapter.write(path,'AI after hand edit\n');
+    const thirdCaptured=p.endAiVaultMutationCapture(handle);handle=null;
+    const thirdItems=await v.reviewItemsFromCapturedAiMutations(thirdCaptured);
+    handle=p.beginAiVaultMutationCapture('automation:smoke:rename-only');
+    await adapter.rename(renamePath,renamedPath);
+    const renameCaptured=p.endAiVaultMutationCapture(handle);handle=null;
+    const renameItems=await v.reviewItemsFromCapturedAiMutations(renameCaptured);
     return JSON.stringify({
       id:'programmatic.ai-vault-review-registration',
       elapsedMs:Date.now()-t,
@@ -3121,12 +3133,18 @@ if ($Write -and (-not $Case -or 'programmatic.ai-vault-review-registration'.Cont
       itemPaths:(firstManifest.items||[]).map((item)=>item.path),
       secondOld:secondItems[0]?.old_text||'',
       secondNew:(secondManifest.items||[])[0]?.new_text||'',
+      thirdOld:thirdItems[0]?.old_text||'',
+      thirdNew:thirdItems[0]?.new_text||'',
+      renameOnly:renameItems.map((item)=>({path:item.path,old:item.old_text,new:item.new_text,changes:item.changes,structure:item.structure})),
       superseded
     });
   } finally {
     if(handle)try{p.endAiVaultMutationCapture(handle);}catch{}
     for(const reviewPath of reviewPaths.reverse()){try{const folder=reviewPath.replace(/\/manifest\.json$/,'');if(await adapter.exists(folder))await adapter.rmdir(folder,true);}catch{}}
-    try{const file=app.vault.getFileByPath(path);if(file)await app.vault.delete(file,true);if(await adapter.exists(root))await adapter.rmdir(root,true);}catch{}
+    for(const cleanupPath of [path,renamePath,renamedPath]){
+      try{const file=app.vault.getFileByPath(cleanupPath);if(file)await app.vault.delete(file,true);else if(await adapter.exists(cleanupPath))await adapter.remove(cleanupPath);}catch{}
+    }
+    try{if(await adapter.exists(root))await adapter.rmdir(root,true);}catch{}
   }
 })().catch((error)=>JSON.stringify({id:'programmatic.ai-vault-review-registration',evalError:error instanceof Error?error.message:String(error),stack:error instanceof Error?error.stack:''}))
 '@
@@ -3137,6 +3155,12 @@ if ($Write -and (-not $Case -or 'programmatic.ai-vault-review-registration'.Cont
     }
     if (-not ([string]$item.secondOld).Contains('manual baseline') -or -not ([string]$item.secondNew).Contains('AI automation edit two') -or -not $item.superseded) {
       throw "repeated AI edits did not preserve one manual baseline and supersede the older review: $($item | ConvertTo-Json -Compress -Depth 12)"
+    }
+    if (-not ([string]$item.thirdOld).Contains('manual hand edit') -or -not ([string]$item.thirdNew).Contains('AI after hand edit')) {
+      throw "manual edit after pending review was not used as the next baseline: $($item | ConvertTo-Json -Compress -Depth 12)"
+    }
+    if (@($item.renameOnly).Count -ne 1 -or [string]$item.renameOnly[0].old -ne [string]$item.renameOnly[0].new -or -not (@($item.renameOnly[0].changes) -contains 'rename')) {
+      throw "rename-only review was incorrectly treated as content rewrite: $($item | ConvertTo-Json -Compress -Depth 12)"
     }
     Add-CaseResult 'programmaticCases' @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs }
   } catch {

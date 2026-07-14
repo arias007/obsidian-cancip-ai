@@ -1,6 +1,6 @@
-# Cancip
+# Obsidian Cancip AI
 
-Obsidian right-side AI chat panel shaped toward a mobile-first agent workflow.
+Obsidian Cancip AI is a right-side AI chat panel shaped toward a mobile-first agent workflow for Obsidian.
 
 Cancip is a lightweight prototype for managing an Obsidian vault from a mobile-friendly AI panel:
 
