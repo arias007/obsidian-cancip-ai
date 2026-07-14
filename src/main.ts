@@ -1,5 +1,6 @@
 import {
   App,
+  type CachedMetadata,
   Component,
   type DataAdapter,
   Editor,
@@ -850,6 +851,32 @@ type VaultDailyReportItem = {
   excerpt?: string;
 };
 
+type VaultDailyUnresolvedLinkIssue = {
+  source: string;
+  target: string;
+  count: number;
+};
+
+type VaultCurationComposition = {
+  characters: number;
+  lines: number;
+  headings: number;
+  listItems: number;
+  tasks: number;
+  tables: number;
+  codeBlocks: number;
+  quotes: number;
+  embeds: number;
+};
+
+type VaultCurationLinkRelation = {
+  direction: "outgoing" | "backlink" | "unresolved" | "suggested";
+  target: string;
+  count: number;
+  relationHint: string;
+  evidence?: string;
+};
+
 type VaultCurationCandidate = {
   path: string;
   ctime: number;
@@ -861,6 +888,8 @@ type VaultCurationCandidate = {
   tags: string[];
   outLinks: number;
   backlinks: number;
+  composition: VaultCurationComposition;
+  linkRelations: VaultCurationLinkRelation[];
   content?: string;
   excerpt?: string;
 };
@@ -2247,19 +2276,21 @@ const AUTOMATION_DIR = `${CANCIP_CONFIG_DIR}/automations`;
 const AUTOMATION_STATE_PATH = `${CANCIP_CONFIG_DIR}/automations.json`;
 const AUTOMATION_SCHEMA_VERSION = 1;
 const VAULT_CURATION_AUTOMATION_ID = "auto-vault-curation";
-const VAULT_CURATION_AUTOMATION_PROMPT_MARKER = "Vault Curation v3";
+const VAULT_CURATION_AUTOMATION_PROMPT_MARKER = "Vault Curation v5";
 const VAULT_CURATION_NEW_FILE_STATE_PATH = `${AUTOMATION_DIR}/vault-curation-new-files.json`;
 const DEPRECATED_VAULT_CURATION_AUTOMATION_IDS = new Set([
   "auto-vault-content-beautify",
   "auto-vault-auto-tags",
   "auto-vault-file-summaries"
 ]);
+const VAULT_DAILY_REPORT_AUTOMATION_ID = "auto-vault-daily-maintenance-report";
+const VAULT_DAILY_REPORT_PROMPT_MARKER = "Vault Daily Checkup v1";
 const ANDROID_NTFY_PLUGIN_ID = "android-ntfy-notifier";
 const OBSIDIAN_CONFIG_FALLBACK = [".", "obsidian"].join("");
 const NEWS_BRIEF_PROMPT = "每天早晚生成一份中文“国内外大事和动向”简报，风格参考：先给一句总判断，再分国内、国际、市场/金融、科技/AI、加密/大宗商品等板块；每条写清具体日期、事实、影响判断和可信来源链接。必须实时查证最新信息，优先交叉使用官方源、新华社/教育部/央行/商务部等国内官方源、Reuters/AP/Bloomberg/CoinDesk/金十公开快讯等；金十只作为快讯入口，重要结论需尽量用官方或主流新闻源交叉验证。避免编造和二手谣言；若信息冲突或未确认，明确标注“不确定/待确认”。结尾给“接下来最该盯的信号”5-8条。输出到本次自动化产生的可见 Cancip 对话中，中文、结论先行、简洁但不要漏掉关键事实。不写 Obsidian，不移动/删除/修改任何文件，除非用户另行确认。";
 const NEWS_BRIEF_MAX_AGE_MS = 36 * 60 * 60 * 1000;
 const NEWS_BRIEF_UNDATED_LIMIT = 6;
-const VAULT_DAILY_REPORT_PROMPT = "生成中文 Vault 每日维护合并日报。只做只读扫描、归纳和候选建议，不执行移动、删除、合并、改名、链接修复或正文改写。报告要方便手机阅读：先给一句总判断，再列今日改动、待整理/可合并候选、任务/日记线索、审核/版本/自动化状态、明天优先处理、需要确认的高风险动作。对每个候选写路径和原因；如果信息不足，直接说明缺口。需要高风险动作时建议走 Git 审核/Review Gate 或用户确认。不要输出工具 JSON，不要说已经执行维护改动。";
+const VAULT_DAILY_REPORT_PROMPT = "生成中文 Vault 自动体检、优化建议和老朋友式提醒。只做只读扫描、归纳和候选建议，不执行移动、删除、合并、改名、链接修复或正文改写。必须基于本地扫描包里的事实，不要泛泛而谈，不要写鸡汤、万能兜底话术或“为了关心而关心”。像熟悉用户习惯的老朋友一样：只提醒具体、可验证、对用户有益、用户可能没注意到的事情；没有明确依据就不说。报告要方便手机阅读：先一句总判断，再给体检信号、具体改良建议、值得提醒的事、候选动作和需要确认的高风险动作。对每个候选写路径和原因；如果信息不足，直接说明缺口。需要高风险动作时建议走 Git 审核/Review Gate 或用户确认。不要输出工具 JSON，不要说已经执行维护改动。";
 const NEWS_BRIEF_SOURCES: NewsBriefSource[] = [
   { name: "China Daily China", category: "国内", url: "https://www.chinadaily.com.cn/rss/china_rss.xml" },
   { name: "China Daily World", category: "国际", url: "https://www.chinadaily.com.cn/rss/world_rss.xml" },
@@ -13526,14 +13557,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
 
   async ensureDefaultDailyAutomations(): Promise<void> {
     try {
-      const templateIds = new Set([
-        "auto-news-brief-morning",
-        "auto-news-brief-evening",
-        "auto-vault-daily-maintenance-report",
-        "auto-cancip-memory-dream",
-        VAULT_CURATION_AUTOMATION_ID
-      ]);
-      const templates = cancipAutomationTemplates().filter((item) => templateIds.has(item.id));
+      const templates = cancipAutomationTemplates();
       if (!templates.length) return;
       const tasks = await this.loadAutomations();
       const activeTasks = tasks.filter((task) => !DEPRECATED_VAULT_CURATION_AUTOMATION_IDS.has(task.id));
@@ -13543,6 +13567,17 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       const nextTasks = activeTasks.map((task) => {
         const template = templateById.get(task.id);
         if (template && task.id === VAULT_CURATION_AUTOMATION_ID && shouldUpgradeVaultCurationAutomationTask(task, template)) {
+          migrated = true;
+          return {
+            ...task,
+            title: template.title,
+            prompt: template.prompt?.trim() || task.prompt,
+            command: template.command,
+            args: template.args,
+            updatedAt: new Date().toISOString()
+          };
+        }
+        if (template && task.id === VAULT_DAILY_REPORT_AUTOMATION_ID && shouldUpgradeVaultDailyReportAutomationTask(task, template)) {
           migrated = true;
           return {
             ...task,
@@ -20876,8 +20911,10 @@ class CancipView extends ItemView {
   private async buildVaultDailyReportSourcePack(hours: number, limit: number): Promise<string> {
     const now = Date.now();
     const since = now - hours * 60 * 60 * 1000;
-    const allTextFiles = this.app.vault.getFiles().filter((file) => isContextTextFile(file));
+    const allVaultFiles = this.app.vault.getFiles();
+    const allTextFiles = allVaultFiles.filter((file) => isContextTextFile(file));
     const reportFiles = allTextFiles.filter((file) => isVaultDailyReportContentFile(file, this.plugin.obsidianConfigDir()));
+    const markdownFiles = reportFiles.filter((file) => file.extension.toLowerCase() === "md");
     const recentFiles = reportFiles
       .filter((file) => file.stat.mtime >= since)
       .sort((a, b) => b.stat.mtime - a.stat.mtime || a.path.localeCompare(b.path))
@@ -20906,16 +20943,30 @@ class CancipView extends ItemView {
     const reviewGates = await this.plugin.listReviewGates(5);
     const automations = await this.plugin.loadAutomations();
     const versionState = await this.vaultDailyVersionState();
+    const unresolvedIssues = this.findVaultDailyUnresolvedLinkIssues(reportFiles, 20);
+    const isolatedCandidates = await this.vaultDailyReportItems(this.findVaultDailyIsolatedNoteCandidates(markdownFiles, 20), "isolated note without incoming or outgoing resolved links", false);
+    const largeNotes = await this.vaultDailyReportItems(
+      markdownFiles
+        .filter((file) => file.stat.size >= 30000)
+        .sort((a, b) => b.stat.size - a.stat.size || a.path.localeCompare(b.path))
+        .slice(0, 20),
+      "large note may need concise property summary or index",
+      false
+    );
+    const folderHealth = this.findVaultDailyFolderHealth(reportFiles, recentFiles, 14);
+    const preferenceSnapshot = await this.vaultDailyPreferenceSnapshot();
 
     const lines: string[] = [
-      "# Vault Daily Maintenance Source Pack",
+      "# Vault Daily Checkup Source Pack",
       "",
       `- generatedAt: ${new Date(now).toISOString()}`,
       `- windowHours: ${hours}`,
-      `- textFiles: ${allTextFiles.length}`,
-      `- maintenanceContentFiles: ${reportFiles.length}`,
       `- recentFilesInWindow: ${recentFiles.length}`,
+      this.vaultDailyHealthSummary(allVaultFiles, reportFiles, recentFiles, automations, reviewGates, unresolvedIssues, isolatedCandidates.length),
       "- safety: read-only scan only; no move/delete/merge/rename/link repair/content edit executed.",
+      "",
+      "## Folder Health Signals",
+      folderHealth,
       "",
       "## Recent Changes",
       formatVaultDailyReportItems(recent, 30),
@@ -20932,6 +20983,15 @@ class CancipView extends ItemView {
       "## Duplicate Basename Groups",
       duplicateGroups.length ? duplicateGroups.map((group) => `- ${group.name}: ${group.paths.join(" | ")}`).join("\n") : "- none",
       "",
+      "## Isolated Link Graph Candidates",
+      formatVaultDailyReportItems(isolatedCandidates, 20),
+      "",
+      "## Unresolved Link Issues",
+      formatVaultDailyUnresolvedLinkIssues(unresolvedIssues, 20),
+      "",
+      "## Large Notes That May Need Property Summary",
+      formatVaultDailyReportItems(largeNotes, 20),
+      "",
       "## Task And Diary Clues",
       taskClues.length ? taskClues.map((item) => `- ${item.done ? "[x]" : "[ ]"} ${item.path}: ${item.line}`).join("\n") : "- none",
       "",
@@ -20944,11 +21004,15 @@ class CancipView extends ItemView {
       "## Local Version State",
       versionState,
       "",
+      "## User Organization Preference Snapshot",
+      preferenceSnapshot,
+      "",
       "## High Risk Guard",
       "- Move/delete/merge/rename/link repair/bulk cleanup must stay candidate-only until the user confirms or Review Gate approves.",
-      "- Protect plugin syntax/data: Tasks, Dataview, Excalidraw, Spaced Repetition, Meld Encrypt, Remotely Save, Git, RunJS, QuickAdd, Cmdr."
+      "- Protect plugin syntax/data: Tasks, Dataview, Excalidraw, Spaced Repetition, Meld Encrypt, Remotely Save, Git, RunJS, QuickAdd, Cmdr.",
+      "- Friend-like reminders must be specific and evidence-based. Do not produce generic concern, filler comfort, or advice unrelated to the scan facts."
     ];
-    return trimContext(lines.join("\n"), 22000);
+    return trimContext(lines.join("\n"), 26000);
   }
 
   private async vaultDailyReportItems(files: TFile[], reason: string, includeExcerpt: boolean): Promise<VaultDailyReportItem[]> {
@@ -21020,6 +21084,97 @@ class CancipView extends ItemView {
       .slice(0, limit);
   }
 
+  private findVaultDailyFolderHealth(files: TFile[], recentFiles: TFile[], limit: number): string {
+    const recentPaths = new Set(recentFiles.map((file) => normalizePath(file.path)));
+    const groups = new Map<string, { total: number; markdown: number; recent: number; bytes: number }>();
+    for (const file of files) {
+      const folder = file.parent?.path || "/";
+      const current = groups.get(folder) ?? { total: 0, markdown: 0, recent: 0, bytes: 0 };
+      current.total += 1;
+      if (file.extension.toLowerCase() === "md") current.markdown += 1;
+      if (recentPaths.has(normalizePath(file.path))) current.recent += 1;
+      current.bytes += file.stat.size;
+      groups.set(folder, current);
+    }
+    const rows = [...groups.entries()]
+      .map(([folder, item]) => ({ folder, ...item }))
+      .sort((a, b) => b.recent - a.recent || b.total - a.total || a.folder.localeCompare(b.folder))
+      .slice(0, limit);
+    if (!rows.length) return "- none";
+    return rows
+      .map((item) => `- ${item.folder}: files=${item.total} md=${item.markdown} recent=${item.recent} size=${formatFileSize(item.bytes)}`)
+      .join("\n");
+  }
+
+  private findVaultDailyUnresolvedLinkIssues(files: TFile[], limit: number): VaultDailyUnresolvedLinkIssue[] {
+    const contentPaths = new Set(files.map((file) => normalizePath(file.path)));
+    const issues: VaultDailyUnresolvedLinkIssue[] = [];
+    for (const [sourcePath, targets] of Object.entries(this.app.metadataCache.unresolvedLinks ?? {})) {
+      const source = normalizePath(sourcePath);
+      if (!contentPaths.has(source)) continue;
+      for (const [target, count] of Object.entries(targets ?? {})) {
+        const cleanTarget = String(target ?? "").trim();
+        if (!cleanTarget) continue;
+        issues.push({ source, target: cleanTarget, count: Number(count) || 1 });
+      }
+    }
+    return issues
+      .sort((a, b) => b.count - a.count || a.source.localeCompare(b.source) || a.target.localeCompare(b.target))
+      .slice(0, limit);
+  }
+
+  private findVaultDailyIsolatedNoteCandidates(files: TFile[], limit: number): TFile[] {
+    return files
+      .filter((file) => {
+        if (file.stat.size < 300) return false;
+        const outLinks = Object.keys(this.app.metadataCache.resolvedLinks[file.path] ?? {}).length;
+        return outLinks === 0 && this.vaultCurationBacklinkCount(file.path) === 0;
+      })
+      .sort((a, b) => b.stat.mtime - a.stat.mtime || a.path.localeCompare(b.path))
+      .slice(0, limit);
+  }
+
+  private vaultDailyHealthSummary(
+    allFiles: TFile[],
+    reportFiles: TFile[],
+    recentFiles: TFile[],
+    automations: AutomationTask[],
+    reviewGates: string[],
+    unresolvedIssues: VaultDailyUnresolvedLinkIssue[],
+    isolatedCount: number
+  ): string {
+    const reportMarkdown = reportFiles.filter((file) => file.extension.toLowerCase() === "md");
+    const contentPaths = new Set(reportFiles.map((file) => normalizePath(file.path)));
+    const resolvedSourceCount = Object.keys(this.app.metadataCache.resolvedLinks ?? {}).filter((path) => contentPaths.has(normalizePath(path))).length;
+    const unresolvedSourceCount = new Set(unresolvedIssues.map((item) => item.source)).size;
+    const enabledAutomations = automations.filter((task) => task.enabled).length;
+    const failedAutomations = automations.filter((task) => task.lastStatus === "failed").length;
+    return [
+      `- vaultFiles: ${allFiles.length}`,
+      `- visibleTextFiles: ${reportFiles.length}`,
+      `- visibleMarkdownFiles: ${reportMarkdown.length}`,
+      `- recentVisibleFiles: ${recentFiles.length}`,
+      `- resolvedLinkSources: ${resolvedSourceCount}`,
+      `- unresolvedLinkSources: ${unresolvedSourceCount}`,
+      `- unresolvedLinkIssuesInPack: ${unresolvedIssues.length}`,
+      `- isolatedCandidatesInPack: ${isolatedCount}`,
+      `- reviewGatePackagesListed: ${reviewGates.length}`,
+      `- automations: total=${automations.length} enabled=${enabledAutomations} failed=${failedAutomations}`
+    ].join("\n");
+  }
+
+  private async vaultDailyPreferenceSnapshot(): Promise<string> {
+    try {
+      const adapter = this.app.vault.adapter;
+      if (!(await adapter.exists(CANCIP_OBSIDIAN_ORGANIZATION_MEMORY_PATH))) return "- no organization preference memory found";
+      const raw = await adapter.read(CANCIP_OBSIDIAN_ORGANIZATION_MEMORY_PATH);
+      return trimContext(raw.replace(CANCIP_OBSIDIAN_ORGANIZATION_MEMORY_MARKER, "").trim(), 1800);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      return `- preference memory read failed: ${reason}`;
+    }
+  }
+
   private async findVaultDailyTaskClues(files: TFile[], since: number, limit: number): Promise<VaultDailyTaskClue[]> {
     const taskFiles = files
       .filter((file) => file.extension.toLowerCase() === "md")
@@ -21086,7 +21241,7 @@ class CancipView extends ItemView {
     const scannedFiles = stateResult.pending
       .sort((a, b) => a.stat.ctime - b.stat.ctime || a.path.localeCompare(b.path))
       .slice(0, scanLimit);
-    const scannedCandidates = await this.vaultCurationCandidateItems(scannedFiles, "new Markdown file not handled by auto-curation yet");
+    const scannedCandidates = await this.vaultCurationCandidateItems(scannedFiles, "new Markdown file not handled by auto-curation yet", curatableFiles);
     const meaningfulCandidates = scannedCandidates.filter((item) => item.curationReasons.length > 0).slice(0, candidateLimit);
     const candidatePaths = meaningfulCandidates.map((item) => item.path);
     const scannedPaths = scannedCandidates
@@ -21110,6 +21265,8 @@ class CancipView extends ItemView {
       "",
       "## Contract",
       "- Process only candidatePathsJson. The source text is already attached; avoid a duplicate read unless it is truncated or an external relation must be verified.",
+      "- Use composition/linkRelations only for concise property enrichment: summary, link_count, link_relations, related_candidates. Do not create visible body sections for these facts.",
+      "- Suggested link relations are candidates only. Verify with a focused read/search before adding a new wikilink; skip weak candidates instead of inventing relationship text.",
       "- Pure spaces, blank lines, punctuation, heading markers, list indentation, or date-spacing edits are not meaningful and will be skipped programmatically.",
       "- A short coherent note may remain unchanged. A date-based journal filename is valid. Missing H1/frontmatter/tag/summary/link alone is not a defect.",
       `- Existing files and folders are handled on demand through Skill ${CANCIP_BUILTIN_CURATION_SKILL_PATH}, not by this scheduled automation.`
@@ -21188,8 +21345,7 @@ class CancipView extends ItemView {
     if (vagueName && !dateName) reasons.push("vague or machine-generated filename");
     const isLong = text.length >= 3600;
     const frontmatter = cache?.frontmatter as Record<string, unknown> | undefined;
-    const hasSummary = flattenKeywordValue(frontmatter?.summary ?? frontmatter?.description).join(" ").trim()
-      || /^#{1,6}\s*(摘要|summary)\s*$/im.test(text);
+    const hasSummary = flattenKeywordValue(frontmatter?.summary ?? frontmatter?.description).join(" ").trim();
     if (isLong && !hasSummary) reasons.push("long note lacks a useful summary");
     const structuredLineCount = text.split(/\r?\n/).filter((line) => {
       const value = line.trim();
@@ -21199,12 +21355,12 @@ class CancipView extends ItemView {
     return uniqueStrings(reasons);
   }
 
-  private async vaultCurationCandidateItems(files: TFile[], reason: string): Promise<VaultCurationCandidate[]> {
+  private async vaultCurationCandidateItems(files: TFile[], reason: string, relatedScopeFiles: TFile[] = this.app.vault.getMarkdownFiles()): Promise<VaultCurationCandidate[]> {
     const items: VaultCurationCandidate[] = [];
     for (const file of files) {
       const cache = this.app.metadataCache.getFileCache(file);
       const frontmatter = cache?.frontmatter as Record<string, unknown> | undefined;
-      const title = flattenKeywordValue(frontmatter?.title ?? frontmatter?.aliases)[0] || cache?.headings?.[0]?.heading || file.basename;
+      const title = this.vaultCurationFileTitle(file, cache);
       const tags = uniqueStrings([
         ...flattenKeywordValue(frontmatter?.tags ?? frontmatter?.tag).map((tag) => tag.replace(/^#/, "")),
         ...(cache?.tags ?? []).map((tag) => tag.tag.replace(/^#/, ""))
@@ -21218,6 +21374,7 @@ class CancipView extends ItemView {
         }
       }
       const curationReasons = this.vaultCurationPreflight(file, content, cache);
+      const linkRelations = this.vaultCurationLinkRelations(file, content, cache, tags, relatedScopeFiles);
       items.push({
         path: file.path,
         ctime: file.stat.ctime,
@@ -21229,11 +21386,152 @@ class CancipView extends ItemView {
         tags,
         outLinks: Object.keys(this.app.metadataCache.resolvedLinks[file.path] ?? {}).length,
         backlinks: this.vaultCurationBacklinkCount(file.path),
+        composition: this.vaultCurationComposition(content, cache),
+        linkRelations,
         content: curationReasons.length ? trimContext(content, 6000) : undefined,
         excerpt: content ? makeExcerpt(content, []) : undefined
       });
     }
     return items;
+  }
+
+  private vaultCurationFileTitle(file: TFile, cache: CachedMetadata | null): string {
+    const frontmatter = cache?.frontmatter as Record<string, unknown> | undefined;
+    return flattenKeywordValue(frontmatter?.title ?? frontmatter?.aliases)[0] || cache?.headings?.[0]?.heading || file.basename;
+  }
+
+  private vaultCurationComposition(content: string, cache: CachedMetadata | null): VaultCurationComposition {
+    const normalized = content.replace(/\r\n?/g, "\n");
+    const lines = normalized ? normalized.split("\n") : [];
+    const fenceLines = lines.filter((line) => /^\s*(```|~~~)/.test(line)).length;
+    return {
+      characters: content.length,
+      lines: lines.length,
+      headings: cache?.headings?.length ?? lines.filter((line) => /^\s{0,3}#{1,6}\s+\S/.test(line)).length,
+      listItems: lines.filter((line) => /^\s*(?:[-*+]\s+|\d+[.)]\s+)/.test(line)).length,
+      tasks: lines.filter((line) => /^\s*[-*+]\s+\[[ xX-]\]\s+/.test(line)).length,
+      tables: lines.filter((line) => /^\s*\|.*\|\s*$/.test(line)).length,
+      codeBlocks: Math.floor(fenceLines / 2),
+      quotes: lines.filter((line) => /^\s*>\s+/.test(line)).length,
+      embeds: cache?.embeds?.length ?? 0
+    };
+  }
+
+  private vaultCurationLinkRelations(file: TFile, content: string, cache: CachedMetadata | null, tags: string[], relatedScopeFiles: TFile[]): VaultCurationLinkRelation[] {
+    const relations: VaultCurationLinkRelation[] = [];
+    const resolved = this.app.metadataCache.resolvedLinks[file.path] ?? {};
+    const outgoingEntries = Object.entries(resolved)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .slice(0, 8);
+    for (const [target, count] of outgoingEntries) {
+      const link = (cache?.links ?? []).find((item) => {
+        const linked = this.app.metadataCache.getFirstLinkpathDest(vaultLinkBase(item.link), file.path);
+        return linked ? normalizePath(linked.path) === normalizePath(target) : false;
+      });
+      relations.push({
+        direction: "outgoing",
+        target,
+        count: Number(count) || 1,
+        relationHint: "正文已出链：如需保留关系，只在属性里短写来源、概念、案例、上下位或延伸等明确关系。",
+        evidence: this.vaultCurationLinkEvidence(content, link?.position.start.line, link?.original)
+      });
+    }
+
+    relations.push(...this.vaultCurationBacklinkRelations(file.path).slice(0, 6));
+
+    const unresolved = this.app.metadataCache.unresolvedLinks[file.path] ?? {};
+    for (const [target, count] of Object.entries(unresolved).slice(0, 6)) {
+      relations.push({
+        direction: "unresolved",
+        target,
+        count: Number(count) || 1,
+        relationHint: "未解析链接：如需保留，只在属性里短写为待核对对象，不能当作已存在目标。"
+      });
+    }
+
+    const linkedTargets = new Set(Object.keys(resolved).map((path) => normalizePath(path)));
+    relations.push(...this.vaultCurationSuggestedLinkRelations(file, content, cache, tags, relatedScopeFiles, linkedTargets));
+    return relations.slice(0, 20);
+  }
+
+  private vaultCurationLinkEvidence(content: string, lineNumber: number | undefined, fallback: string | undefined): string | undefined {
+    const lines = content.replace(/\r\n?/g, "\n").split("\n");
+    if (typeof lineNumber === "number" && Number.isFinite(lineNumber)) {
+      const line = lines[lineNumber]?.trim();
+      if (line) return trimContext(line, 220);
+    }
+    const clean = fallback?.trim();
+    return clean ? trimContext(clean, 160) : undefined;
+  }
+
+  private vaultCurationBacklinkRelations(path: string): VaultCurationLinkRelation[] {
+    const normalized = normalizePath(path);
+    const relations: VaultCurationLinkRelation[] = [];
+    for (const [sourcePath, targets] of Object.entries(this.app.metadataCache.resolvedLinks ?? {})) {
+      if (normalizePath(sourcePath) === normalized) continue;
+      const hit = Object.entries(targets).find(([target]) => normalizePath(target) === normalized);
+      if (!hit) continue;
+      relations.push({
+        direction: "backlink",
+        target: sourcePath,
+        count: Number(hit[1]) || 1,
+        relationHint: "反链：如需保留，只在属性里短写当前笔记被哪些主题使用。"
+      });
+    }
+    return relations.sort((a, b) => a.target.localeCompare(b.target));
+  }
+
+  private vaultCurationSuggestedLinkRelations(file: TFile, content: string, cache: CachedMetadata | null, tags: string[], relatedScopeFiles: TFile[], linkedTargets: Set<string>): VaultCurationLinkRelation[] {
+    const contentLower = content.toLowerCase();
+    const sourceTitle = this.vaultCurationFileTitle(file, cache);
+    const sourceTokens = new Set(tokenize(`${file.basename} ${sourceTitle} ${tags.join(" ")} ${(cache?.headings ?? []).slice(0, 4).map((heading) => heading.heading).join(" ")}`).filter((token) => token.length >= 2));
+    const sourceFolder = file.parent?.path ?? "";
+    const scored: Array<{ score: number; path: string; evidence: string[] }> = [];
+    for (const other of relatedScopeFiles) {
+      if (normalizePath(other.path) === normalizePath(file.path) || linkedTargets.has(normalizePath(other.path))) continue;
+      const otherCache = this.app.metadataCache.getFileCache(other);
+      const otherFrontmatter = otherCache?.frontmatter as Record<string, unknown> | undefined;
+      const otherTitle = this.vaultCurationFileTitle(other, otherCache);
+      const otherTags = uniqueStrings([
+        ...flattenKeywordValue(otherFrontmatter?.tags ?? otherFrontmatter?.tag).map((tag) => tag.replace(/^#/, "")),
+        ...(otherCache?.tags ?? []).map((tag) => tag.tag.replace(/^#/, ""))
+      ]).slice(0, 8);
+      const names = uniqueStrings([other.basename, otherTitle, ...flattenKeywordValue(otherFrontmatter?.aliases)])
+        .filter((name) => name.length >= 3);
+      let score = 0;
+      const evidence: string[] = [];
+      const mentioned = names.find((name) => contentLower.includes(name.toLowerCase()));
+      if (mentioned) {
+        score += 8;
+        evidence.push(`正文提到“${mentioned}”但未链接`);
+      }
+      const sharedTags = otherTags.filter((tag) => tags.includes(tag)).slice(0, 3);
+      if (sharedTags.length) {
+        score += 4 + sharedTags.length;
+        evidence.push(`共享标签 ${sharedTags.map((tag) => `#${tag}`).join(" ")}`);
+      }
+      if (sourceFolder && other.parent?.path === sourceFolder) {
+        score += 2;
+        evidence.push("同目录");
+      }
+      const otherTokens = tokenize(`${other.basename} ${otherTitle} ${otherTags.join(" ")}`).filter((token) => token.length >= 3);
+      const sharedTerms = uniqueStrings(otherTokens.filter((token) => sourceTokens.has(token))).slice(0, 4);
+      if (sharedTerms.length >= 2) {
+        score += sharedTerms.length;
+        evidence.push(`共享题名/路径词 ${sharedTerms.join(", ")}`);
+      }
+      if (score >= 6) scored.push({ score, path: other.path, evidence });
+    }
+    return scored
+      .sort((a, b) => b.score - a.score || a.path.localeCompare(b.path))
+      .slice(0, 5)
+      .map((item) => ({
+        direction: "suggested" as const,
+        target: item.path,
+        count: 1,
+        relationHint: "推测相关但尚未链接；需要读/核对后才可写入双链或相关链接。",
+        evidence: item.evidence.join("; ")
+      }));
   }
 
   private vaultCurationBacklinkCount(path: string): number {
@@ -28879,8 +29177,8 @@ class CancipView extends ItemView {
     }
 
     if (normalized === "cancip.automation.addVaultDailyReport") {
-      const template = cancipAutomationTemplates().find((item) => item.id === "auto-vault-daily-maintenance-report");
-      if (!template) throw new Error("unknown automation template: auto-vault-daily-maintenance-report");
+      const template = cancipAutomationTemplates().find((item) => item.id === VAULT_DAILY_REPORT_AUTOMATION_ID);
+      if (!template) throw new Error(`unknown automation template: ${VAULT_DAILY_REPORT_AUTOMATION_ID}`);
       const task = await this.plugin.upsertAutomationFromAction({
         type: "automation",
         op: "add",
@@ -33950,9 +34248,9 @@ function cancipAutomationTemplates(): AutomationTemplate[] {
       minute: 15
     },
     {
-      id: "auto-vault-daily-maintenance-report",
-      title: "Vault 每日维护合并日报",
-      description: "Generate a read-only daily vault maintenance and merge-candidate report. It never moves, deletes, renames, merges, or rewrites notes.",
+      id: VAULT_DAILY_REPORT_AUTOMATION_ID,
+      title: "Vault 每日体检与老友提醒",
+      description: "Generate a read-only daily vault checkup with health signals, improvement candidates, and specific friend-like reminders. It never moves, deletes, renames, merges, or rewrites notes.",
       prompt: buildVaultDailyReportPrompt(24),
       command: "cancip.vaultDailyReport",
       args: { hours: 24, limit: 80 },
@@ -34030,11 +34328,13 @@ function buildNewsBriefPrompt(period: NewsBriefPeriod): string {
 
 function buildVaultDailyReportPrompt(hours: number): string {
   return [
+    `内部版本：${VAULT_DAILY_REPORT_PROMPT_MARKER}。`,
     VAULT_DAILY_REPORT_PROMPT,
     "",
     `本次统计窗口：最近 ${hours} 小时。必须基于下面“本地只读扫描包”回答。`,
     "不要把候选动作写成已经完成；不要建议自动删除/移动/合并。确实需要处理时，写成“建议确认后执行”。",
-    "输出结构固定为：一句总判断；今日改动；待整理/可合并候选；任务/日记线索；审核/版本/自动化状态；明天优先处理；需要确认的高风险动作。"
+    "输出总分总：总：一句真实状态；分：按序号列具体体检信号、今日变化、改良建议、值得提醒、候选动作、需要确认的高风险动作；总：一句下一步。没有内容的栏目直接省略。",
+    "建议要具体到路径、现象和原因。提醒最多 1-3 条，必须从扫描事实推出来；不写“当前状态不足以”“建议继续观察”等空话。"
   ].join("\n");
 }
 
@@ -34067,6 +34367,8 @@ function buildBuiltInVaultCurationSkillContent(): string {
     "  - 美化整理",
     "  - 挂tag",
     "  - 摘要",
+    "  - 链接关系",
+    "  - 知识关系",
     "  - 重命名",
     "  - 自动整理",
     "---",
@@ -34083,7 +34385,11 @@ function buildBuiltInVaultCurationSkillContent(): string {
     "- Do not run every curation action on every note. Decide per note whether beautify/refactor, tag/category, summary, links, or rename is actually needed.",
     "- Tags follow the user's existing classification/category system. Add only a few stable category tags when the note clearly belongs there; do not tag-stuff.",
     "- Summaries are only for long notes that exceed about one screen of reading; short notes do not need summary/description just to satisfy a checklist.",
+    "- When adding a summary to a long/complex note, write concise properties only. Do not add visible `## Summary`, `## 摘要`, or relationship sections to the note body.",
+    "- Keep property values short and explicit: `summary` is one compact sentence; optional relation properties should include only high-value, clearly evidenced link counts/relationships/candidates, capped to a few short items.",
+    "- If the relationship cannot be stated briefly and usefully in properties, skip it instead of writing a long body section or filler metadata.",
     "- Add links only when a clear relationship exists and the connection is missing. Prefer reading or resolving the related note before inserting a wikilink.",
+    "- Suggested links from scan packs are evidence, not commands: verify before inserting a link, and skip weak or merely same-folder matches.",
     "- For rename: use move/rename, keep the extension, keep names concise, short, and comprehensive, update links when needed, and avoid repeated rename churn in one run.",
     "- Ordinary visible Vault note edits may be written, but Cancip must preserve the last human baseline and keep them visible in the review panel.",
     "- If no meaningful edit is needed after reading, say what was checked and why no change was made. Do not claim a curation pass happened without read/write evidence.",
@@ -34115,10 +34421,14 @@ function buildObsidianOrganizationMemoryContent(): string {
 ## 摘要
 - 摘要只给长篇笔记使用：至少超过一个手机屏幕、较难快速扫读，或内容需要提炼入口。
 - 短笔记、清单、摘录、单段记录通常不需要 summary/description。
+- 给长篇/复杂笔记挂摘要时只写属性，不新增正文“## 摘要/知识关系”等段落；避免破坏原正文阅读结构。
+- 属性必须短而明确：summary 一句话；关系类属性只在明确有价值时少量写入，最多几条，写不短或价值不明就跳过。
+- 可用属性示例：summary、link_count、link_relations、related_candidates；字段值用短句/短列表，不写长表。
 
 ## 链接
 - 挂链接要“明确有关联但目前缺少联系”；能读到或确定相关笔记时再加。
 - 不凭空批量挂链接；不确定时先搜索/读取候选，或跳过并说明缺少依据。
+- 程序化扫描包里的 suggested link 只是候选证据，不是自动写入命令；至少要能说明共享标签、同主题、正文提到、上下位、来源/案例/延伸等具体关系。
 
 ## 重命名
 - 文件名尽量扼要简短且全面，贴合正文核心内容。
@@ -34158,7 +34468,7 @@ function buildVaultCurationPrompt(): string {
     "",
     "三类动作流水线：",
     "A. 美化整理重构：整理 Markdown 标题层级、段落、列表、表格、代码块、引用、待办、空行和 frontmatter 格式；可做轻量结构重构，但不改变事实含义，不删除实质内容。",
-    "B. 笔记属性与知识连接：只在需要时补充或规范 properties/frontmatter；tag 依据已有分类体系少量稳定添加，摘要只给超过一个屏幕的长篇笔记，链接只加明确相关但缺失连接的 Obsidian 双链/相关链接/出链，必要时读取少量相关笔记核对，不凭空乱挂链接。",
+    "B. 笔记属性与知识连接：只在需要时补充或规范 properties/frontmatter；tag 依据已有分类体系少量稳定添加；摘要只给超过一个屏幕的长篇/复杂笔记，并只写入属性，不新增正文摘要/知识关系段落；summary 一句话，link_count/link_relations/related_candidates 等关系属性只在明确有价值时少量短写，写不短或价值不明就跳过；链接只加明确相关但缺失连接的 Obsidian 双链/相关链接/出链，必要时读取少量相关笔记核对，不凭空乱挂链接。",
     "C. 文件重命名：根据正文内容、标题、日期、项目上下文提出更清晰文件名；文件名要扼要简短且全面；需要改名时用 move/rename，保持原扩展名，避免频繁改名；改名后必须验证当前文件路径、双链、反链/引用和同轮变更列表。",
     "",
     "执行顺序：",
@@ -34170,6 +34480,9 @@ function buildVaultCurationPrompt(): string {
     "边界与审核：",
     "- 不删除实质内容，不改事实含义，不合并/拆分/删除文件，除非用户明确要求。",
     "- 不要为了凑动作而挂 tag、摘要、链接或重命名。",
+    "- Scan Pack 已提供 composition/linkRelations：优先使用这些程序化事实；需要补链时先核对 suggested 关系，不要把弱相关候选写成确定关系。",
+    "- 摘要、链接数、链接关系、推测关联只能写进 properties/frontmatter；不要新增或改写正文里的摘要/知识关系段落。",
+    "- 属性要尽可能短又不失关键信息：summary 一句话，link_relations/related_candidates 最多几条短项；不明确、不高价值、不好短写就不写。",
     "- 普通可见 Vault 笔记改动必须进入 Cancip 审核面板，原文基线保留最后人工版本。",
     "- 如果写的是 Cancip 配置或自动化配置，按配置备份规则处理，不进入普通笔记审核。"
   ].join("\n");
@@ -34182,6 +34495,15 @@ function shouldUpgradeVaultCurationAutomationTask(task: AutomationTask, template
   if (task.prompt.includes(VAULT_CURATION_AUTOMATION_PROMPT_MARKER)) return false;
   const text = `${task.title}\n${task.prompt}`;
   return /Vault 自动整理|auto-vault-curation|改名、内容整理美化|挂 tag|挂总结|auto-vault-content-beautify|auto-vault-auto-tags|auto-vault-file-summaries/i.test(text);
+}
+
+function shouldUpgradeVaultDailyReportAutomationTask(task: AutomationTask, template: AutomationTemplate): boolean {
+  if (task.id !== VAULT_DAILY_REPORT_AUTOMATION_ID) return false;
+  const nextPrompt = template.prompt?.trim() ?? "";
+  if (!nextPrompt) return false;
+  if (task.prompt.includes(VAULT_DAILY_REPORT_PROMPT_MARKER)) return false;
+  const text = `${task.title}\n${task.prompt}`;
+  return /Vault\s*每日|维护合并日报|maintenance|merge-candidate|每日维护|日报/i.test(text);
 }
 
 function buildTranslateCurrentPagePrompt(input: CurrentPageTranslationCapture, targetLanguage: string): string {
@@ -34333,8 +34655,23 @@ function formatVaultDailyReportItems(items: VaultDailyReportItem[], limit: numbe
     .join("\n");
 }
 
+function formatVaultDailyUnresolvedLinkIssues(items: VaultDailyUnresolvedLinkIssue[], limit: number): string {
+  if (!items.length) return "- none";
+  return items
+    .slice(0, limit)
+    .map((item) => {
+      const count = item.count > 1 ? ` x${item.count}` : "";
+      return `- ${item.source} -> ${item.target}${count}`;
+    })
+    .join("\n");
+}
+
 function indentBlock(content: string, indent = "  "): string {
   return content.split(/\r?\n/).map((line) => `${indent}${line}`).join("\n");
+}
+
+function vaultLinkBase(link: string): string {
+  return link.split("#", 1)[0]?.trim().replace(/\.md$/i, "") ?? "";
 }
 
 function formatVaultCurationCandidates(items: VaultCurationCandidate[], limit: number): string {
@@ -34345,9 +34682,23 @@ function formatVaultCurationCandidates(items: VaultCurationCandidate[], limit: n
       const title = item.title ? ` title: ${item.title.replace(/\n+/g, " ").slice(0, 120)}` : "";
       const tags = item.tags.length ? ` tags: ${item.tags.map((tag) => `#${tag}`).join(" ")}` : " tags: none";
       const reasons = item.curationReasons.length ? ` reasons: ${item.curationReasons.join("; ")}` : "";
+      const composition = `\n  composition: chars=${item.composition.characters} lines=${item.composition.lines} headings=${item.composition.headings} lists=${item.composition.listItems} tasks=${item.composition.tasks} tables=${item.composition.tables} codeBlocks=${item.composition.codeBlocks} quotes=${item.composition.quotes} embeds=${item.composition.embeds}`;
+      const linkRelations = item.linkRelations.length
+        ? `\n  linkRelations:\n${indentBlock(formatVaultCurationLinkRelations(item.linkRelations), "    ")}`
+        : "\n  linkRelations: none";
       const content = item.content ? `\n  content:\n${indentBlock(item.content, "    ")}` : "";
       const excerpt = item.excerpt ? `\n  excerpt: ${item.excerpt.replace(/\n+/g, " ")}` : "";
-      return `- ${item.path} (${formatFileSize(item.size)}, created ${new Date(item.ctime).toISOString()}, modified ${new Date(item.mtime).toISOString()}) reason: ${item.reason}${reasons}${title}${tags} links: out=${item.outLinks} backlinks=${item.backlinks}${excerpt}${content}`;
+      return `- ${item.path} (${formatFileSize(item.size)}, created ${new Date(item.ctime).toISOString()}, modified ${new Date(item.mtime).toISOString()}) reason: ${item.reason}${reasons}${title}${tags} links: out=${item.outLinks} backlinks=${item.backlinks}${composition}${linkRelations}${excerpt}${content}`;
+    })
+    .join("\n");
+}
+
+function formatVaultCurationLinkRelations(relations: VaultCurationLinkRelation[]): string {
+  return relations
+    .map((relation) => {
+      const count = relation.count > 1 ? ` x${relation.count}` : "";
+      const evidence = relation.evidence ? ` evidence: ${relation.evidence.replace(/\n+/g, " ")}` : "";
+      return `- ${relation.direction}: ${relation.target}${count}; ${relation.relationHint}${evidence}`;
     })
     .join("\n");
 }
