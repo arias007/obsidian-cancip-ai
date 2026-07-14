@@ -1377,7 +1377,7 @@ type UiButtonIdentity = {
   legacyTargetKey: string;
 };
 
-type UiButtonRuleWindow = Window & typeof globalThis;
+type UiButtonRuleWindow = Window;
 
 type UiButtonRuleTimer = number | { window: UiButtonRuleWindow; id: number };
 
@@ -5628,7 +5628,6 @@ export default class CancipPlugin extends Plugin {
     this.registerView(LEGACY_CANCIP_CHAT_VIEW_TYPE, (leaf) => new CancipView(leaf, this, LEGACY_CANCIP_CHAT_VIEW_TYPE));
     this.registerView(CANCIP_AUTOMATION_RUNNER_VIEW_TYPE, (leaf) => new CancipView(leaf, this, CANCIP_AUTOMATION_RUNNER_VIEW_TYPE));
     this.registerView(CANCIP_REVIEW_VIEW_TYPE, (leaf) => new CancipReviewLeafView(leaf, this));
-    this.app.workspace.detachLeavesOfType(CANCIP_AUTOMATION_RUNNER_VIEW_TYPE);
     this.installAiVaultMutationCaptureBridge();
     void this.ensureVisibleDataFolders();
     void recordCancipSessionEvent(this.app.vault.adapter, {
@@ -6290,10 +6289,11 @@ export default class CancipPlugin extends Plugin {
       if (headerLeaf || viewType === SR_CARD_REVIEW_VIEW_TYPE || viewType === SR_NOTE_REVIEW_QUEUE_VIEW_TYPE) {
         const leaf = headerLeaf ?? this.app.workspace.getLeavesOfType(viewType)[0];
         this.markSrReviewTabIntent(leaf);
-        const activeType = this.app.workspace.activeLeaf?.view?.getViewType?.() ?? "";
+        const currentLeaf = this.app.workspace.getLeaf(false);
+        const activeType = currentLeaf?.view?.getViewType?.() ?? "";
         const leafId = (leaf as unknown as { id?: string } | undefined)?.id ?? "";
         const continueIntercept = Date.now() < this.srReviewTabInterceptUntil && leafId === this.srReviewTabInterceptLeafId;
-        if (leaf && ((leaf !== this.app.workspace.activeLeaf && (activeType === "pdf" || activeType === "empty")) || continueIntercept)
+        if (leaf && ((leaf !== currentLeaf && (activeType === "pdf" || activeType === "empty")) || continueIntercept)
           && !target.closest(".workspace-tab-header-inner-close-button, .workspace-tab-header-status-container")) {
           this.srReviewTabInterceptUntil = Date.now() + 700;
           this.srReviewTabInterceptLeafId = leafId;
@@ -6351,7 +6351,7 @@ export default class CancipPlugin extends Plugin {
 
   private repairSrReviewBlankTab(): boolean {
     if (Date.now() > this.srReviewBlankTabRestoreUntil) return false;
-    const activeLeaf = this.app.workspace.activeLeaf;
+    const activeLeaf = this.app.workspace.getLeaf(false);
     if (!activeLeaf || activeLeaf.view?.getViewType?.() !== "empty") return false;
     const leaves = [
       ...this.app.workspace.getLeavesOfType(SR_CARD_REVIEW_VIEW_TYPE),
@@ -6603,7 +6603,6 @@ export default class CancipPlugin extends Plugin {
       this.automationRunnerCleanupTimer = null;
     }
     this.automationRunnerLeaf = null;
-    this.app.workspace.detachLeavesOfType(CANCIP_AUTOMATION_RUNNER_VIEW_TYPE);
     this.stopFilePinSortMode(false);
     this.clearFilePinApplyTimer();
     this.filePinObserverHandle?.disconnect();
@@ -11857,7 +11856,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
   }
 
   private uiButtonMenuGroupGuardForElement(target: HTMLElement | null | undefined, label = ""): string {
-    const item = (target?.closest?.(".menu-item, [role='menuitem']") as HTMLElement | null | undefined) ?? target;
+    const item = target?.closest?.<HTMLElement>(".menu-item, [role='menuitem']") ?? target;
     if (!item?.parentElement || !item.closest?.(".menu, .menu-group, .mobile-menu, .modal.mod-mobile-menu")) return "";
     const section = item.closest<HTMLElement>(".menu-section");
     const parent = section?.parentElement ?? item.parentElement;
@@ -12571,7 +12570,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
 
   scheduleFilePinsApply(delayMs = 80): void {
     this.clearFilePinApplyTimer();
-    const win = this.filePinDocuments().map((doc) => doc.defaultView).find((item): item is UiButtonRuleWindow => Boolean(item))
+    const win = (this.filePinDocuments().map((doc) => doc.defaultView).find(Boolean) as UiButtonRuleWindow | undefined)
       ?? activeDocument.defaultView
       ?? window;
     const id = win.setTimeout(() => {
@@ -12950,7 +12949,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       if (doc?.body) docs.add(doc);
     };
     add(activeDocument);
-    if (typeof document !== "undefined") add(document);
+    add(activeWindow.document);
     add(this.app.workspace.containerEl?.ownerDocument);
     add(this.statusBarEl?.ownerDocument);
     this.app.workspace.iterateAllLeaves((leaf) => {
@@ -12973,7 +12972,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
 
   scheduleUiButtonRulesApply(delayMs = 80): void {
     this.clearUiButtonRuleApplyTimer();
-    const win = this.uiButtonDocuments().map((doc) => doc.defaultView).find((item): item is UiButtonRuleWindow => Boolean(item))
+    const win = (this.uiButtonDocuments().map((doc) => doc.defaultView).find(Boolean) as UiButtonRuleWindow | undefined)
       ?? activeDocument.defaultView
       ?? window;
     const id = win.setTimeout(() => {
@@ -12998,7 +12997,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     const mutationAddsMenu = (mutations: MutationRecord[]): boolean =>
       mutations.some((mutation) => mutation.type === "childList" && Array.from(mutation.addedNodes).some(mutationNodeLooksLikeMenu));
     const mutationWindow = (mutations: MutationRecord[]): UiButtonRuleWindow =>
-      mutations.map((mutation) => mutation.target.ownerDocument?.defaultView).find((item): item is UiButtonRuleWindow => Boolean(item))
+      (mutations.map((mutation) => mutation.target.ownerDocument?.defaultView).find(Boolean) as UiButtonRuleWindow | undefined)
       ?? activeDocument.defaultView
       ?? window;
     const handleMutations = (mutations: MutationRecord[]) => {
@@ -15531,7 +15530,6 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       : false;
     if (this.automationRunningIds.size || runnerBusy) return false;
     this.automationRunnerLeaf = null;
-    this.app.workspace.detachLeavesOfType(CANCIP_AUTOMATION_RUNNER_VIEW_TYPE);
     return true;
   }
 
@@ -17529,7 +17527,7 @@ class CancipView extends ItemView {
     this.renderQueueStatus();
     this.syncRequestControls();
     this.renderMessages();
-    this.setupFooterLayoutObserver(root as HTMLElement);
+    this.setupFooterLayoutObserver(root);
   }
 
   private setupFooterLayoutObserver(root: HTMLElement): void {
@@ -22306,7 +22304,7 @@ class CancipView extends ItemView {
     const dateName = /^\d{4}[-_.]\d{1,2}[-_.]\d{1,2}([ -_.].*)?$/.test(basename) || /^\d{8}$/.test(basename);
     if (vagueName && !dateName) reasons.push("vague or machine-generated filename");
     const isLong = text.length >= 3600;
-    const frontmatter = cache?.frontmatter as Record<string, unknown> | undefined;
+    const frontmatter = cache?.frontmatter;
     const hasSummary = flattenKeywordValue(frontmatter?.summary ?? frontmatter?.description).join(" ").trim();
     if (isLong && !hasSummary) reasons.push("long note lacks a useful summary");
     const structuredLineCount = text.split(/\r?\n/).filter((line) => {
@@ -22370,7 +22368,7 @@ class CancipView extends ItemView {
     const items: VaultCurationCandidate[] = [];
     for (const file of files) {
       const cache = this.app.metadataCache.getFileCache(file);
-      const frontmatter = cache?.frontmatter as Record<string, unknown> | undefined;
+      const frontmatter = cache?.frontmatter;
       const title = this.vaultCurationFileTitle(file, cache);
       const tags = uniqueStrings([
         ...flattenKeywordValue(frontmatter?.tags ?? frontmatter?.tag).map((tag) => tag.replace(/^#/, "")),
@@ -22430,7 +22428,7 @@ class CancipView extends ItemView {
   }
 
   private vaultCurationFileTitle(file: TFile, cache: CachedMetadata | null): string {
-    const frontmatter = cache?.frontmatter as Record<string, unknown> | undefined;
+    const frontmatter = cache?.frontmatter;
     return flattenKeywordValue(frontmatter?.title ?? frontmatter?.aliases)[0] || cache?.headings?.[0]?.heading || file.basename;
   }
 
@@ -22524,7 +22522,7 @@ class CancipView extends ItemView {
     for (const other of relatedScopeFiles) {
       if (normalizePath(other.path) === normalizePath(file.path) || linkedTargets.has(normalizePath(other.path))) continue;
       const otherCache = this.app.metadataCache.getFileCache(other);
-      const otherFrontmatter = otherCache?.frontmatter as Record<string, unknown> | undefined;
+      const otherFrontmatter = otherCache?.frontmatter;
       const otherTitle = this.vaultCurationFileTitle(other, otherCache);
       const otherTags = uniqueStrings([
         ...flattenKeywordValue(otherFrontmatter?.tags ?? otherFrontmatter?.tag).map((tag) => tag.replace(/^#/, "")),
@@ -24894,9 +24892,10 @@ class CancipView extends ItemView {
     onStream: ModelStreamCallback,
     extractDelta: (json: unknown) => string
   ): Promise<{ status: number; text: string; json: unknown }> {
-    if (typeof fetch !== "function") throw new Error("streaming fetch unavailable");
+    const streamingFetch = activeWindow.fetch?.bind(activeWindow);
+    if (!streamingFetch) throw new Error("streaming fetch unavailable");
     this.lastModelCallAudit = { mode, url, requestBody: body };
-    const response = await fetch(url, {
+    const response = await streamingFetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -35701,8 +35700,7 @@ function currentPageTranslationRoot(app: App): HTMLElement | null {
   const modalRoots = Array.from(activeDocument.querySelectorAll<HTMLElement>(".modal.mod-settings, .modal:not(.obcc-button-edit-modal), .modal"))
     .filter((el) => isVisibleElement(el) && !el.closest(".obcc-button-edit-bubble, .obcc-selection-send-bubble, .obcc-ui-sort-overlay"));
   if (modalRoots.length) return modalRoots[modalRoots.length - 1];
-  const workspace = app.workspace as typeof app.workspace & { activeLeaf?: WorkspaceLeaf | null };
-  return workspace.activeLeaf?.view?.containerEl ?? activeDocument.body;
+  return app.workspace.getLeaf(false)?.view?.containerEl ?? activeDocument.body;
 }
 
 function normalizeTranslatableUiText(text: string): string {
@@ -36780,7 +36778,7 @@ function normalizeReviewGateItems(raw: unknown): ReviewGateManifestItem[] {
       old_text: oldText,
       new_text: newText,
       changes: Array.isArray(item.changes) ? item.changes.filter((value): value is string => typeof value === "string") : [],
-      links: (isRecord(item.links) ? item.links : {}) as ReviewGateManifestItem["links"],
+      links: isRecord(item.links) ? item.links : {},
       structure: normalizeReviewStructureChanges(item.structure)
     });
   }
@@ -38169,7 +38167,7 @@ async function listVaultReviewableFilePaths(
       stat = null;
     }
   } else {
-    stat = { type: "folder", ctime: 0, mtime: 0, size: 0 } as Awaited<ReturnType<DataAdapter["stat"]>>;
+    stat = { type: "folder", ctime: 0, mtime: 0, size: 0 };
   }
   if (!stat) return [];
   if (stat.type === "file") {
