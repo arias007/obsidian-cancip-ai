@@ -2438,7 +2438,7 @@ const EN = {
   sessionHistory: "Session history",
   sessionNoHistory: "No saved sessions",
   sessionLoaded: "Opened a saved session. This only loads history; it does not mean the task is finished.",
-  sessionLoadedRunning: "Opened a running background session. This view will refresh when new progress or the result is written.",
+  sessionLoadedRunning: "Connected to the running session. Progress and the final answer will appear here live.",
   activeSessions: "Active sessions",
   archivedSessions: "Archived ({count})",
   sessionArchived: "Archived",
@@ -2518,6 +2518,7 @@ const EN = {
   pauseSpeaking: "Pause reading",
   resumeSpeaking: "Resume reading",
   ttsStarted: "Reading aloud",
+  ttsCompleted: "Reading complete",
   ttsStopped: "Reading stopped",
   ttsPaused: "Reading paused",
   ttsResumed: "Reading resumed",
@@ -3186,7 +3187,7 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     sessionHistory: "会话历史",
     sessionNoHistory: "没有已保存会话",
     sessionLoaded: "已打开历史会话，仅表示载入记录，不代表任务完成。",
-    sessionLoadedRunning: "已打开后台运行会话，有新进度或结果写入时会自动刷新。",
+    sessionLoadedRunning: "已接入运行中的会话，进度和最终回答会实时显示在这里。",
     activeSessions: "当前会话",
     archivedSessions: "归档会话（{count}）",
     sessionArchived: "已归档",
@@ -3263,6 +3264,7 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     pauseSpeaking: "暂停朗读",
     resumeSpeaking: "继续朗读",
     ttsStarted: "开始朗读",
+    ttsCompleted: "朗读完成",
     ttsStopped: "已停止朗读",
     ttsPaused: "已暂停朗读",
     ttsResumed: "继续朗读",
@@ -5511,6 +5513,8 @@ export default class CancipPlugin extends Plugin {
   private activeTtsLastError = "";
   private activeTtsStartedAudio = false;
   private activeTtsRunId = 0;
+  private activeTtsStartNoticeRunId = -1;
+  private activeTtsCompletionNoticeRunId = -1;
   private activeTtsPrimeCacheSessionId = 0;
   private activeTtsStoppedAt = 0;
   private activeTtsLastHighlightCursor = 0;
@@ -6763,9 +6767,6 @@ export default class CancipPlugin extends Plugin {
           const startRunId = this.activeTtsRunId;
           const started = await this.startTtsWithProvider(provider, spokenText, partsForProvider);
           if (started) {
-            if (this.activeTtsRunId === startRunId && Date.now() - this.activeTtsStoppedAt > 500) {
-              new Notice(label ? `${this.t("ttsStarted")}: ${label}` : this.t("ttsStarted"));
-            }
             this.syncTtsOverlay();
             this.refreshOpenViews();
             return;
@@ -6797,6 +6798,22 @@ export default class CancipPlugin extends Plugin {
       this.syncTtsOverlay();
       this.refreshOpenViews();
     }
+  }
+
+  private announceTtsStarted(runId = this.activeTtsRunId): void {
+    if (this.activeTtsRunId !== runId || this.activeTtsStartNoticeRunId === runId) return;
+    if (Date.now() - this.activeTtsStoppedAt <= 500) return;
+    this.activeTtsStartNoticeRunId = runId;
+    const label = this.activeTtsLabel;
+    new Notice(label ? `${this.t("ttsStarted")}: ${label}` : this.t("ttsStarted"));
+  }
+
+  private announceTtsCompleted(runId = this.activeTtsRunId): void {
+    if (this.activeTtsRunId !== runId || this.activeTtsCompletionNoticeRunId === runId) return;
+    if (!this.activeTtsStartedAudio) return;
+    this.activeTtsCompletionNoticeRunId = runId;
+    const label = this.activeTtsLabel;
+    new Notice(label ? `${this.t("ttsCompleted")}: ${label}` : this.t("ttsCompleted"));
   }
 
   stopTts(showNotice = true, markStopped = showNotice): void {
@@ -8158,6 +8175,7 @@ export default class CancipPlugin extends Plugin {
       this.prunePrimeTtsCache(index);
     }
     if (this.activeTtsRunId === runId) {
+      this.announceTtsCompleted(runId);
       this.clearActiveTtsParts();
       this.activeTtsPartIndex = 0;
       this.activeTtsMode = "idle";
@@ -8782,6 +8800,7 @@ export default class CancipPlugin extends Plugin {
     this.activeTtsProvider = "android-system";
     this.activeTtsMode = "playing";
     this.activeTtsStartedAudio = true;
+    this.announceTtsStarted(runId);
     this.activeNativeBridge = nativeBridge;
     this.setActiveTtsParts(existingParts?.length ? existingParts.slice() : splitTtsText(text, Math.max(200, Math.min(2000, this.settings.ttsChunkChars || 1800)), true), "android-system");
     this.activeTtsPartIndex = Math.max(0, Math.min(Math.max(0, this.activeTtsParts.length - 1), startIndex));
@@ -8840,6 +8859,7 @@ export default class CancipPlugin extends Plugin {
     this.activeTtsProvider = "custom-url";
     this.activeTtsMode = "playing";
     this.activeTtsStartedAudio = true;
+    this.announceTtsStarted(runId);
     this.setActiveTtsParts(chunks, "custom-url");
     const playChunks = this.activeTtsParts;
     this.activeTtsPartIndex = Math.max(0, Math.min(Math.max(0, playChunks.length - 1), startIndex));
@@ -8853,6 +8873,7 @@ export default class CancipPlugin extends Plugin {
       await this.playTtsAudio(audioUrl, runId);
     }
     if (this.activeTtsRunId === runId) {
+      this.announceTtsCompleted(runId);
       this.clearActiveTtsParts();
       this.activeTtsPartIndex = 0;
       this.activeTtsMode = "idle";
@@ -8935,6 +8956,7 @@ export default class CancipPlugin extends Plugin {
     this.activeTtsAudio = audio;
     this.activeTtsMode = "playing";
     this.activeTtsStartedAudio = true;
+    this.announceTtsStarted(runId ?? this.activeTtsRunId);
     this.syncTtsOverlay();
     try {
       await new Promise<void>((resolve, reject) => {
@@ -9036,6 +9058,7 @@ export default class CancipPlugin extends Plugin {
     const playbackRate = this.ttsPlaybackRate();
     this.activeTtsMode = "playing";
     this.activeTtsStartedAudio = true;
+    this.announceTtsStarted(runId ?? this.activeTtsRunId);
     this.syncTtsOverlay();
     await new Promise<void>((resolve, reject) => {
       const isCancelled = () => typeof runId === "number" && this.activeTtsRunId !== runId;
@@ -9089,6 +9112,7 @@ export default class CancipPlugin extends Plugin {
     if (context.state === "suspended") await context.resume();
     this.activeTtsMode = "playing";
     this.activeTtsStartedAudio = true;
+    this.announceTtsStarted(runId ?? this.activeTtsRunId);
     this.syncTtsOverlay();
     const audioBuffer = await context.decodeAudioData(buffer.slice(0));
     if (typeof runId === "number" && this.activeTtsRunId !== runId) {
@@ -9172,6 +9196,7 @@ export default class CancipPlugin extends Plugin {
   }
 
   private async speakNativeTtsParts(bridge: NativeTtsBridge, runId: number): Promise<void> {
+    let completed = false;
     try {
       for (let index = this.activeTtsPartIndex; index < this.activeTtsParts.length; index += 1) {
         if (this.activeTtsRunId !== runId || !this.activeTtsParts.length) return;
@@ -9180,8 +9205,10 @@ export default class CancipPlugin extends Plugin {
         const lang = this.ttsLanguageCodeForText(this.activeTtsParts[index]);
         await bridge.speak(this.activeTtsParts[index], lang);
       }
+      completed = true;
     } finally {
       if (this.activeTtsRunId === runId) {
+        if (completed) this.announceTtsCompleted(runId);
         this.clearActiveTtsParts();
         this.activeTtsPartIndex = 0;
         this.activeUtterance = null;
@@ -9242,6 +9269,8 @@ export default class CancipPlugin extends Plugin {
     const part = this.activeTtsParts[this.activeTtsPartIndex];
     const runId = this.activeTtsRunId;
     if (!synth || typeof SpeechSynthesisUtterance === "undefined" || !part) {
+      const completed = Boolean(synth && this.activeTtsParts.length && this.activeTtsPartIndex >= this.activeTtsParts.length);
+      if (completed) this.announceTtsCompleted(runId);
       this.activeUtterance = null;
       this.clearActiveTtsParts();
       this.activeTtsPartIndex = 0;
@@ -9268,6 +9297,7 @@ export default class CancipPlugin extends Plugin {
       if (this.activeUtterance !== utterance) return;
       this.activeTtsStartedAudio = true;
       this.activeTtsLastError = "";
+      this.announceTtsStarted(runId);
       this.syncTtsOverlay();
     };
     utterance.onend = () => {
@@ -10017,6 +10047,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     try {
       this.activeNativeBridge = bridge;
       this.activeTtsStartedAudio = true;
+      this.announceTtsStarted(runId);
       await bridge.speak(trimmed, "en-US");
       return this.activeTtsRunId === runId;
     } catch (error) {
@@ -16470,6 +16501,7 @@ class CancipView extends ItemView {
   private footerResizeObserver: ResizeObserver | null = null;
   private footerLayoutFrame: number | null = null;
   private footerResizeCleanup: (() => void) | null = null;
+  private prepareInputFocus: (() => void) | null = null;
   private drainQueueAfterRequest = true;
   private currentSessionStatus: NonNullable<SessionHistoryEntry["status"]> = "idle";
   private currentSessionCompletedNotice = false;
@@ -16497,6 +16529,7 @@ class CancipView extends ItemView {
   private diskSessionRefreshIds = new Set<string>();
   private liveSessionSaveTimer: number | null = null;
   private liveSessionSaveLastAt = 0;
+  private immediateLiveBroadcast: Promise<void> | null = null;
   private foregroundWarmupCancel: (() => void) | null = null;
 
   constructor(
@@ -17532,6 +17565,28 @@ class CancipView extends ItemView {
 
   private setupFooterLayoutObserver(root: HTMLElement): void {
     const viewWindow = root.ownerDocument.defaultView ?? window;
+    const shell = root.querySelector<HTMLElement>(".obcc-shell");
+    const useViewportFooter = Platform.isMobile && Boolean(shell && this.footerEl);
+    let footerFloating = false;
+    const floatFooter = () => {
+      if (!useViewportFooter || footerFloating || !this.footerEl) return;
+      footerFloating = true;
+      root.addClass("has-viewport-footer");
+      this.footerEl.addClass("is-viewport-floating");
+      root.ownerDocument.body.appendChild(this.footerEl);
+    };
+    const dockFooter = () => {
+      if (!footerFloating || !shell || !this.footerEl) return;
+      footerFloating = false;
+      root.removeClass("has-viewport-footer", "has-visual-keyboard");
+      this.footerEl.removeClass("is-viewport-floating");
+      this.footerEl.setCssProps({
+        "--obcc-footer-viewport-bottom": "0px",
+        "--obcc-footer-left": "0px",
+        "--obcc-footer-right": "0px"
+      });
+      shell.appendChild(this.footerEl);
+    };
     const viewportMetrics = () => {
       const layoutHeight = Math.max(root.ownerDocument.documentElement.clientHeight, viewWindow.innerHeight || 0);
       const visualViewport = viewWindow.visualViewport;
@@ -17541,6 +17596,11 @@ class CancipView extends ItemView {
     };
     let baseline = viewportMetrics();
     let inputFocused = false;
+    let nativeKeyboardVisible = false;
+    let nativeKeyboardHeight = 0;
+    let keyboardWasVisible = false;
+    let disposed = false;
+    const nativeListenerHandles: Array<{ remove: () => void | Promise<void> }> = [];
     const sync = () => {
       if (this.footerLayoutFrame !== null) viewWindow.cancelAnimationFrame(this.footerLayoutFrame);
       this.footerLayoutFrame = viewWindow.requestAnimationFrame(() => {
@@ -17554,25 +17614,46 @@ class CancipView extends ItemView {
         const layoutResize = Math.max(0, baseline.layoutHeight - current.layoutHeight);
         const visualResize = Math.max(0, baseline.visualHeight - current.visualHeight);
         const visualOcclusion = Math.max(0, baseline.visualBottom - current.visualBottom);
-        const keyboardHeight = Math.max(layoutResize, visualResize, visualOcclusion);
-        const keyboardVisible = inputFocused && keyboardHeight > 80;
+        const keyboardHeight = Math.max(layoutResize, visualResize, visualOcclusion, nativeKeyboardHeight);
+        const keyboardVisible = footerFloating && inputFocused && (nativeKeyboardVisible || keyboardHeight > 80);
         // A resized layout already keeps fixed elements above the keyboard. Only
         // compensate for the portion that overlays the unchanged layout viewport.
-        const keyboardOverlay = keyboardVisible ? Math.max(0, Math.ceil(visualOcclusion - layoutResize)) : 0;
+        const keyboardOverlay = keyboardVisible
+          ? Math.max(0, Math.ceil(visualOcclusion - layoutResize), Math.ceil(nativeKeyboardHeight - layoutResize))
+          : 0;
         const rootRect = root.getBoundingClientRect();
         const layoutWidth = Math.max(root.ownerDocument.documentElement.clientWidth, viewWindow.innerWidth || 0);
+        const rootBottomInset = footerFloating ? Math.max(0, Math.ceil(current.layoutHeight - rootRect.bottom)) : 0;
+        const footerBottom = Math.max(rootBottomInset, keyboardOverlay);
+        const footerHeightPx = Math.max(48, Math.ceil(footer.getBoundingClientRect().height));
+        const messagesRect = this.messagesEl?.getBoundingClientRect();
+        const viewportReportsKeyboard = layoutResize > 0 || visualResize > 0 || visualOcclusion > 0;
+        const messageOcclusion = keyboardVisible
+          ? viewportReportsKeyboard && messagesRect
+            ? Math.max(0, Math.ceil(messagesRect.bottom - current.visualBottom))
+            : Math.max(0, Math.ceil(nativeKeyboardHeight - footerHeightPx))
+          : 0;
         root.toggleClass("has-visual-keyboard", keyboardVisible);
         root.setCssProps({
           "--obcc-keyboard-inset": "0px",
-          "--obcc-footer-viewport-bottom": `${keyboardOverlay}px`,
-          "--obcc-footer-left": keyboardVisible ? `${Math.max(0, Math.floor(rootRect.left))}px` : "0px",
-          "--obcc-footer-right": keyboardVisible ? `${Math.max(0, Math.floor(layoutWidth - rootRect.right))}px` : "0px"
+          "--obcc-keyboard-occlusion": `${messageOcclusion}px`,
+          "--obcc-footer-viewport-bottom": `${footerBottom}px`,
+          "--obcc-footer-left": footerFloating ? `${Math.max(0, Math.floor(rootRect.left))}px` : "0px",
+          "--obcc-footer-right": footerFloating ? `${Math.max(0, Math.floor(layoutWidth - rootRect.right))}px` : "0px"
         });
-        const height = Math.ceil(footer.getBoundingClientRect().height);
-        const footerHeight = `${Math.max(48, height)}px`;
+        footer.setCssProps({
+          "--obcc-footer-viewport-bottom": `${footerBottom}px`,
+          "--obcc-footer-left": footerFloating ? `${Math.max(0, Math.floor(rootRect.left))}px` : "0px",
+          "--obcc-footer-right": footerFloating ? `${Math.max(0, Math.floor(layoutWidth - rootRect.right))}px` : "0px"
+        });
+        const footerHeight = `${footerHeightPx}px`;
         root.setCssProps({ "--obcc-footer-height": footerHeight });
         this.syncOverlayGeometry(root, footerHeight);
         this.placeMentionPopup();
+        if (keyboardVisible && !keyboardWasVisible && !this.userPinnedScroll) {
+          viewWindow.setTimeout(() => this.scrollMessagesToBottom(false), 0);
+        }
+        keyboardWasVisible = keyboardVisible;
       });
     };
     sync();
@@ -17583,9 +17664,59 @@ class CancipView extends ItemView {
     viewWindow.addEventListener("resize", sync);
     viewWindow.visualViewport?.addEventListener("resize", sync);
     viewWindow.visualViewport?.addEventListener("scroll", sync);
+    const nativeKeyboardHeightFromEvent = (event: Event): number => {
+      const value = (event as Event & { keyboardHeight?: unknown; detail?: { keyboardHeight?: unknown } }).keyboardHeight
+        ?? (event as CustomEvent<{ keyboardHeight?: unknown }>).detail?.keyboardHeight;
+      return typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : 0;
+    };
+    const handleNativeKeyboardShow = (event: Event) => {
+      floatFooter();
+      nativeKeyboardVisible = true;
+      nativeKeyboardHeight = nativeKeyboardHeightFromEvent(event) || nativeKeyboardHeight;
+      sync();
+    };
+    const handleNativeKeyboardHide = () => {
+      nativeKeyboardVisible = false;
+      nativeKeyboardHeight = 0;
+      inputFocused = false;
+      if (root.ownerDocument.activeElement === this.inputEl) this.inputEl.blur();
+      dockFooter();
+      sync();
+      viewWindow.setTimeout(() => {
+        baseline = viewportMetrics();
+        sync();
+      }, 220);
+    };
+    viewWindow.addEventListener("keyboardWillShow", handleNativeKeyboardShow);
+    viewWindow.addEventListener("keyboardDidShow", handleNativeKeyboardShow);
+    viewWindow.addEventListener("keyboardWillHide", handleNativeKeyboardHide);
+    viewWindow.addEventListener("keyboardDidHide", handleNativeKeyboardHide);
+    const keyboardPlugin = (viewWindow as Window & {
+      Capacitor?: { Plugins?: { Keyboard?: { addListener?: (name: string, listener: (info: { keyboardHeight?: number }) => void) => Promise<{ remove: () => void | Promise<void> }> } } };
+    }).Capacitor?.Plugins?.Keyboard;
+    const addNativeListener = (name: string, listener: (info: { keyboardHeight?: number }) => void) => {
+      const pending = keyboardPlugin?.addListener?.(name, listener);
+      void pending?.then((handle) => {
+        if (disposed) void handle.remove();
+        else nativeListenerHandles.push(handle);
+      }).catch(() => undefined);
+    };
+    addNativeListener("keyboardWillShow", (info) => handleNativeKeyboardShow(new viewWindow.CustomEvent("keyboardWillShow", { detail: info })));
+    addNativeListener("keyboardDidShow", (info) => handleNativeKeyboardShow(new viewWindow.CustomEvent("keyboardDidShow", { detail: info })));
+    addNativeListener("keyboardWillHide", () => handleNativeKeyboardHide());
+    addNativeListener("keyboardDidHide", () => handleNativeKeyboardHide());
+    const prepareForInputFocus = () => {
+      baseline = viewportMetrics();
+      inputFocused = true;
+      floatFooter();
+      sync();
+    };
+    this.prepareInputFocus = prepareForInputFocus;
+    const handleInputPointerDown = () => prepareForInputFocus();
     const handleFocus = () => {
       baseline = viewportMetrics();
       inputFocused = true;
+      floatFooter();
       sync();
       viewWindow.setTimeout(sync, 80);
       viewWindow.setTimeout(sync, 220);
@@ -17593,20 +17724,37 @@ class CancipView extends ItemView {
     };
     const handleBlur = () => {
       inputFocused = false;
+      nativeKeyboardVisible = false;
+      nativeKeyboardHeight = 0;
+      dockFooter();
       sync();
-      viewWindow.setTimeout(sync, 180);
+      viewWindow.setTimeout(() => {
+        baseline = viewportMetrics();
+        sync();
+      }, 180);
     };
+    this.inputEl.addEventListener("pointerdown", handleInputPointerDown);
     this.inputEl.addEventListener("focus", handleFocus);
     this.inputEl.addEventListener("blur", handleBlur);
     this.footerResizeCleanup = () => {
+      disposed = true;
       viewWindow.removeEventListener("resize", sync);
       viewWindow.visualViewport?.removeEventListener("resize", sync);
       viewWindow.visualViewport?.removeEventListener("scroll", sync);
+      this.inputEl.removeEventListener("pointerdown", handleInputPointerDown);
       this.inputEl.removeEventListener("focus", handleFocus);
       this.inputEl.removeEventListener("blur", handleBlur);
+      viewWindow.removeEventListener("keyboardWillShow", handleNativeKeyboardShow);
+      viewWindow.removeEventListener("keyboardDidShow", handleNativeKeyboardShow);
+      viewWindow.removeEventListener("keyboardWillHide", handleNativeKeyboardHide);
+      viewWindow.removeEventListener("keyboardDidHide", handleNativeKeyboardHide);
+      for (const handle of nativeListenerHandles) void handle.remove();
+      if (this.prepareInputFocus === prepareForInputFocus) this.prepareInputFocus = null;
+      dockFooter();
       root.removeClass("has-visual-keyboard");
       root.setCssProps({
         "--obcc-keyboard-inset": "0px",
+        "--obcc-keyboard-occlusion": "0px",
         "--obcc-footer-viewport-bottom": "0px",
         "--obcc-footer-left": "0px",
         "--obcc-footer-right": "0px"
@@ -17614,6 +17762,17 @@ class CancipView extends ItemView {
     };
     viewWindow.setTimeout(sync, 50);
     viewWindow.setTimeout(sync, 250);
+  }
+
+  private resetFooterLayoutObserver(): void {
+    this.footerResizeObserver?.disconnect();
+    this.footerResizeObserver = null;
+    this.footerResizeCleanup?.();
+    this.footerResizeCleanup = null;
+    const viewWindow = this.contentEl.ownerDocument.defaultView ?? window;
+    if (this.footerLayoutFrame !== null) viewWindow.cancelAnimationFrame(this.footerLayoutFrame);
+    this.footerLayoutFrame = null;
+    if (this.footerEl?.isConnected && this.inputEl?.isConnected) this.setupFooterLayoutObserver(this.contentEl);
   }
 
   private syncOverlayGeometry(root: HTMLElement, footerHeight?: string): void {
@@ -17928,7 +18087,10 @@ class CancipView extends ItemView {
   }
 
   private focusInput(): void {
-    window.setTimeout(() => this.inputEl?.focus(), 20);
+    window.setTimeout(() => {
+      this.prepareInputFocus?.();
+      this.inputEl?.focus({ preventScroll: true });
+    }, 20);
   }
 
   private handleMentionKeydown(event: KeyboardEvent): boolean {
@@ -20335,6 +20497,7 @@ class CancipView extends ItemView {
       this.userPinnedScroll = false;
       this.autoFollowMessages = true;
       this.closeHeaderMenu();
+      this.resetFooterLayoutObserver();
       this.renderQueueStatus();
       this.syncRequestControls();
       this.syncSessionChrome();
@@ -20343,6 +20506,10 @@ class CancipView extends ItemView {
       this.renderSources(lastMessage?.sources ?? []);
       this.syncModeButtons();
       this.setStatus(options.status ?? (actuallyRunning ? this.t("sessionLoadedRunning") : staleRunning ? this.t("resumableStopped") : this.t("sessionLoaded")));
+      if (actuallyRunning && !this.ownsSessionRequest(entry.id)) {
+        const owner = this.plugin.sessionRequestOwner(entry.id);
+        if (owner) void owner.broadcastLiveSessionNow();
+      }
       if (options.markRead !== false) {
         await this.updateSessionHistoryEntry(entry.id, { unread: false, completedNotice: false, ...(staleRunning ? { status: "stopped" as const } : {}) });
       }
@@ -20351,7 +20518,7 @@ class CancipView extends ItemView {
       } else if (loadedStatus === "completed" || loadedStatus === "failed" || loadedStatus === "stopped") {
         void this.updateCurrentSessionStatus(loadedStatus, false);
       }
-      if (options.focusInput !== false) this.focusInput();
+      if (options.focusInput === true) this.focusInput();
       return true;
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
@@ -21274,6 +21441,26 @@ class CancipView extends ItemView {
         .then(() => this.plugin.refreshChatViewsForSession(this.sessionId, "running", this))
         .catch((error) => console.warn("Cancip live session broadcast failed", error));
     }, delay);
+  }
+
+  async broadcastLiveSessionNow(): Promise<void> {
+    if (this.immediateLiveBroadcast) return await this.immediateLiveBroadcast;
+    if (!this.ownsSessionRequest()) return;
+    const run = (async () => {
+      if (this.liveSessionSaveTimer !== null) {
+        window.clearTimeout(this.liveSessionSaveTimer);
+        this.liveSessionSaveTimer = null;
+      }
+      this.liveSessionSaveLastAt = Date.now();
+      await this.saveCurrentSession();
+      await this.plugin.refreshChatViewsForSession(this.sessionId, this.t("sessionLoadedRunning"), this);
+    })();
+    this.immediateLiveBroadcast = run;
+    try {
+      await run;
+    } finally {
+      if (this.immediateLiveBroadcast === run) this.immediateLiveBroadcast = null;
+    }
   }
 
   private startProgressStepTimer(message: ChatMessage, summary: ProgressStepSummary, detail: string, status: string): void {
@@ -32628,6 +32815,9 @@ class CancipView extends ItemView {
       this.renderSingleMessage(renderItem, finalAssistantIndex);
     }
     flushProcessGroup();
+    if (this.activeRequest && !this.messagesEl.querySelector(".obcc-process-record-details.is-live-process-record")) {
+      this.renderLiveProcessPlaceholder();
+    }
     this.afterMessagesRendered(scrollSnapshot);
     this.plugin.refreshStatusBarAttention();
   }
@@ -32916,6 +33106,7 @@ class CancipView extends ItemView {
     const contentEl = item.createDiv({ cls: "obcc-content markdown-rendered obcc-process-record-content" });
     const details = contentEl.createEl("details", { cls: "obcc-process-summary obcc-process-record-details" });
     const liveProcessRecord = Boolean(this.activeRequest) && steps.some((step) => step.rendered.index > latestUserIndex);
+    details.toggleClass("is-live-process-record", liveProcessRecord);
     this.wireDetails(details, `process-record:${steps.map((step) => step.rendered.message.id).join(",")}`, liveProcessRecord, true);
     this.createProcessSummary(details, `${this.t("processRecord")} (${steps.length})`);
     const body = details.createDiv({ cls: "obcc-process-body" });
@@ -32934,6 +33125,24 @@ class CancipView extends ItemView {
       this.renderToolRuns(stepBody, stepInfo.rendered.message);
       this.renderChangedFileRuns(stepBody, stepInfo.rendered.message);
     }
+  }
+
+  private renderLiveProcessPlaceholder(): void {
+    const item = this.messagesEl.createDiv({ cls: "obcc-message obcc-assistant is-process-record is-live-process-placeholder" });
+    item.dataset.messageId = `process-live-${this.sessionId}`;
+    const head = item.createDiv({ cls: "obcc-message-head" });
+    head.createDiv({ cls: "obcc-role", text: this.t("processRecord") });
+    const contentEl = item.createDiv({ cls: "obcc-content markdown-rendered obcc-process-record-content" });
+    const details = contentEl.createEl("details", {
+      cls: "obcc-process-summary obcc-process-record-details is-live-process-record"
+    });
+    details.open = true;
+    this.createProcessSummary(details, `${this.t("processRecord")} (1)`);
+    const body = details.createDiv({ cls: "obcc-process-body" });
+    const step = body.createDiv({ cls: "obcc-process-step" });
+    const stepHead = step.createDiv({ cls: "obcc-process-step-head" });
+    stepHead.createSpan({ cls: "obcc-process-step-index", text: "1" });
+    stepHead.createSpan({ cls: "obcc-process-step-title", text: this.t("preparingContext") });
   }
 
   private createProcessSummary(details: HTMLDetailsElement, text: string): HTMLElement {

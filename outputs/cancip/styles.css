@@ -7108,6 +7108,21 @@ body.is-phone .obcc-review-leaf .obcc-review-detail-rail {
   padding-bottom: 2px;
 }
 
+.obcc-footer.is-viewport-floating {
+  position: fixed;
+  right: var(--obcc-footer-right, 0px);
+  bottom: var(--obcc-footer-viewport-bottom, 0px);
+  left: var(--obcc-footer-left, 0px);
+  z-index: 2147482500;
+  width: auto;
+  max-width: none;
+  padding-bottom: 2px;
+}
+
+.obcc-root.has-viewport-footer .obcc-shell {
+  padding-bottom: var(--obcc-footer-height, 72px);
+}
+
 
 /* Cancip 2.6.8: review panel/mobile keyboard and session trace refinements. */
 .obcc-role {
@@ -7195,7 +7210,8 @@ body.is-phone .obcc-root {
 }
 
 .obcc-root.has-visual-keyboard .obcc-messages {
-  padding-bottom: calc(16px + var(--obcc-footer-height, 72px));
+  padding-bottom: calc(16px + var(--obcc-keyboard-occlusion, 0px));
+  scroll-padding-bottom: calc(16px + var(--obcc-keyboard-occlusion, 0px));
 }
 
 body.is-mobile .obcc-overlay-layer > .obcc-mention-popover,
