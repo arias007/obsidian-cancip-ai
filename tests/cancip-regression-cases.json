@@ -17,7 +17,13 @@
         "intent": "informational",
         "maxModePromptChars": 1800,
         "maxContextChars": 1700,
-        "maxActions": 0,
+        "maxActions": 1,
+        "requiredActions": [
+          {
+            "type": "read",
+            "path": "AI/Cancip/Memory/PROFILE.md"
+          }
+        ],
         "forbidCommands": [
           "cancip.tools.index",
           "cancip.skills.list",
@@ -40,7 +46,17 @@
         "intent": "informational",
         "maxModePromptChars": 1800,
         "maxContextChars": 1900,
-        "maxActions": 0,
+        "maxActions": 2,
+        "requiredActions": [
+          {
+            "type": "read",
+            "path": "AI/Cancip/Memory/PROFILE.md"
+          },
+          {
+            "type": "read",
+            "path": "AI/Cancip/Memory/PREFERENCES.md"
+          }
+        ],
         "forbidCommands": [
           "cancip.tools.index",
           "cancip.skills.list",
@@ -63,12 +79,80 @@
         "intent": "informational",
         "maxModePromptChars": 1800,
         "maxContextChars": 1900,
-        "maxActions": 0,
+        "maxActions": 1,
+        "requiredActions": [
+          {
+            "type": "read",
+            "path": "AI/Cancip/Memory/PREFERENCES.md"
+          }
+        ],
         "forbidCommands": [
           "cancip.tools.index",
           "cancip.skills.list",
           "github.help",
           "cancip.automation.templates"
+        ]
+      }
+    },
+    {
+      "id": "memory.obsidian-curation.read-only",
+      "prompt": "我的 OB 整理偏好中，摘要和链接分别什么时候加？只读必要记忆，回答两点。",
+      "expect": {
+        "intent": "informational",
+        "maxModePromptChars": 2600,
+        "maxContextChars": 1900,
+        "maxActions": 2,
+        "requiredActions": [
+          {
+            "type": "read",
+            "path": "AI/Cancip/Memory/obsidian-整理偏好.md"
+          }
+        ],
+        "forbidCommands": [
+          "cancip.searchVault",
+          "cancip.tools.index",
+          "cancip.skills.list"
+        ],
+        "policyFalse": [
+          "includeToolCatalog",
+          "includeAutoSkills",
+          "includePluginMemory",
+          "includeProjectMemory",
+          "includeDetailedRules"
+        ]
+      }
+    },
+    {
+      "id": "answer.only.zh.mobile-acceptance",
+      "prompt": "只回答“移动验收通过”，不要解释。",
+      "expect": {
+        "intent": "trivial",
+        "maxModePromptChars": 800,
+        "maxContextChars": 100,
+        "maxActions": 0,
+        "policyFalse": [
+          "includeToolCatalog",
+          "includeAutoSkills",
+          "includePluginMemory",
+          "includeProjectMemory",
+          "includeDetailedRules"
+        ]
+      }
+    },
+    {
+      "id": "answer.only.en.mobile-release",
+      "prompt": "Reply only with 'mobile release passed'. Do not explain.",
+      "expect": {
+        "intent": "trivial",
+        "maxModePromptChars": 800,
+        "maxContextChars": 100,
+        "maxActions": 0,
+        "policyFalse": [
+          "includeToolCatalog",
+          "includeAutoSkills",
+          "includePluginMemory",
+          "includeProjectMemory",
+          "includeDetailedRules"
         ]
       }
     },
@@ -94,10 +178,17 @@
       "expect": {
         "intent": "informational",
         "maxModePromptChars": 2600,
-        "maxActions": 0,
-        "policyTrue": [
+        "maxActions": 1,
+        "requiredActions": [
+          {
+            "type": "command",
+            "command": "cancip.installedPlugins"
+          }
+        ],
+        "policyFalse": [
           "includeToolCatalog",
-          "includeAutoSkills"
+          "includeAutoSkills",
+          "includePluginMemory"
         ]
       }
     },
@@ -107,9 +198,16 @@
       "expect": {
         "intent": "informational",
         "maxModePromptChars": 2600,
-        "maxActions": 0,
-        "policyTrue": [
+        "maxActions": 1,
+        "requiredActions": [
+          {
+            "type": "command",
+            "command": "cancip.pluginCapabilities"
+          }
+        ],
+        "policyFalse": [
           "includeToolCatalog",
+          "includeAutoSkills",
           "includePluginMemory"
         ]
       }
@@ -120,9 +218,16 @@
       "expect": {
         "intent": "informational",
         "maxModePromptChars": 2600,
-        "maxActions": 0,
-        "policyTrue": [
+        "maxActions": 1,
+        "requiredActions": [
+          {
+            "type": "command",
+            "command": "cancip.pluginCapabilities"
+          }
+        ],
+        "policyFalse": [
           "includeToolCatalog",
+          "includeAutoSkills",
           "includePluginMemory"
         ]
       }
@@ -216,6 +321,37 @@
         "policyFalse": [
           "includeToolProtocol",
           "includeDetailedRules"
+        ]
+      }
+    },
+    {
+      "id": "plugin.capabilities.notedraw.read-only-best-route",
+      "prompt": "只读发现 NoteDraw 当前可用的官方命令、公开 API 或 UI 路线，给出最可靠的一条，不执行写入。",
+      "expect": {
+        "intent": "informational",
+        "maxModePromptChars": 2600,
+        "maxActions": 1,
+        "requiredActions": [
+          {
+            "type": "command",
+            "command": "cancip.pluginCapabilities"
+          }
+        ],
+        "policyFalse": [
+          "includeToolCatalog",
+          "includeAutoSkills",
+          "includePluginMemory"
+        ]
+      }
+    },
+    {
+      "id": "vault.move.explicit-route",
+      "prompt": "把 Cancip验收-临时/a.md 移动到 Cancip验收-临时/archive/a.md 并验证",
+      "expect": {
+        "intent": "implementation",
+        "maxModePromptChars": 4200,
+        "policyTrue": [
+          "includeToolCatalog"
         ]
       }
     },
@@ -598,11 +734,11 @@
       "id": "write.vault.temp-note",
       "action": {
         "type": "write",
-        "path": ".cancip/test-lab/smoke-note.md",
+        "path": "Cancip验收-临时/smoke-note.md",
         "content": "# Cancip Smoke Note\n\nThis file is created by the optional smoke test and can be deleted."
       },
       "verify": {
-        "action": { "type": "read", "path": ".cancip/test-lab/smoke-note.md", "maxChars": 1000 },
+        "action": { "type": "read", "path": "Cancip验收-临时/smoke-note.md", "maxChars": 1000 },
         "contains": ["Cancip Smoke Note"]
       }
     },
@@ -610,7 +746,7 @@
       "id": "write.config.temp-json",
       "action": {
         "type": "config",
-        "path": ".cancip/test-lab/smoke-config.json",
+        "path": "Cancip验收-临时/smoke-config.json",
         "set": {
           "smoke": {
             "ok": true,
@@ -619,13 +755,13 @@
         }
       },
       "verify": {
-        "action": { "type": "read", "path": ".cancip/test-lab/smoke-config.json", "maxChars": 1000 },
+        "action": { "type": "read", "path": "Cancip验收-临时/smoke-config.json", "maxChars": 1000 },
         "contains": ["\"ok\": true"]
       }
     },
     {
       "id": "write.cleanup",
-      "action": { "type": "delete", "path": ".cancip/test-lab", "permanent": false },
+      "action": { "type": "delete", "path": "Cancip验收-临时", "permanent": false },
       "optional": true
     }
   ]

@@ -57,6 +57,15 @@ Cancip is a lightweight prototype for managing an Obsidian vault from a mobile-f
 - New-file curation runs in an isolated session with a stable minimal prompt prefix. A programmatic benefit gate classifies each file as curate, skip, or protected before any model call: only concrete high-value defects become candidates; clean, cosmetic-only, or Inbox-only cases are consumed silently; templates, frequently referenced notes, plugin syntax, and generated files are protected from automatic rename/restructure. Each candidate carries a defect-derived action allowlist so one formatting issue cannot authorize unrelated tags, links, summaries, or renaming.
 - TTS is provider-routed by language. English defaults to Web Speech / system TTS and does not need a local model package. Chinese can auto-download and use the current compact PrimeTTS Chinese/English ONNX package. Other languages use system/Web/custom URL unless a compatible local PrimeTTS package is installed under `tts/<package>/` with a manifest.
 
+## 2.11.0
+
+- Added a dedicated mobile acceptance smoke profile covering viewport bounds, Android keyboard/composer geometry, `@` popover placement, bottom-of-chat reachability, history reuse, and blank-leaf prevention.
+- Process-record raw sent/received fields and inline tool results now load only when the first-level process record is opened. Folded sessions keep the full auditable source on disk without immediately laying out tens of thousands of hidden DOM characters.
+- Mobile keyboard clearance now follows the actual overlay inset, so the final chat record can scroll above both the keyboard and floating composer and docks cleanly after keyboard dismissal.
+- Fixed temporary hidden-button reveal restoring explicit hide rules, flattened mobile menu groups and cross-section sorting, and made native File Explorer pin tests open and restore the mobile left drawer explicitly.
+- Exact-answer prompts now use one zero-context model call, explicit read-only memory/plugin questions take narrow programmatic routes, and completed tool-backed answers retain a completed session state instead of being misclassified as failed.
+- Smoke fixtures now stay under `Cancip验收-临时/`, Windows PowerShell 5.1 automatically relaunches the suite under PowerShell 7 for UTF-8 safety, and reusable npm smoke/verify commands are included.
+
 ## 2.10.2
 
 - Extended the persistent code-block wrap toggle to rendered code blocks in Markdown note reading view, Live Preview widgets, and note embeds. Non-Markdown leaves and raw editor text are untouched, and unloading Cancip restores native note DOM.

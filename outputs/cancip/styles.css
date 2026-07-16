@@ -1171,6 +1171,12 @@ body [class*="mobile-menu"] > .menu-group {
   background: transparent;
 }
 
+body .mobile-menu .menu-group,
+body .modal.mod-mobile-menu .menu-group,
+body [class*="mobile-menu"] > .menu-group {
+  display: contents;
+}
+
 body .menu .menu-separator,
 body .menu-group .menu-separator,
 body .modal.mod-mobile-menu .menu-separator,
@@ -1282,6 +1288,13 @@ body.is-phone .menu-item > * {
   padding: 0;
   border-radius: 0;
   background: transparent;
+}
+
+.menu.obcc-ui-rule-menu-complete-sort-parent > .menu-section,
+.menu.obcc-ui-rule-menu-complete-sort-parent > .obcc-ui-rule-menu-section-contents,
+.menu-group.obcc-ui-rule-menu-complete-sort-parent > .menu-section,
+.menu-group.obcc-ui-rule-menu-complete-sort-parent > .obcc-ui-rule-menu-section-contents {
+  display: contents;
 }
 
 .menu.obcc-ui-rule-flex-parent > .menu-separator,
