@@ -57,6 +57,10 @@ Cancip is a lightweight prototype for managing an Obsidian vault from a mobile-f
 - New-file curation runs in an isolated session with a stable minimal prompt prefix. A programmatic benefit gate classifies each file as curate, skip, or protected before any model call: only concrete high-value defects become candidates; clean, cosmetic-only, or Inbox-only cases are consumed silently; templates, frequently referenced notes, plugin syntax, and generated files are protected from automatic rename/restructure. Each candidate carries a defect-derived action allowlist so one formatting issue cannot authorize unrelated tags, links, summaries, or renaming.
 - TTS is provider-routed by language. English defaults to Web Speech / system TTS and does not need a local model package. Chinese can auto-download and use the current compact PrimeTTS Chinese/English ONNX package. Other languages use system/Web/custom URL unless a compatible local PrimeTTS package is installed under `tts/<package>/` with a manifest.
 
+## 2.11.1
+
+- Fixed smoke-test cleanup so a restored `data.json` remains authoritative over the mirrored `.cancip/config.json`, preventing test runs from reapplying stale UI rules or preferences.
+
 ## 2.11.0
 
 - Added a dedicated mobile acceptance smoke profile covering viewport bounds, Android keyboard/composer geometry, `@` popover placement, bottom-of-chat reachability, history reuse, and blank-leaf prevention.

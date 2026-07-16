@@ -31,6 +31,7 @@ $CasesPath = Join-Path $Root 'tests/cancip-regression-cases.json'
 $ObqPath = 'C:/Users/35007/Documents/Codex/tools/ob-cli-queue/obq.ps1'
 $ObsidianCliPath = 'C:/Program Files/Obsidian/Obsidian.com'
 $InstalledCancipDataPath = 'E:/note/.obsidian/plugins/cancip/data.json'
+$InstalledCancipConfigPath = 'E:/note/.cancip/config.json'
 $OutDir = Join-Path $Root 'reports'
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $Script:OriginalSessionId = ''
@@ -367,6 +368,16 @@ function Restore-CancipSettingsAfterSmoke {
         Write-Host "Smoke cleanup: removed $removedCount test UI button rule(s) from restored Cancip data.json."
       }
     }
+    # loadSettings() gives the newer mirrored config priority. Copy-Item keeps the
+    # snapshot's old timestamp, so make the restored plugin data authoritative.
+    $authoritativeTime = [DateTime]::UtcNow
+    if (Test-Path -LiteralPath $InstalledCancipConfigPath) {
+      $configTime = (Get-Item -LiteralPath $InstalledCancipConfigPath).LastWriteTimeUtc
+      if ($configTime -ge $authoritativeTime) {
+        $authoritativeTime = $configTime.AddSeconds(1)
+      }
+    }
+    [IO.File]::SetLastWriteTimeUtc($InstalledCancipDataPath, $authoritativeTime)
   } catch {
     Write-Host "Smoke cleanup warning: failed to restore and sanitize Cancip data.json from snapshot: $($_.Exception.Message)"
     return
