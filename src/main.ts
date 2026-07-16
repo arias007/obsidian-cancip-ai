@@ -17,6 +17,7 @@ import {
   PluginSettingTab,
   requestUrl,
   Setting,
+  type SettingDefinitionItem,
   setIcon,
   type TAbstractFile,
   TextComponent,
@@ -36,6 +37,12 @@ import {
   type ReviewGateStructureChange,
   type ReviewGateStructureKind
 } from "./reviewGate";
+
+function createDetachedElement<K extends keyof HTMLElementTagNameMap>(doc: Document, tag: K): HTMLElementTagNameMap[K] {
+  const element = doc.body.createEl(tag);
+  element.remove();
+  return element;
+}
 
 type ChatRole = "system" | "user" | "assistant";
 
@@ -2578,7 +2585,6 @@ const REVIEW_GATE_MAX_FILES = 80;
 const REVIEW_GATE_MAX_FILE_CHARS = 120000;
 const CONTEXT_STEP_TIMEOUT_MS = 3500;
 const VAULT_SEARCH_TIME_BUDGET_MS = 2200;
-const VAULT_SEARCH_MAX_SCAN_FILES = 160;
 const VAULT_ATTACHMENT_SEARCH_MAX_FILES = 10;
 const VAULT_ATTACHMENT_SEARCH_MAX_BYTES = 5 * 1024 * 1024;
 const MENTION_TARGET_TIME_BUDGET_MS = 1800;
@@ -2590,8 +2596,6 @@ const MODEL_CONTEXT_COMPACT_STATE_CHANGE_MAX_CHARS = 1100;
 const MODEL_CONTEXT_CONTINUATION_MAX_CHARS = 2000;
 const TASK_CONTROL_MAX_CHARS = 520;
 const RECENT_TRANSCRIPT_MAX_MESSAGES = 2;
-const RECENT_TRANSCRIPT_USER_MAX_CHARS = 120;
-const RECENT_TRANSCRIPT_ASSISTANT_MAX_CHARS = 150;
 const TOOL_STEP_CONTEXT_MAX_CHARS = 360;
 const TOOL_STEP_CONTEXT_MAX_RUNS = 3;
 const PROGRAMMATIC_PLAN_TEMPLATE_TEXTS = new Set([
@@ -6516,7 +6520,7 @@ export default class CancipPlugin extends Plugin {
       ".embed-title .embed-title-inner",
       ".embed-title"
     ].join(", ")) ?? this.createSrPdftionButtonHost(root);
-    const button = host.ownerDocument.createElement("button");
+    const button = createDetachedElement(host.ownerDocument, "button");
     button.type = "button";
     button.className = "clickable-icon obcc-sr-open-pdftion-button";
     button.setAttribute("aria-label", "Open PDF in Pdftion");
@@ -6537,7 +6541,7 @@ export default class CancipPlugin extends Plugin {
       cancipExisting.removeClass("pdftion-inline-actions", "pdftion-sr-inline-actions");
       return cancipExisting;
     }
-    const host = root.ownerDocument.createElement("div");
+    const host = createDetachedElement(root.ownerDocument, "div");
     host.className = "obcc-sr-pdftion-actions";
     const title = root.querySelector<HTMLElement>(".file-embed-title, .embed-title, .markdown-embed-title");
     if (title?.parentElement) title.insertAdjacentElement("afterend", host);
@@ -7315,7 +7319,7 @@ export default class CancipPlugin extends Plugin {
       byPath.set(normalized, {
         path: normalized,
         title: reviewFileName(normalized),
-        kind: universalSearchDocumentKind(normalized, this.settings.memoryFolder),
+        kind: universalSearchDocumentKind(normalized, this.settings.memoryFolder, this.obsidianConfigDir()),
         mtime: Number.isFinite(mtime) ? mtime : 0,
         size: Number.isFinite(size) ? size : 0
       });
@@ -7346,7 +7350,7 @@ export default class CancipPlugin extends Plugin {
 
   async universalSearchDocumentText(path: string, kind?: UniversalSearchDocumentKind, maxChars = 30000): Promise<string> {
     const normalized = normalizePath(path);
-    const resolvedKind = kind ?? universalSearchDocumentKind(normalized, this.settings.memoryFolder);
+    const resolvedKind = kind ?? universalSearchDocumentKind(normalized, this.settings.memoryFolder, this.obsidianConfigDir());
     const adapter = this.app.vault.adapter;
     if (universalSearchProtectedContentPath(normalized)) {
       const file = this.app.vault.getAbstractFileByPath(normalized);
@@ -7817,7 +7821,6 @@ export default class CancipPlugin extends Plugin {
       for (const provider of providers) {
         try {
           const partsForProvider = this.activeTtsParts;
-          const startRunId = this.activeTtsRunId;
           const started = await this.startTtsWithProvider(provider, spokenText, partsForProvider);
           if (started) {
             this.syncTtsOverlay();
@@ -8935,7 +8938,7 @@ export default class CancipPlugin extends Plugin {
         const range = doc.createRange();
         range.setStart(node, start);
         range.setEnd(node, end);
-        const mark = doc.createElement("span");
+        const mark = createDetachedElement(doc, "span");
         mark.addClass("obcc-tts-source-highlight");
         mark.addClass("obcc-tts-source-wrap");
         try {
@@ -10656,9 +10659,7 @@ export default class CancipPlugin extends Plugin {
   private async readMarkdownRenderedText(file: TFile, maxChars: number): Promise<string> {
     const markdown = await this.app.vault.cachedRead(file);
     const doc = activeDocument;
-    const container = doc.createElement("div");
-    container.addClass("obcc-tts-render-scratch");
-    doc.body.appendChild(container);
+    const container = doc.body.createDiv({ cls: "obcc-tts-render-scratch" });
     try {
       const scratchComponent = new MarkdownScratchComponent();
       try {
@@ -13237,7 +13238,6 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       );
       const added = typeof rawItem.added_lines === "number" ? rawItem.added_lines : 0;
       const removed = typeof rawItem.removed_lines === "number" ? rawItem.removed_lines : 0;
-      const changed = rawItem.changed !== false && (Boolean(added || removed || changes.length || structure.length));
       const hasContentChange = Boolean(added || removed || changes.some((change) =>
         change === "create" || change === "delete" || change === "write" || change === "append" || change === "patch"
       ));
@@ -14673,7 +14673,6 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       el.dataset.cancipUiRuleHidden = "true";
       if (el.dataset.cancipUiOriginalDisplay === undefined) el.dataset.cancipUiOriginalDisplay = el.style.getPropertyValue("display");
       if (el.dataset.cancipUiOriginalDisplayPriority === undefined) el.dataset.cancipUiOriginalDisplayPriority = el.style.getPropertyPriority("display");
-      el.style.setProperty("display", "none", "important");
       el.addClass("obcc-ui-rule-hidden");
     }
     if (Number.isFinite(rule.order) && rule.order !== 0) {
@@ -14866,7 +14865,9 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     const title = rule.title?.trim() || rule.label || rule.commandName || rule.commandId || this.t("buttonEditCustomButton");
     const icon = rule.icon?.trim() || guessUiButtonCommandIcon(rule.commandId ?? "", rule.commandName ?? title);
     const isMenuItem = anchor.hasClass("menu-item") || anchor.getAttribute("role") === "menuitem";
-    const button = doc.createElement(isMenuItem ? "div" : "button");
+    const button = isMenuItem
+      ? createDetachedElement(doc, "div")
+      : createDetachedElement(doc, "button");
     button.addClass("obcc-ui-custom-button");
     if (isMenuItem) button.addClass("menu-item");
     else button.setAttribute("type", "button");
@@ -15769,8 +15770,8 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
         notifyMode: explicitTask?.notifyMode ?? (snapshot && isAutomationNotifyMode(snapshot.automationNotifyMode) ? snapshot.automationNotifyMode : "inherit")
       };
     }
-    const firstUser = snapshot && Array.isArray(snapshot.messages)
-      ? snapshot.messages.find((message) => isRecord(message) && message.role === "user")
+    const firstUser: unknown = snapshot && Array.isArray(snapshot.messages)
+      ? snapshot.messages.find((message: unknown) => isRecord(message) && message.role === "user")
       : null;
     const text = `${entry.title}\n${isRecord(firstUser) && typeof firstUser.content === "string" ? firstUser.content : ""}`;
     const matched = tasks.find((task) => text.includes(task.title));
@@ -16566,8 +16567,8 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     const candidates = new Set<HTMLPreElement>();
     if (root.nodeType === 1) {
       const element = root as HTMLElement;
-      const closest = element.matches("pre") ? element : element.closest("pre");
-      if (closest?.tagName === "PRE") candidates.add(closest as HTMLPreElement);
+      const closest = element.closest<HTMLPreElement>("pre");
+      if (closest) candidates.add(closest);
     }
     for (const pre of Array.from(root.querySelectorAll<HTMLPreElement>("pre"))) candidates.add(pre);
 
@@ -17362,9 +17363,9 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     this.invalidateDocumentSnapshot(file.path);
     this.documentSnapshotCache.set(key, snapshot);
     while (this.documentSnapshotCache.size > 12) {
-      const oldest = this.documentSnapshotCache.keys().next().value as string | undefined;
-      if (!oldest) break;
-      this.documentSnapshotCache.delete(oldest);
+      const oldest = this.documentSnapshotCache.keys().next();
+      if (oldest.done) break;
+      this.documentSnapshotCache.delete(oldest.value);
     }
     return snapshot;
   }
@@ -17416,7 +17417,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
 
   private async renderDocumentStandaloneHtml(file: TFile, markdown: string): Promise<string> {
     const doc = this.app.workspace.containerEl.ownerDocument;
-    const host = doc.createElement("div");
+    const host = createDetachedElement(doc, "div");
     const component = new MarkdownScratchComponent();
     component.load();
     try {
@@ -17667,6 +17668,7 @@ class CancipDocumentWorkbenchView extends ItemView {
     }
     const resourcePath = this.app.vault.getResourcePath(snapshot.file);
     if (snapshot.previewKind === "html") {
+      parent.addClass("is-native-preview");
       const iframe = parent.createEl("iframe", {
         cls: "obcc-document-html-preview",
         attr: { title: snapshot.file.name, sandbox: "" }
@@ -17675,6 +17677,7 @@ class CancipDocumentWorkbenchView extends ItemView {
       return;
     }
     if (snapshot.previewKind === "pdf") {
+      parent.addClass("is-native-preview");
       parent.createEl("iframe", { cls: "obcc-document-native-preview", attr: { src: resourcePath, title: snapshot.file.name } });
       return;
     }
@@ -19564,7 +19567,7 @@ class CancipView extends ItemView {
 
     const header = shell.createDiv({ cls: "obcc-header" });
     const titleWrap = header.createDiv({ cls: "obcc-title-wrap" });
-    titleWrap.createEl("div", { cls: "obcc-kicker", text: this.t("agentKicker") });
+    titleWrap.createDiv({ cls: "obcc-kicker", text: this.t("agentKicker") });
     const titleLine = titleWrap.createDiv({ cls: "obcc-title-line" });
     titleLine.createDiv({ cls: "obcc-title-heading", text: "Cancip" });
     this.headerLiveStatusEl = titleLine.createDiv({ cls: "obcc-header-live-status is-hidden" });
@@ -20419,9 +20422,9 @@ class CancipView extends ItemView {
     this.autocompleteCache.delete(key);
     this.autocompleteCache.set(key, suffix);
     while (this.autocompleteCache.size > 24) {
-      const oldest = this.autocompleteCache.keys().next().value as string | undefined;
-      if (!oldest) break;
-      this.autocompleteCache.delete(oldest);
+      const oldest = this.autocompleteCache.keys().next();
+      if (oldest.done) break;
+      this.autocompleteCache.delete(oldest.value);
     }
   }
 
@@ -24453,7 +24456,6 @@ class CancipView extends ItemView {
     const previousAutomationTaskId = this.activeAutomationTaskId;
     const previousAutomationNotifyMode = this.activeAutomationNotifyMode;
     const displayPrompt = task.prompt.trim() || this.automationCommandFallbackPrompt(task);
-    const modelPromptInfo = this.plugin.automationModelPromptForTask(task, displayPrompt);
     const automationProfile = this.plugin.automationApiProfile(task, displayPrompt);
     const rawPrompt = `${this.t("automationTask")}: ${task.title}\n\n${displayPrompt}`;
     const userMessage = this.addMessage("user", rawPrompt);
@@ -35251,8 +35253,8 @@ class CancipView extends ItemView {
       if (png?.dataUrl && args.visualReview === true) {
         this.outcomeEvidenceImagesByRunId.set(run.id, [{ name: png.path, mimeType: "image/png", dataUrl: png.dataUrl }]);
         if (this.outcomeEvidenceImagesByRunId.size > 6) {
-          const first = this.outcomeEvidenceImagesByRunId.keys().next().value as string | undefined;
-          if (first) this.outcomeEvidenceImagesByRunId.delete(first);
+          const first = this.outcomeEvidenceImagesByRunId.keys().next();
+          if (!first.done) this.outcomeEvidenceImagesByRunId.delete(first.value);
         }
       }
     }
@@ -35424,22 +35426,42 @@ class CancipView extends ItemView {
     const sourceDocument = root.ownerDocument;
     const sourceWindow = sourceDocument.defaultView;
     if (!sourceWindow) throw new Error("active document has no window");
-    const frame = sourceDocument.createElement("iframe");
+    const setCaptureStyles = (element: HTMLElement, styles: Partial<CSSStyleDeclaration>): void => {
+      sourceDocument.body.setCssStyles.call(element, styles);
+    };
+    const frame = createDetachedElement(sourceDocument, "iframe");
     frame.setAttribute("aria-hidden", "true");
     frame.setAttribute("title", "");
-    frame.style.cssText = `position:fixed;left:-100000px;top:0;width:${width}px;height:${height}px;border:0;pointer-events:none;opacity:0;z-index:-1;`;
+    frame.setCssStyles({
+      position: "fixed",
+      left: "-100000px",
+      top: "0",
+      width: `${width}px`,
+      height: `${height}px`,
+      border: "0",
+      pointerEvents: "none",
+      opacity: "0",
+      zIndex: "-1"
+    });
     sourceDocument.body.appendChild(frame);
     const targetDocument = frame.contentDocument;
     if (!targetDocument) {
       frame.remove();
       throw new Error("could not create isolated capture document");
     }
-    targetDocument.documentElement.style.cssText = `width:${width}px;height:${height}px;margin:0;padding:0;overflow:hidden;`;
-    targetDocument.body.style.cssText = `width:${width}px;height:${height}px;margin:0;padding:0;overflow:hidden;`;
+    const captureDocumentStyles = {
+      width: `${width}px`,
+      height: `${height}px`,
+      margin: "0",
+      padding: "0",
+      overflow: "hidden"
+    };
+    setCaptureStyles(targetDocument.documentElement, captureDocumentStyles);
+    setCaptureStyles(targetDocument.body, captureDocumentStyles);
     const targetRoot = root.cloneNode(true) as HTMLElement;
     targetDocument.body.appendChild(targetRoot);
 
-    const colorCanvas = sourceDocument.createElement("canvas");
+    const colorCanvas = createDetachedElement(sourceDocument, "canvas");
     colorCanvas.width = 1;
     colorCanvas.height = 1;
     const colorContext = colorCanvas.getContext("2d", { willReadFrequently: true });
@@ -35484,13 +35506,14 @@ class CancipView extends ItemView {
       const target = targetElements[index];
       if (!source || !target || !target.isConnected) continue;
       const computed = sourceWindow.getComputedStyle(source);
-      target.style.cssText = "";
+      target.removeAttribute("style");
       for (const property of Array.from(computed)) {
         target.style.setProperty(property, normalizeModernColors(computed.getPropertyValue(property)), computed.getPropertyPriority(property));
       }
-      target.style.setProperty("animation", "none", "important");
-      target.style.setProperty("transition", "none", "important");
-      target.style.setProperty("caret-color", "transparent", "important");
+      target.style.removeProperty("animation");
+      target.style.removeProperty("transition");
+      target.style.removeProperty("caret-color");
+      setCaptureStyles(target, { animation: "none", transition: "none", caretColor: "transparent" });
       if (source.tagName === "INPUT" && target.tagName === "INPUT") (target as HTMLInputElement).value = (source as HTMLInputElement).value;
       if (source.tagName === "TEXTAREA" && target.tagName === "TEXTAREA") (target as HTMLTextAreaElement).value = (source as HTMLTextAreaElement).value;
       if (source.tagName === "SELECT" && target.tagName === "SELECT") (target as HTMLSelectElement).selectedIndex = (source as HTMLSelectElement).selectedIndex;
@@ -35509,14 +35532,16 @@ class CancipView extends ItemView {
       target.scrollLeft = source.scrollLeft;
       target.scrollTop = source.scrollTop;
     }
-    targetRoot.style.setProperty("position", "relative", "important");
-    targetRoot.style.setProperty("inset", "auto", "important");
-    targetRoot.style.setProperty("left", "0", "important");
-    targetRoot.style.setProperty("top", "0", "important");
-    targetRoot.style.setProperty("margin", "0", "important");
-    targetRoot.style.setProperty("transform", "none", "important");
-    targetRoot.style.setProperty("width", `${width}px`, "important");
-    targetRoot.style.setProperty("height", `${height}px`, "important");
+    setCaptureStyles(targetRoot, {
+      position: "relative",
+      inset: "auto",
+      left: "0",
+      top: "0",
+      margin: "0",
+      transform: "none",
+      width: `${width}px`,
+      height: `${height}px`
+    });
     await sleep(0);
     return { root: targetRoot, dispose: () => frame.remove() };
   }
@@ -37956,7 +37981,6 @@ class CancipView extends ItemView {
       ].join(" ");
     });
     const text = lines.join(" | ");
-    console.info("Cancip layout", lines);
     this.setStatus(text);
     new Notice(text, 12000);
   }
@@ -37989,6 +38013,10 @@ class CancipSettingTab extends PluginSettingTab {
     private plugin: CancipPlugin
   ) {
     super(app, plugin);
+  }
+
+  getSettingDefinitions(): SettingDefinitionItem[] {
+    return [];
   }
 
   display(): void {
@@ -39441,7 +39469,7 @@ function outcomeValuesEqual(first: unknown, second: unknown): boolean {
 
 function outcomeCanvasChangedPixelRatio(canvas: HTMLCanvasElement): number {
   try {
-    const sample = canvas.ownerDocument.createElement("canvas");
+    const sample = createDetachedElement(canvas.ownerDocument, "canvas");
     sample.width = 24;
     sample.height = 24;
     const context = sample.getContext("2d", { willReadFrequently: true });
@@ -40427,49 +40455,6 @@ function isVaultCurationContentFile(file: TFile, obsidianConfigDir: string): boo
   return true;
 }
 
-function extractVaultCurationScopeTokens(text: string): string[] {
-  const tokens: string[] = [];
-  const scan = (pattern: RegExp, group = 1): void => {
-    let match: RegExpExecArray | null;
-    while ((match = pattern.exec(text)) !== null) {
-      const value = match[group]?.trim();
-      if (value) tokens.push(value);
-    }
-  };
-  scan(/(?:path|paths|file|files|folder|folders|scope|target|targets|路径|文件夹|文件|范围|目标)\s*[:=：]\s*([^\n,，;；]+)/gi);
-  scan(/`([^`]+)`/g);
-  scan(/\[\[([^\]|#]+)(?:[|#][^\]]*)?\]\]/g);
-  scan(/(?:^|[\s"'“”‘’])([^\s"'“”‘’]+\.md)(?=$|[\s"'“”‘’，,;；])/gi);
-  return tokens;
-}
-
-function expandVaultCurationScopeValue(value: string): string[] {
-  const direct = value.trim();
-  if (!direct) return [];
-  const extracted = extractVaultCurationScopeTokens(direct);
-  const parts = direct
-    .split(/[\n,，;；]+/g)
-    .map((item) => item.trim())
-    .filter(Boolean);
-  return uniqueStrings([direct, ...extracted, ...parts].map(normalizeVaultCurationScopeQuery).filter(Boolean));
-}
-
-function normalizeVaultCurationScopeQuery(query: string): string {
-  return normalizePath(String(query ?? "")
-    .replace(/^['"`“”‘’]+|['"`“”‘’]+$/g, "")
-    .replace(/^scope\s*[:=：]\s*/i, "")
-    .replace(/^path\s*[:=：]\s*/i, "")
-    .replace(/^file\s*[:=：]\s*/i, "")
-    .replace(/^folder\s*[:=：]\s*/i, "")
-    .replace(/^目标\s*[:=：]\s*/i, "")
-    .replace(/^范围\s*[:=：]\s*/i, "")
-    .replace(/^文件夹\s*[:=：]\s*/i, "")
-    .replace(/^文件\s*[:=：]\s*/i, "")
-    .replace(/\\/g, "/")
-    .replace(/^\/+|\/+$/g, "")
-    .trim());
-}
-
 function isVaultDailyReportContentFile(file: TFile, obsidianConfigDir: string): boolean {
   if (!isContextTextFile(file)) return false;
   const path = file.path.replace(/\\/g, "/");
@@ -40860,9 +40845,10 @@ function universalSearchProtectedContentPath(path: string): boolean {
   return /(^|\/)(?:encript|encrypt|encrypted|encryption|加密|密钥|secrets?)(\/|$)/i.test(normalized);
 }
 
-function universalSearchDocumentKind(path: string, memoryFolder: string): UniversalSearchDocumentKind {
+function universalSearchDocumentKind(path: string, memoryFolder: string, obsidianConfigDir: string): UniversalSearchDocumentKind {
   const normalized = normalizePath(path);
   const lower = normalized.toLowerCase();
+  const configRoot = normalizePath(obsidianConfigDir).replace(/\/+$/, "").toLowerCase();
   const memoryRoots = uniqueStrings([memoryFolder, DEFAULT_MEMORY_FOLDER, LEGACY_DEFAULT_MEMORY_FOLDER, INTERRUPTED_DEFAULT_MEMORY_FOLDER])
     .map((root) => normalizePath(root).replace(/\/+$/, "").toLowerCase())
     .filter(Boolean);
@@ -40872,7 +40858,7 @@ function universalSearchDocumentKind(path: string, memoryFolder: string): Univer
   if (isImagePath(normalized)) return "image";
   if (/\.(docx|xlsx|pptx)$/i.test(normalized)) return "office";
   if (/\.(zip|7z|rar|tar|gz|tgz)$/i.test(normalized)) return "archive";
-  if (lower.startsWith(".cancip/") || lower.startsWith(".obsidian/") || /(^|\/)(?:config|settings?)(\/|\.|$)/i.test(lower)) return "config";
+  if (lower.startsWith(".cancip/") || (configRoot && (lower === configRoot || lower.startsWith(`${configRoot}/`))) || /(^|\/)(?:config|settings?)(\/|\.|$)/i.test(lower)) return "config";
   if (/\.(md|markdown)$/i.test(normalized)) return "note";
   return "file";
 }
@@ -41009,7 +40995,7 @@ function universalSearchQueryTerms(query: string): string[] {
 
 async function readImageSearchSidecarText(adapter: DataAdapter, path: string, maxChars: number): Promise<string> {
   const normalized = normalizePath(path);
-  const withoutExtension = normalized.replace(/\.[^.\/]+$/, "");
+  const withoutExtension = normalized.replace(/\.[^./]+$/, "");
   const candidates = uniqueStrings([
     `${withoutExtension}.md`,
     `${withoutExtension}.txt`,
@@ -44717,7 +44703,7 @@ function normalizeApiProfiles(raw: unknown, legacy: ApiProfile): ApiProfile[] {
   raw.forEach((item, index) => {
     if (!isRecord(item)) return;
     const fallback = index === 0 ? legacy : { ...legacy, id: `profile-${index + 1}`, name: `Profile ${index + 1}`, apiKey: "" };
-    let profile = normalizeApiProfile(item as Partial<ApiProfile>, fallback);
+    let profile = normalizeApiProfile(item, fallback);
     if (seen.has(profile.id)) {
       profile = { ...profile, id: `${profile.id}-${index + 1}` };
     }
@@ -44811,15 +44797,6 @@ function normalizeModelSourceByModel(raw: unknown, models: string[], profiles: A
   return result;
 }
 
-const PRIME_TTS_CJK_LETTER_READINGS: Record<string, string> = {
-  a: "诶",
-  e: "鹅",
-  i: "衣",
-  o: "哦",
-  u: "乌",
-  v: "鱼"
-};
-
 function isCjkChar(char: string): boolean {
   return /[\u3400-\u9fff]/.test(char);
 }
@@ -44851,15 +44828,6 @@ function normalizeSkillRoots(raw: unknown): string[] {
   }
   if (!values.length) values.push(...DEFAULT_SKILL_ROOTS);
   return uniqueStrings(values).slice(0, 40);
-}
-
-function cjkLetterWordReading(word: string, text: string, start: number, end: number): string {
-  if (!word || word.length > 8) return "";
-  if (!/^[aeiouv]+$/i.test(word)) return "";
-  const before = text.slice(Math.max(0, start - 6), start);
-  const after = text.slice(end, end + 6);
-  if (!/[\u3400-\u9fff]/.test(before + after)) return "";
-  return word.toLowerCase().split("").map((char) => PRIME_TTS_CJK_LETTER_READINGS[char] ?? "").join("");
 }
 
 function normalizeTagList(raw: unknown): string[] {
@@ -46507,7 +46475,7 @@ function redactSensitiveText(input: string): string {
   redacted = redacted.replace(/(["']?(?:apiKey|githubToken|token|accessToken|secret|password)["']?\s*:\s*["'])[^"']+(["'])/gi, "$1***REDACTED***$2");
   redacted = redacted.replace(/(-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----)[\s\S]*?(-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----)/gi, "$1\n***REDACTED***\n$2");
   redacted = redacted.replace(/(\b(?:api[_-]?key|github[_-]?token|access[_-]?token|refresh[_-]?token|auth[_-]?token|client[_-]?secret|password|passwd|secret|authorization)\b\s*[:=]\s*["']?)([^\s,"'};]+)/gi, "$1***REDACTED***");
-  redacted = redacted.replace(/(\bBearer\s+)[A-Za-z0-9._~+\/-]{12,}/gi, "$1***REDACTED***");
+  redacted = redacted.replace(/(\bBearer\s+)[A-Za-z0-9._~+/-]{12,}/gi, "$1***REDACTED***");
   redacted = redacted.replace(/([?&](?:api[_-]?key|token|access[_-]?token|secret|password)=)[^&#\s]+/gi, "$1***REDACTED***");
   return redacted;
 }
@@ -47533,7 +47501,7 @@ function normalizeChineseDateTimeNumbers(input: string, mode: "context" | "full"
   const shouldConvert = (full: string, offset: number, length: number): boolean => {
     return mode === "full" || isChineseNumberContext(full, offset, length);
   };
-  let output = input.replace(/(^|[^\w./\\-])(\d{4})[\/.-](\d{1,2})[\/.-](\d{1,2})(?=$|[^\w./\\-])/g, (match, prefix: string, year: string, month: string, day: string, offset: number, full: string) => {
+  let output = input.replace(/(^|[^\w./\\-])(\d{4})[/.-](\d{1,2})[/.-](\d{1,2})(?=$|[^\w./\\-])/g, (match, prefix: string, year: string, month: string, day: string, offset: number, full: string) => {
     if (!shouldConvert(full, offset + prefix.length, match.length - prefix.length)) return match;
     return `${prefix}${digitsToChinese(year)}年${numberTokenToChinese(month, "value")}月${numberTokenToChinese(day, "value")}日`;
   });
@@ -47560,7 +47528,7 @@ function isProtectedNumberToken(text: string, offset: number, length: number): b
   const after = text.slice(offset + length, offset + length + 16);
   if (/https?:\/\/\S*$/i.test(before) || /(?:^|[\s([{<])(?:[A-Za-z]:)?(?:[./\\]|[A-Za-z0-9_-]+[./\\])[\w./\\-]*$/i.test(before)) return true;
   if (/^[A-Za-z_./\\-]/.test(after) || /[A-Za-z_./\\-]$/.test(before)) return true;
-  if (/\bv(?:ersion)?\.?$/i.test(before) || /^[.\-]\d/.test(after)) return true;
+  if (/\bv(?:ersion)?\.?$/i.test(before) || /^[.-]\d/.test(after)) return true;
   return false;
 }
 
@@ -48681,7 +48649,7 @@ function selectorLooksQueryable(selector: string): boolean {
   const trimmed = selector.trim();
   if (!trimmed) return false;
   try {
-    activeDocument.createElement("div").querySelector(trimmed);
+    createDiv().querySelector(trimmed);
     return true;
   } catch {
     return false;
@@ -49462,14 +49430,14 @@ function automationNewFilePathMatches(task: AutomationTask, path: string): boole
 
 function automationGlobMatches(pattern: string, path: string): boolean {
   const tokenized = pattern
-    .replace(/\*\*/g, "\u0000")
-    .replace(/\*/g, "\u0001")
-    .replace(/\?/g, "\u0002");
+    .replace(/\*\*/g, "\uE000")
+    .replace(/\*/g, "\uE001")
+    .replace(/\?/g, "\uE002");
   const source = escapeRegExp(tokenized)
-    .replace(/\u0000\//g, "(?:.*/)?")
-    .replace(/\u0000/g, ".*")
-    .replace(/\u0001/g, "[^/]*")
-    .replace(/\u0002/g, "[^/]");
+    .replace(/\uE000\//g, "(?:.*/)?")
+    .replace(/\uE000/g, ".*")
+    .replace(/\uE001/g, "[^/]*")
+    .replace(/\uE002/g, "[^/]");
   return new RegExp(`^${source}$`, "i").test(normalizePath(path.replace(/\\/g, "/")));
 }
 
@@ -50657,7 +50625,7 @@ function htmlToMarkdown(source: string, fallbackTitle: string): string {
 
 function htmlNodeToMarkdown(node: Node, listDepth: number): string {
   if (node.nodeType === Node.TEXT_NODE) return (node.textContent ?? "").replace(/\s+/g, " ");
-  if (!(node instanceof Element)) return "";
+  if (!node.instanceOf(Element)) return "";
   const tag = node.tagName.toLowerCase();
   if (/^h[1-6]$/.test(tag)) return `${"#".repeat(Number(tag.slice(1)))} ${inlineHtmlChildren(node, listDepth).trim()}`;
   if (tag === "p" || tag === "div" || tag === "section" || tag === "article" || tag === "header" || tag === "footer") {
@@ -51002,7 +50970,7 @@ function officePartLabel(path: string): string {
 }
 
 function escapeMarkdownText(value: string): string {
-  return value.replace(/([\\`*_{}\[\]()#+.!|>-])/g, "\\$1");
+  return value.replace(/([\\`*_{}[\]()#+.!|>-])/g, "\\$1");
 }
 
 function escapeHtml(value: string): string {
@@ -51445,20 +51413,6 @@ function arrayBufferToDataUrl(buffer: ArrayBuffer, mimeType = "application/octet
     binary += String.fromCharCode(...chunk);
   }
   return `data:${mimeType};base64,${btoa(binary)}`;
-}
-
-function redactImagePayloads(value: unknown): unknown {
-  if (typeof value === "string") {
-    if (value.startsWith("data:image/")) return `[image data URL redacted, ${value.length} chars]`;
-    return value;
-  }
-  if (Array.isArray(value)) return value.map((item) => redactImagePayloads(item));
-  if (!isRecord(value)) return value;
-  const output: Record<string, unknown> = {};
-  for (const [key, item] of Object.entries(value)) {
-    output[key] = redactImagePayloads(item);
-  }
-  return output;
 }
 
 function summarizeModelRequestBody(value: unknown): unknown {
@@ -52008,7 +51962,7 @@ function looksStronglyTruncatedModelText(raw: string): boolean {
   const boldMarkers = text.match(/\*\*/g) ?? [];
   if (boldMarkers.length % 2 === 1) return true;
   const tail = text.slice(-500);
-  const opens = (tail.match(/[（(【\[]/g) ?? []).length;
+  const opens = (tail.match(/[（(【[]/g) ?? []).length;
   const closes = (tail.match(/[）)】\]]/g) ?? []).length;
   const lastLine = tail.split(/\r?\n/).filter((line) => line.trim()).pop()?.trim() ?? "";
   if (opens > closes && !/[。！？.!?；;：:]$/.test(lastLine)) return true;

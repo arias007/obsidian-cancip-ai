@@ -1589,28 +1589,28 @@ body .obcc-view-tts-action {
   -webkit-overflow-scrolling: touch;
 }
 
-.obcc-code-pre > .copy-code-button {
+body .obcc-code-pre.obcc-code-pre > button.copy-code-button.copy-code-button {
   position: absolute;
-  top: 6px !important;
-  right: auto !important;
-  left: auto !important;
-  inset-inline-end: 6px !important;
-  display: inline-flex !important;
+  top: 6px;
+  right: auto;
+  left: auto;
+  inset-inline-end: 6px;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px !important;
-  min-width: 26px !important;
-  height: 26px !important;
-  min-height: 26px !important;
+  width: 26px;
+  min-width: 26px;
+  height: 26px;
+  min-height: 26px;
   padding: 4px;
   box-sizing: border-box;
   z-index: 2;
 }
 
-.obcc-code-pre > .obcc-code-wrap-toggle {
-  right: auto !important;
-  left: auto !important;
-  inset-inline-end: 38px !important;
+body .obcc-code-pre.obcc-code-pre > button.obcc-code-wrap-toggle.obcc-code-wrap-toggle {
+  right: auto;
+  left: auto;
+  inset-inline-end: 38px;
 }
 
 .obcc-code-pre > .obcc-code-wrap-toggle.is-active {
@@ -8111,11 +8111,11 @@ body.is-phone .obcc-review-leaf.has-review-detail .obcc-review-detail-rail-info,
   min-height: 28px;
 }
 
-.obcc-document-workbench {
+.view-content.obcc-document-workbench {
   container-type: inline-size;
   height: 100%;
   min-height: 0;
-  padding: 0 !important;
+  padding: 0;
   overflow: hidden;
   background: var(--background-primary);
 }
@@ -8230,9 +8230,9 @@ body.is-phone .obcc-review-leaf.has-review-detail .obcc-review-detail-rail-info,
   background: var(--interactive-accent);
 }
 
-.obcc-document-action {
+.obcc-document-actions > button.obcc-document-action {
   box-sizing: border-box;
-  display: inline-flex !important;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   flex: 0 0 30px;
@@ -8336,8 +8336,7 @@ body.is-phone .obcc-review-leaf.has-review-detail .obcc-review-detail-rail-info,
   background: var(--background-primary);
 }
 
-.obcc-document-body:has(> .obcc-document-html-preview),
-.obcc-document-body:has(> .obcc-document-native-preview) {
+.obcc-document-body.is-native-preview {
   padding: 0;
   overflow: hidden;
 }
@@ -8422,10 +8421,8 @@ body.is-phone .obcc-document-body {
 
 body.is-mobile .obcc-document-body.is-edit,
 body.is-phone .obcc-document-body.is-edit,
-body.is-mobile .obcc-document-body:has(> .obcc-document-html-preview),
-body.is-phone .obcc-document-body:has(> .obcc-document-html-preview),
-body.is-mobile .obcc-document-body:has(> .obcc-document-native-preview),
-body.is-phone .obcc-document-body:has(> .obcc-document-native-preview) {
+body.is-mobile .obcc-document-body.is-native-preview,
+body.is-phone .obcc-document-body.is-native-preview {
   padding: 0;
 }
 

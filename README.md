@@ -59,6 +59,12 @@ Cancip is a lightweight prototype for managing an Obsidian vault from a mobile-f
 - New-file curation runs in an isolated session with a stable minimal prompt prefix. A programmatic benefit gate classifies each file as curate, skip, or protected before any model call: only concrete high-value defects become candidates; clean, cosmetic-only, or Inbox-only cases are consumed silently; templates, frequently referenced notes, plugin syntax, and generated files are protected from automatic rename/restructure. Each candidate carries a defect-derived action allowlist so one formatting issue cannot authorize unrelated tags, links, summaries, or renaming.
 - TTS is provider-routed by language. English defaults to Web Speech / system TTS and does not need a local model package. Chinese can auto-download and use the current compact PrimeTTS Chinese/English ONNX package. Other languages use system/Web/custom URL unless a compatible local PrimeTTS package is installed under `tts/<package>/` with a manifest.
 
+## 2.14.1
+
+- Reworked outcome-capture and hidden-button styling through Obsidian DOM/CSS helpers, removing the blocking static-style review errors without changing capture behavior.
+- Replaced native element creation with popout-safe Obsidian helpers, adopted the active Vault configuration directory for universal search, and added the Obsidian 1.13 settings-definition entry point while preserving the complete legacy settings UI.
+- Cleaned review warnings for unsafe values, redundant assertions, regular expressions, cross-window element checks, unused code, code-block controls, and document-preview selectors.
+
 ## 2.14.0
 
 - Added a single mobile-safe document workbench with Preview, Markdown, and Edit modes. Every Vault file now has `Open in document workbench` and `Open as Markdown` actions in the normal file menu.
