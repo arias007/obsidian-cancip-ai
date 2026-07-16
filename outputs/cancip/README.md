@@ -59,6 +59,16 @@ Cancip is a lightweight prototype for managing an Obsidian vault from a mobile-f
 - New-file curation runs in an isolated session with a stable minimal prompt prefix. A programmatic benefit gate classifies each file as curate, skip, or protected before any model call: only concrete high-value defects become candidates; clean, cosmetic-only, or Inbox-only cases are consumed silently; templates, frequently referenced notes, plugin syntax, and generated files are protected from automatic rename/restructure. Each candidate carries a defect-derived action allowlist so one formatting issue cannot authorize unrelated tags, links, summaries, or renaming.
 - TTS is provider-routed by language. English defaults to Web Speech / system TTS and does not need a local model package. Chinese can auto-download and use the current compact PrimeTTS Chinese/English ONNX package. Other languages use system/Web/custom URL unless a compatible local PrimeTTS package is installed under `tts/<package>/` with a manifest.
 
+## 2.14.3
+
+- Removed the precomputed diary button and file-list insertion flow. Diary-writing requests in an active daily note now use the current model with a bounded record of today's real prompts and verified tool outcomes, while normal review still governs note writes.
+- Restored independently expandable Chinese process-audit fields, consecutive previous-prompt navigation, stable TTS session UI, and sentence-change source-highlight recentering.
+- Automation task settings are collapsed by default and default tasks migrate to a relevant prior session when one is available. Chinese composer autocomplete now triggers earlier and preserves local suggestions when model completion fails.
+- Copy and wrap controls remain fixed at the code-block viewport edge while chat and note code scroll horizontally.
+- Settings redraws preserve the visible option instead of jumping the page. `Add current file` now creates the same removable file snapshot used by `Send to Cancip`, including parsed document or image context when applicable.
+- The active model now provides quiet line-end completion inside Markdown editing as well as the Cancip composer, with local candidates first, bounded nearby context, stale-result rejection, and Tab or an inline icon to apply.
+- Preferred name, locality, weather, and restrained caring cues are inferred from direct user-related evidence by Cancip itself. Manual name/location fields are optional corrections; ambiguous or unverified details stay absent.
+
 ## 2.14.2
 
 - New chats now select a stable greeting from several background-generated, evidence-backed variants. Greetings can use an explicitly configured or reliably labeled preferred name, optionally include cached live Open-Meteo weather, and offer two or three concrete next-action buttons without delaying chat creation.

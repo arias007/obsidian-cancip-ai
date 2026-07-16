@@ -22,15 +22,28 @@ function namedMethods(text, kind, label) {
 const sourceMethods = namedMethods(sourceText, ts.ScriptKind.TS, "src/main.ts");
 const runtimeMethods = namedMethods(runtimeText, ts.ScriptKind.JS, "outputs/cancip/main.js");
 
-const missingFromSource = [...runtimeMethods].filter((name) => !sourceMethods.has(name)).sort();
+const intentionallyRemovedRuntimeMethods = new Set([
+  "applyPersonalizedDiaryButtons",
+  "clearPersonalizedDiaryButtons",
+  "insertPersonalizedDiary",
+  "schedulePersonalizedDiaryButtons"
+]);
+const removedFromRuntime = [...runtimeMethods]
+  .filter((name) => intentionallyRemovedRuntimeMethods.has(name) && !sourceMethods.has(name))
+  .sort();
+const missingFromSource = [...runtimeMethods]
+  .filter((name) => !sourceMethods.has(name) && !intentionallyRemovedRuntimeMethods.has(name))
+  .sort();
 const extraInSource = [...sourceMethods].filter((name) => !runtimeMethods.has(name)).sort();
 const result = {
   sourceMethodCount: sourceMethods.size,
   runtimeMethodCount: runtimeMethods.size,
   missingFromSourceCount: missingFromSource.length,
   extraInSourceCount: extraInSource.length,
+  intentionallyRemovedRuntimeMethodCount: removedFromRuntime.length,
   missingFromSource,
-  extraInSource
+  extraInSource,
+  intentionallyRemovedRuntimeMethods: removedFromRuntime
 };
 
 if (missingFromSource.length) {

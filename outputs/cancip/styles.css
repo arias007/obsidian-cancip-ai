@@ -1659,6 +1659,8 @@ body .obcc-code-pre.obcc-code-pre > button.copy-code-button.copy-code-button {
   padding: 4px;
   box-sizing: border-box;
   z-index: 2;
+  transform: translateX(var(--obcc-code-action-scroll-x, 0px));
+  will-change: transform;
 }
 
 body .obcc-code-pre.obcc-code-pre > button.obcc-code-wrap-toggle.obcc-code-wrap-toggle {
@@ -3932,6 +3934,59 @@ body .obcc-code-pre.obcc-code-pre > button.obcc-code-wrap-toggle.obcc-code-wrap-
   height: 15px;
 }
 
+.obcc-editor-autocomplete-widget {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: min(58vw, 52ch);
+  margin-inline-start: 1px;
+  color: var(--text-faint);
+  vertical-align: baseline;
+  user-select: none;
+}
+
+.obcc-editor-autocomplete-ghost {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-faint);
+  opacity: 0.72;
+  pointer-events: none;
+  text-overflow: ellipsis;
+  white-space: pre;
+}
+
+.obcc-editor-autocomplete-apply {
+  display: inline-flex;
+  flex: 0 0 20px;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  min-width: 20px;
+  height: 20px;
+  min-height: 20px;
+  margin: 0;
+  padding: 3px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-faint);
+  box-shadow: none;
+  opacity: 0.72;
+  vertical-align: middle;
+}
+
+.obcc-editor-autocomplete-apply:hover,
+.obcc-editor-autocomplete-apply:focus-visible {
+  background: var(--background-modifier-hover);
+  color: var(--text-accent);
+  opacity: 1;
+}
+
+.obcc-editor-autocomplete-apply > svg {
+  width: 14px;
+  height: 14px;
+}
+
 .obcc-composer-suggestions {
   position: absolute;
   z-index: 8;
@@ -5233,12 +5288,51 @@ body .obcc-code-pre.obcc-code-pre > button.obcc-code-wrap-toggle.obcc-code-wrap-
 }
 
 .obcc-automation-card {
+  display: block;
+  padding: 0;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--background-secondary);
+}
+
+.obcc-settings,
+.obcc-settings-page-body {
+  overflow-anchor: none;
+}
+
+.obcc-automation-card-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.obcc-automation-card-title {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.obcc-automation-card-state {
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.obcc-automation-card-state.is-enabled {
+  color: var(--text-success);
+}
+
+.obcc-automation-card-body {
   display: grid;
   gap: 2px;
-  padding: 8px;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 8px;
-  background: var(--background-secondary);
+  padding: 0 8px 8px;
+  border-top: 1px solid var(--background-modifier-border);
 }
 
 .obcc-automation-card .setting-item {
