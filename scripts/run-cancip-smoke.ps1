@@ -1486,7 +1486,7 @@ if (Should-RunProgrammaticCase 'programmatic.code-block-wrap-global-persistence'
 (async()=>{
   const t=Date.now();
   const p=app.plugins.plugins.cancip;
-  const v=app.workspace.getLeavesOfType('cancip-view')[0]?.view??(p&&typeof p.activateView==='function'?await p.activateView():null);
+  const v=p&&typeof p.getOrCreateChatView==='function'?await p.getOrCreateChatView({reveal:false,focus:false}):p&&typeof p.activateView==='function'?await p.activateView():app.workspace.getLeavesOfType('cancip-view')[0]?.view??null;
   if(!p||!v)throw new Error('Cancip view unavailable');
   if(typeof v.renderMarkdown!=='function'||typeof v.syncRenderedCodeBlockWrap!=='function')throw new Error('code block wrap API unavailable');
   const oldSetting=p.settings.codeBlockWrap===true;
@@ -1558,7 +1558,7 @@ if (Should-RunProgrammaticCase 'programmatic.code-block-wrap-global-persistence'
     for(const root of roots)root.remove();
     p.saveSettings=oldSaveSettings;
     p.settings.codeBlockWrap=oldSetting;
-    v.syncRenderedCodeBlockWrap();
+    p.syncAllCodeBlockWrap();
   }
 })()
 '@
@@ -1577,10 +1577,160 @@ if (Should-RunProgrammaticCase 'programmatic.code-block-wrap-global-persistence'
   }
 }
 
+if (Should-RunProgrammaticCase 'programmatic.note-code-block-wrap-global-persistence') {
+  try {
+    $setupCode = @'
+(()=>{
+  const t=Date.now();
+  const p=app.plugins.plugins.cancip;
+  if(!p||typeof p.enhanceNoteCodeBlocks!=='function'||typeof p.syncAllCodeBlockWrap!=='function')throw new Error('note code wrap API unavailable');
+  const surface=activeDocument.querySelector('.workspace-leaf-content[data-type="markdown"] .markdown-preview-view, .workspace-leaf-content[data-type="markdown"] .markdown-source-view');
+  if(!surface)throw new Error('mounted Markdown note surface unavailable');
+  const oldSetting=p.settings.codeBlockWrap===true;
+  const oldSaveSettings=p.saveSettings;
+  const savedValues=[];
+  p.saveSettings=function(){savedValues.push(this.settings.codeBlockWrap===true);return Promise.resolve()};
+  p.settings.codeBlockWrap=false;
+  p.syncAllCodeBlockWrap();
+  const host=activeDocument.createElement('div');
+  host.className='obcc-note-code-wrap-smoke';
+  host.style.position='fixed';
+  host.style.left='-10000px';
+  host.style.top='0';
+  host.style.width='320px';
+  host.style.maxWidth='320px';
+  host.style.contain='layout style paint';
+  const pre=activeDocument.createElement('pre');
+  const code=activeDocument.createElement('code');
+  code.textContent='abcdefghij'.repeat(12);
+  const copy=activeDocument.createElement('button');
+  copy.type='button';
+  copy.className='copy-code-button';
+  copy.dataset.noteSmokeNative='1';
+  pre.append(code,copy);
+  host.append(pre);
+  surface.append(host);
+  p.enhanceNoteCodeBlocks(host);
+  const wrap=pre.querySelector(':scope > .obcc-note-code-wrap-toggle');
+  const buttons=Array.from(pre.querySelectorAll(':scope > button.copy-code-button'));
+  window.__noteCodeWrapSmoke={t,p,host,pre,copy,wrap,oldSetting,oldSaveSettings,savedValues,roots:[host]};
+  return JSON.stringify({
+    nativePreserved:copy.isConnected&&copy.parentElement===pre,
+    adjacent:buttons.length===2&&buttons[0]===copy&&buttons[1]===wrap,
+    initialUnwrapped:pre.classList.contains('is-nowrap')&&!pre.classList.contains('is-wrapped')
+  });
+})()
+'@
+    $setup = Invoke-CancipEval -Code $setupCode -TimeoutSeconds 30
+
+    $toggleCode = @'
+(()=>{
+  const s=window.__noteCodeWrapSmoke;
+  if(!s)throw new Error('note wrap smoke state missing');
+  s.wrap?.click();
+  const later=activeDocument.createElement('pre');
+  const code=activeDocument.createElement('code');
+  code.textContent='klmnopqrst'.repeat(12);
+  later.append(code);
+  s.host.append(later);
+  Object.assign(s,{later});
+  return JSON.stringify({
+    wrapped:s.pre.classList.contains('is-wrapped')&&s.wrap?.getAttribute('aria-pressed')==='true',
+    setting:s.p.settings.codeBlockWrap===true
+  });
+})()
+'@
+    $toggle = Invoke-CancipEval -Code $toggleCode -TimeoutSeconds 20
+
+    $observeCode = @'
+(()=>{
+  const s=window.__noteCodeWrapSmoke;
+  if(!s?.later)throw new Error('later note block missing');
+  const later=s.later;
+  const laterWrap=later.querySelector(':scope > .obcc-note-code-wrap-toggle');
+  const fallback=later.querySelector(':scope > .obcc-note-code-copy-fallback');
+  Object.assign(s,{later,laterWrap,fallback});
+  const native=activeDocument.createElement('button');
+  native.type='button';
+  native.className='copy-code-button';
+  native.dataset.noteSmokeNative='2';
+  later.append(native);
+  s.native=native;
+  return JSON.stringify({
+    laterInherited:later.classList.contains('is-wrapped')&&laterWrap?.getAttribute('aria-pressed')==='true',
+    fallbackCreated:!!fallback
+  });
+})()
+'@
+    $observe = Invoke-CancipEval -Code $observeCode -TimeoutSeconds 20
+
+    $finishCode = @'
+(()=>{
+  const s=window.__noteCodeWrapSmoke;
+  if(!s?.later||!s.native)throw new Error('later note block state missing');
+  const copies=Array.from(s.later.querySelectorAll(':scope > button.copy-code-button:not(.obcc-code-wrap-toggle)'));
+  const foreignLeaf=activeDocument.createElement('div');
+  foreignLeaf.className='workspace-leaf-content obcc-note-code-wrap-foreign-smoke';
+  foreignLeaf.dataset.type='pdf';
+  const foreignSurface=activeDocument.createElement('div');
+  foreignSurface.className='markdown-preview-view markdown-rendered';
+  const foreignPre=activeDocument.createElement('pre');
+  foreignPre.append(activeDocument.createElement('code'),activeDocument.createElement('button'));
+  foreignSurface.append(foreignPre);
+  foreignLeaf.append(foreignSurface);
+  s.roots.push(foreignLeaf);
+  s.p.enhanceNoteCodeBlocks(foreignSurface);
+  s.laterWrap?.click();
+  return JSON.stringify({
+    fallbackReplaced:!!s.fallback&&!s.fallback.isConnected&&copies.length===1&&copies[0]===s.native&&s.native.nextElementSibling===s.laterWrap,
+    foreignUntouched:!foreignPre.classList.contains('obcc-note-code-pre')&&!foreignPre.querySelector('.obcc-code-wrap-toggle'),
+    disabled:[s.pre,s.later].every(pre=>pre.classList.contains('is-nowrap')&&!pre.classList.contains('is-wrapped')),
+    setting:s.p.settings.codeBlockWrap===false,
+    savedValues:s.savedValues,
+    elapsedMs:Date.now()-s.t
+  });
+})()
+'@
+    $finish = Invoke-CancipEval -Code $finishCode -TimeoutSeconds 20
+
+    $item = [pscustomobject]@{
+      id = 'programmatic.note-code-block-wrap-global-persistence'
+      elapsedMs = [int]$finish.elapsedMs
+      nativePreserved = $setup.nativePreserved
+      adjacent = $setup.adjacent
+      initialUnwrapped = $setup.initialUnwrapped
+      wrapped = $toggle.wrapped
+      laterInherited = $observe.laterInherited
+      fallbackCreated = $observe.fallbackCreated
+      fallbackReplaced = $finish.fallbackReplaced
+      foreignUntouched = $finish.foreignUntouched
+      disabled = $finish.disabled
+      savedValues = @($finish.savedValues)
+    }
+    if (-not $item.nativePreserved -or -not $item.adjacent) { throw "note native Copy was replaced or wrap is not adjacent: $($item | ConvertTo-Json -Compress -Depth 8)" }
+    if (-not $item.initialUnwrapped -or -not $item.wrapped) { throw "note wrap did not toggle from nowrap to wrapped: $($item | ConvertTo-Json -Compress -Depth 8)" }
+    if (-not $item.laterInherited -or -not $item.fallbackCreated -or -not $item.fallbackReplaced) { throw "later note block did not inherit wrap or reconcile native Copy: $($item | ConvertTo-Json -Compress -Depth 8)" }
+    if (-not $item.foreignUntouched) { throw "non-Markdown leaf received note code controls: $($item | ConvertTo-Json -Compress -Depth 8)" }
+    if (-not $item.disabled) { throw "disabling wrap did not synchronize note code blocks: $($item | ConvertTo-Json -Compress -Depth 8)" }
+    if (@($item.savedValues).Count -ne 2 -or -not $item.savedValues[0] -or $item.savedValues[1]) { throw "note wrap did not persist true then false: $($item | ConvertTo-Json -Compress -Depth 8)" }
+    Add-CaseResult -Group 'programmaticCases' -Item @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs }
+  } catch {
+    Add-CaseResult -Group 'programmaticCases' -Item @{ id = 'programmatic.note-code-block-wrap-global-persistence'; pass = $false; error = $_.Exception.Message }
+  } finally {
+    try {
+      $null = Invoke-CancipEval -TimeoutSeconds 25 -Code @'
+(()=>{const s=window.__noteCodeWrapSmoke;if(!s)return JSON.stringify({clean:true});for(const root of s.roots||[])root.remove();s.p.saveSettings=s.oldSaveSettings;s.p.settings.codeBlockWrap=s.oldSetting;s.p.syncAllCodeBlockWrap();delete window.__noteCodeWrapSmoke;return JSON.stringify({clean:true})})()
+'@
+    } catch {
+      Write-Host "Note code wrap smoke cleanup warning: $($_.Exception.Message)"
+    }
+  }
+}
+
 if (Should-RunProgrammaticCase 'programmatic.code-block-wrap-layout') {
   try {
-    $code = @'
-(async()=>{
+    $layoutSetupCode = @'
+(()=>{
   const t=Date.now();
   const p=app.plugins.plugins.cancip;
   const v=app.workspace.getLeavesOfType('cancip-view')[0]?.view;
@@ -1594,12 +1744,23 @@ if (Should-RunProgrammaticCase 'programmatic.code-block-wrap-layout') {
   root.style.maxWidth='320px';
   root.style.contain='layout style paint';
   activeDocument.body.appendChild(root);
+  const fence=String.fromCharCode(96).repeat(3);
+  const nl=String.fromCharCode(10);
+  const line='abcdefghij'.repeat(12);
+  v.renderMarkdown(root,[fence,line,fence].join(nl));
+  window.__codeBlockWrapLayoutSmoke={t,v,root};
+  return JSON.stringify({mounted:root.isConnected});
+})()
+'@
+    $layoutSetup = Invoke-CancipEval -Code $layoutSetupCode -TimeoutSeconds 20
+    if (-not $layoutSetup.mounted) { throw 'code block layout root did not mount' }
+
+    $layoutInspectCode = @'
+(()=>{
+  const s=window.__codeBlockWrapLayoutSmoke;
+  if(!s)throw new Error('code block layout smoke state missing');
   try{
-    const fence=String.fromCharCode(96).repeat(3);
-    const nl=String.fromCharCode(10);
-    const line='abcdefghij'.repeat(12);
-    v.renderMarkdown(root,[fence,line,fence].join(nl));
-    await new Promise((resolve)=>setTimeout(resolve,400));
+    const {t,v,root}=s;
     const pre=root.querySelector('pre.obcc-code-pre');
     if(!pre)throw new Error('rendered code block missing');
     v.syncCodeBlockWrapState(pre,false);
@@ -1610,7 +1771,6 @@ if (Should-RunProgrammaticCase 'programmatic.code-block-wrap-layout') {
       clientWidth:pre.clientWidth
     };
     v.syncCodeBlockWrapState(pre,true);
-    await new Promise((resolve)=>requestAnimationFrame(()=>resolve()));
     const wrapped={
       whiteSpace:getComputedStyle(pre).whiteSpace,
       overflowX:getComputedStyle(pre).overflowX,
@@ -1619,11 +1779,12 @@ if (Should-RunProgrammaticCase 'programmatic.code-block-wrap-layout') {
     };
     return JSON.stringify({id:'programmatic.code-block-wrap-layout',elapsedMs:Date.now()-t,initial,wrapped});
   } finally {
-    root.remove();
+    s.root.remove();
+    delete window.__codeBlockWrapLayoutSmoke;
   }
 })()
 '@
-    $item = Invoke-CancipEval -Code $code -TimeoutSeconds 30
+    $item = Invoke-CancipEval -Code $layoutInspectCode -TimeoutSeconds 20
     if ([string]$item.initial.whiteSpace -ne 'pre' -or [string]$item.initial.overflowX -ne 'auto') { throw "default code layout is not horizontal-scroll mode: $($item | ConvertTo-Json -Compress)" }
     if ([int]$item.initial.scrollWidth -le [int]$item.initial.clientWidth) { throw "default code did not produce a horizontal scroll range: $($item | ConvertTo-Json -Compress)" }
     if ([string]$item.wrapped.whiteSpace -ne 'pre-wrap') { throw "wrapped code did not use pre-wrap: $($item | ConvertTo-Json -Compress)" }
@@ -1631,6 +1792,14 @@ if (Should-RunProgrammaticCase 'programmatic.code-block-wrap-layout') {
     Add-CaseResult -Group 'programmaticCases' -Item @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs; scrollWidth = $item.initial.scrollWidth; clientWidth = $item.initial.clientWidth }
   } catch {
     Add-CaseResult -Group 'programmaticCases' -Item @{ id = 'programmatic.code-block-wrap-layout'; pass = $false; error = $_.Exception.Message }
+  } finally {
+    try {
+      $null = Invoke-CancipEval -TimeoutSeconds 20 -Code @'
+(()=>{const s=window.__codeBlockWrapLayoutSmoke;if(s?.root)s.root.remove();activeDocument.querySelectorAll('.obcc-code-wrap-layout-smoke').forEach(root=>root.remove());delete window.__codeBlockWrapLayoutSmoke;return JSON.stringify({clean:true})})()
+'@
+    } catch {
+      Write-Host "Code block layout smoke cleanup warning: $($_.Exception.Message)"
+    }
   }
 }
 

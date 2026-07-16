@@ -1565,17 +1565,24 @@ body .obcc-view-tts-action {
   word-break: break-word;
 }
 
-.obcc-content .obcc-code-pre > .copy-code-button {
+.obcc-note-code-pre {
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.obcc-code-pre > .copy-code-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
 }
 
-.obcc-content .obcc-code-pre > .obcc-code-wrap-toggle {
+.obcc-code-pre > .obcc-code-wrap-toggle {
   right: 30px;
 }
 
-.obcc-content .obcc-code-pre > .obcc-code-wrap-toggle.is-active {
+.obcc-code-pre > .obcc-code-wrap-toggle.is-active {
   color: var(--interactive-accent);
 }
 

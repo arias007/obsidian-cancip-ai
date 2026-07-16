@@ -5688,6 +5688,7 @@ export default class CancipPlugin extends Plugin {
   private ttsOverlayDragMoved = false;
   private ttsOverlayCollapsed = true;
   private uiButtonRuleObserver: UiButtonRuleObserverHandle | null = null;
+  private noteCodeWrapObserverHandle: UiButtonRuleObserverHandle | null = null;
   private uiButtonRuleApplyTimer: UiButtonRuleTimer | null = null;
   private uiButtonRuleApplying = false;
   private uiButtonRuleLastApplyAt = 0;
@@ -6119,6 +6120,7 @@ export default class CancipPlugin extends Plugin {
         doc.removeEventListener("keyup", applyFilePinsAfterKey, true);
       });
       this.installUiButtonRuleObserver();
+      this.installNoteCodeWrapObserver();
       this.scheduleUiButtonRulesApply(120);
       void this.loadFilePinState().then(() => this.scheduleFilePinsApply(0));
       this.installRightSidebarTabToolbar();
@@ -7382,6 +7384,9 @@ export default class CancipPlugin extends Plugin {
     this.filePinObserverHandle?.disconnect();
     this.filePinObserverHandle = null;
     this.clearFilePinDom();
+    this.noteCodeWrapObserverHandle?.disconnect();
+    this.noteCodeWrapObserverHandle = null;
+    this.clearNoteCodeWrapDom();
     this.stopUiButtonSortMode();
     this.removeStaleUiButtonSortDom();
     this.clearUiRuleMarks();
@@ -16081,6 +16086,168 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     }
   }
 
+  setCodeBlockWrap(enabled: boolean): void {
+    this.settings.codeBlockWrap = enabled;
+    this.syncAllCodeBlockWrap();
+    void this.saveSettings().catch((error) => {
+      console.warn("Cancip code wrap setting save failed", error);
+    });
+  }
+
+  syncAllCodeBlockWrap(): void {
+    for (const leaf of this.chatLeaves()) {
+      if (leaf.view instanceof CancipView) leaf.view.syncRenderedCodeBlockWrap();
+    }
+    this.syncNoteCodeBlockWrap();
+  }
+
+  enhanceNoteCodeBlocks(root: ParentNode): void {
+    const candidates = new Set<HTMLPreElement>();
+    if (root.nodeType === 1) {
+      const element = root as HTMLElement;
+      const closest = element.matches("pre") ? element : element.closest("pre");
+      if (closest?.tagName === "PRE") candidates.add(closest as HTMLPreElement);
+    }
+    for (const pre of Array.from(root.querySelectorAll<HTMLPreElement>("pre"))) candidates.add(pre);
+
+    for (const pre of candidates) {
+      if (!this.isRenderedNoteCodeBlock(pre)) {
+        if (pre.hasClass("obcc-note-code-pre")) this.clearNoteCodeWrapBlock(pre);
+        continue;
+      }
+      const code = pre.querySelector<HTMLElement>(":scope > code");
+      if (!code) continue;
+      const directCopyButtons = Array.from(pre.querySelectorAll<HTMLButtonElement>(":scope > button.copy-code-button:not(.obcc-code-wrap-toggle)"));
+      const fallbackCopy = directCopyButtons.find((button) => button.dataset.cancipNoteCodeCopy === "fallback") ?? null;
+      const nativeCopy = directCopyButtons.find((button) => button.dataset.cancipNoteCodeCopy !== "fallback") ?? null;
+      if (nativeCopy && fallbackCopy) fallbackCopy.remove();
+      const copyButton = nativeCopy ?? fallbackCopy ?? this.createNoteCodeCopyButton(pre);
+      let wrapButton = pre.querySelector<HTMLButtonElement>(":scope > button.obcc-note-code-wrap-toggle");
+      if (!wrapButton) {
+        wrapButton = pre.createEl("button", {
+          cls: "copy-code-button obcc-code-wrap-toggle obcc-note-code-wrap-toggle",
+          attr: { type: "button" }
+        });
+        setIcon(wrapButton, "wrap-text");
+        wrapButton.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          this.setCodeBlockWrap(!this.settings.codeBlockWrap);
+        });
+      }
+      if (copyButton.nextElementSibling !== wrapButton) copyButton.insertAdjacentElement("afterend", wrapButton);
+      pre.addClass("obcc-code-pre", "obcc-note-code-pre");
+      syncCodeBlockWrapElement(
+        pre,
+        this.settings.codeBlockWrap,
+        this.t("codeWrapEnable"),
+        this.t("codeWrapDisable")
+      );
+    }
+  }
+
+  private createNoteCodeCopyButton(pre: HTMLPreElement): HTMLButtonElement {
+    const button = pre.createEl("button", {
+      cls: "copy-code-button obcc-note-code-copy-fallback",
+      attr: { type: "button" }
+    });
+    button.dataset.cancipNoteCodeCopy = "fallback";
+    button.setAttr("title", this.t("copyCode"));
+    button.setAttr("aria-label", this.t("copyCode"));
+    setIcon(button, "copy");
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const code = pre.querySelector<HTMLElement>(":scope > code");
+      void copyTextToClipboard((code?.textContent ?? "").trimEnd(), this.t("copyDone"), (key, vars) => this.t(key, vars));
+    });
+    return button;
+  }
+
+  private isRenderedNoteCodeBlock(pre: HTMLPreElement): boolean {
+    if (!pre.querySelector(":scope > code") || pre.closest(".obcc-root")) return false;
+    const leaf = pre.closest<HTMLElement>(".workspace-leaf-content[data-type='markdown']");
+    if (!leaf) return false;
+    const surface = pre.closest<HTMLElement>(".markdown-preview-view, .markdown-source-view");
+    return Boolean(surface && leaf.contains(surface));
+  }
+
+  private syncNoteCodeBlockWrap(): void {
+    for (const doc of this.uiButtonDocuments()) {
+      this.enhanceNoteCodeBlocks(doc.body);
+      for (const pre of Array.from(doc.querySelectorAll<HTMLPreElement>("pre.obcc-note-code-pre"))) {
+        if (!this.isRenderedNoteCodeBlock(pre)) {
+          this.clearNoteCodeWrapBlock(pre);
+          continue;
+        }
+        syncCodeBlockWrapElement(
+          pre,
+          this.settings.codeBlockWrap,
+          this.t("codeWrapEnable"),
+          this.t("codeWrapDisable")
+        );
+      }
+    }
+  }
+
+  private clearNoteCodeWrapBlock(pre: HTMLPreElement): void {
+    pre.querySelectorAll(":scope > .obcc-note-code-wrap-toggle, :scope > .obcc-note-code-copy-fallback").forEach((element) => element.remove());
+    pre.removeClass("obcc-code-pre", "obcc-note-code-pre", "is-nowrap", "is-wrapped");
+  }
+
+  private clearNoteCodeWrapDom(): void {
+    for (const doc of this.uiButtonDocuments()) {
+      for (const pre of Array.from(doc.querySelectorAll<HTMLPreElement>("pre.obcc-note-code-pre"))) {
+        this.clearNoteCodeWrapBlock(pre);
+      }
+    }
+  }
+
+  private installNoteCodeWrapObserver(): void {
+    if (typeof MutationObserver === "undefined") return;
+    this.noteCodeWrapObserverHandle?.disconnect();
+    const observers = new Map<Document, MutationObserver>();
+    const handleMutations = (mutations: MutationRecord[]): void => {
+      for (const mutation of mutations) {
+        for (const node of Array.from(mutation.addedNodes)) {
+          if (node.nodeType === 1) this.enhanceNoteCodeBlocks(node as HTMLElement);
+        }
+      }
+    };
+    const refreshObservers = (): void => {
+      const liveDocs = new Set(this.uiButtonDocuments());
+      for (const [doc, observer] of observers) {
+        if (!liveDocs.has(doc) || !doc.defaultView) {
+          observer.disconnect();
+          observers.delete(doc);
+        }
+      }
+      for (const doc of liveDocs) {
+        this.enhanceNoteCodeBlocks(doc.body);
+        if (observers.has(doc)) continue;
+        const ObserverCtor = doc.defaultView?.MutationObserver ?? MutationObserver;
+        const observer = new ObserverCtor(handleMutations);
+        observer.observe(doc.body, { childList: true, subtree: true });
+        observers.set(doc, observer);
+      }
+    };
+    const handle: UiButtonRuleObserverHandle = {
+      disconnect: () => {
+        for (const observer of observers.values()) observer.disconnect();
+        observers.clear();
+      }
+    };
+    this.noteCodeWrapObserverHandle = handle;
+    refreshObservers();
+    this.registerEvent(this.app.workspace.on("layout-change", refreshObservers));
+    this.registerEvent(this.app.workspace.on("active-leaf-change", refreshObservers));
+    this.register(() => {
+      handle.disconnect();
+      this.clearNoteCodeWrapDom();
+      if (this.noteCodeWrapObserverHandle === handle) this.noteCodeWrapObserverHandle = null;
+    });
+  }
+
   refreshOpenViews(): void {
     for (const leaf of this.chatLeaves()) {
       if (leaf.view instanceof CancipView) {
@@ -16093,6 +16260,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       }
     }
     this.refreshStatusBarAttention();
+    this.syncAllCodeBlockWrap();
   }
 
   syncOpenReviewGateDecision(reviewPath: string): void {
@@ -16702,7 +16870,9 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     if (!leaf) leaf = this.app.workspace.getRightLeaf(false) ?? null;
     if (!leaf) return null;
     if (!(leaf.view instanceof CancipView)) {
-      await leaf.setViewState({ type: VIEW_TYPE, active });
+      const state = leaf.getViewState().state ?? {};
+      await leaf.setViewState({ type: "empty", active: false });
+      await leaf.setViewState({ type: VIEW_TYPE, state, active });
       await sleep(0);
     }
     if (!(leaf.view instanceof CancipView)) {
@@ -35423,28 +35593,16 @@ class CancipView extends ItemView {
   }
 
   private syncCodeBlockWrapState(block: HTMLElement, enabled: boolean): void {
-    block.toggleClass("is-nowrap", !enabled);
-    block.toggleClass("is-wrapped", enabled);
-    const button = block.querySelector<HTMLButtonElement>(".obcc-code-wrap-toggle");
-    if (!button) return;
-    button.toggleClass("is-active", enabled);
-    button.setAttr("aria-pressed", enabled ? "true" : "false");
-    const label = this.t(enabled ? "codeWrapDisable" : "codeWrapEnable");
-    button.setAttr("title", label);
-    button.setAttr("aria-label", label);
+    syncCodeBlockWrapElement(
+      block,
+      enabled,
+      this.t("codeWrapEnable"),
+      this.t("codeWrapDisable")
+    );
   }
 
   private setCodeBlockWrap(enabled: boolean): void {
-    this.plugin.settings.codeBlockWrap = enabled;
-    for (const type of [VIEW_TYPE, LEGACY_CANCIP_CHAT_VIEW_TYPE]) {
-      for (const leaf of this.app.workspace.getLeavesOfType(type)) {
-        const view = leaf.view as CancipView;
-        view.syncRenderedCodeBlockWrap();
-      }
-    }
-    void this.plugin.saveSettings().catch((error) => {
-      console.warn("Cancip code wrap setting save failed", error);
-    });
+    this.plugin.setCodeBlockWrap(enabled);
   }
 
   private wireRenderedLinks(parent: HTMLElement): void {
@@ -35688,6 +35846,23 @@ class CancipView extends ItemView {
     this.setStatus(text);
     new Notice(text, 12000);
   }
+}
+
+function syncCodeBlockWrapElement(
+  block: HTMLElement,
+  enabled: boolean,
+  enableLabel: string,
+  disableLabel: string
+): void {
+  block.toggleClass("is-nowrap", !enabled);
+  block.toggleClass("is-wrapped", enabled);
+  const button = block.querySelector<HTMLButtonElement>(":scope > .obcc-code-wrap-toggle");
+  if (!button) return;
+  button.toggleClass("is-active", enabled);
+  button.setAttr("aria-pressed", enabled ? "true" : "false");
+  const label = enabled ? disableLabel : enableLabel;
+  button.setAttr("title", label);
+  button.setAttr("aria-label", label);
 }
 
 class CancipSettingTab extends PluginSettingTab {
