@@ -64,6 +64,11 @@ body .view-content.obcc-review-leaf {
   height: 14px;
 }
 
+.obcc-statusbar.is-editor-autocomplete-running .obcc-statusbar-icon-glyph {
+  color: var(--text-accent);
+  animation: obcc-spin 0.9s linear infinite;
+}
+
 .obcc-statusbar-dot {
   position: absolute;
   top: -1px;
@@ -4167,14 +4172,16 @@ body .obcc-code-action-layer.obcc-code-action-layer > button.copy-code-button.co
   height: 14px;
 }
 
-.obcc-autocomplete-prompt-row {
+.obcc-autocomplete-prompt-row,
+.obcc-autocomplete-model-row {
   display: grid;
   gap: 4px;
   color: var(--text-muted);
   font-size: 11px;
 }
 
-.obcc-autocomplete-prompt-row > input {
+.obcc-autocomplete-prompt-row > input,
+.obcc-autocomplete-model-row > select {
   width: 100%;
   min-width: 0;
   height: 30px;
