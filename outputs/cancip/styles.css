@@ -8468,6 +8468,15 @@ body.is-phone .obcc-review-leaf.has-review-detail .obcc-review-detail-rail-info,
   font-size: var(--font-ui-smaller);
 }
 
+.view-content.obcc-document-workbench.is-compact-header .obcc-document-header {
+  gap: 6px;
+  padding: 6px 8px;
+}
+
+.view-content.obcc-document-workbench.is-compact-header .obcc-document-path {
+  display: none;
+}
+
 .obcc-document-toolbar,
 .obcc-document-actions,
 .obcc-document-modes {
@@ -8567,6 +8576,20 @@ body.is-phone .obcc-review-leaf.has-review-detail .obcc-review-detail-rail-info,
   color: var(--text-warning);
 }
 
+.view-content.obcc-document-workbench.is-compact-header .obcc-document-meta {
+  flex-wrap: nowrap;
+  gap: 10px;
+  min-height: 26px;
+  padding: 3px 8px;
+  overflow-x: auto;
+  white-space: nowrap;
+  scrollbar-width: thin;
+}
+
+.view-content.obcc-document-workbench.is-metadata-hidden .obcc-document-meta {
+  display: none;
+}
+
 .obcc-document-body {
   flex: 1 1 auto;
   min-width: 0;
@@ -8574,6 +8597,19 @@ body.is-phone .obcc-review-leaf.has-review-detail .obcc-review-detail-rail-info,
   padding: 16px clamp(12px, 4%, 38px) 28px;
   overflow: auto;
   overscroll-behavior: contain;
+}
+
+.obcc-document-body > :first-child {
+  margin-top: 0;
+}
+
+.view-content.obcc-document-workbench.is-compact-header .obcc-document-body {
+  padding: 10px clamp(8px, 3%, 24px) 20px;
+}
+
+.view-content.obcc-document-workbench.is-compact-header .obcc-document-body.is-edit,
+.view-content.obcc-document-workbench.is-compact-header .obcc-document-body.is-native-preview {
+  padding: 0;
 }
 
 .obcc-document-body.is-edit {
@@ -8606,6 +8642,80 @@ body.is-phone .obcc-review-leaf.has-review-detail .obcc-review-detail-rail-info,
 
 .obcc-document-editor:focus {
   box-shadow: inset 0 0 0 1px var(--interactive-accent);
+}
+
+@container (max-width: 520px) {
+  .view-content.obcc-document-workbench.is-compact-header .obcc-document-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+    gap: 4px;
+    padding: 5px 7px;
+  }
+
+  .view-content.obcc-document-workbench.is-compact-header .obcc-document-identity,
+  .view-content.obcc-document-workbench.is-compact-header .obcc-document-toolbar {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .view-content.obcc-document-workbench.is-compact-header .obcc-document-identity {
+    line-height: 18px;
+  }
+
+  .view-content.obcc-document-workbench.is-compact-header .obcc-document-title {
+    font-size: var(--font-ui-small);
+  }
+
+  .view-content.obcc-document-workbench.is-compact-header .obcc-document-toolbar {
+    display: flex;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    gap: 4px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .view-content.obcc-document-workbench.is-compact-header .obcc-document-toolbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .view-content.obcc-document-workbench.is-compact-header .obcc-document-modes {
+    flex: 1 1 72px;
+    min-width: 60px;
+    min-height: 28px;
+  }
+
+  .view-content.obcc-document-workbench.is-compact-header .obcc-document-mode {
+    height: 24px;
+    padding: 0 5px;
+    line-height: 24px;
+  }
+
+  .view-content.obcc-document-workbench.is-compact-header .obcc-document-actions > button.obcc-document-action {
+    flex-basis: 26px;
+    width: 26px;
+    height: 26px;
+    min-width: 26px;
+    min-height: 26px;
+    padding: 4px;
+  }
+
+  .view-content.obcc-document-workbench.is-compact-header .obcc-document-meta {
+    min-height: 24px;
+    padding-block: 2px;
+  }
+}
+
+@container (max-width: 360px) {
+  .view-content.obcc-document-workbench.is-compact-header .obcc-document-mode {
+    font-size: 0;
+  }
+
+  .view-content.obcc-document-workbench.is-compact-header .obcc-document-mode::after {
+    content: attr(data-short-label);
+    font-size: var(--font-ui-smaller);
+  }
 }
 
 .obcc-document-markdown-source {
@@ -8734,10 +8844,11 @@ body.is-phone .obcc-document-native-preview {
 
 @container (max-width: 179px) {
   .obcc-document-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
     align-items: stretch;
-    flex-direction: column;
-    gap: 5px;
-    padding: 6px;
+    gap: 3px;
+    padding: 5px 6px;
   }
 
   .obcc-document-identity {
@@ -8755,17 +8866,22 @@ body.is-phone .obcc-document-native-preview {
 
   .obcc-document-toolbar {
     flex: 0 0 auto;
-    flex-direction: column;
-    align-items: stretch;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: center;
     width: 100%;
+    height: 28px;
     gap: 4px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
   }
 
   .obcc-document-modes {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    flex-basis: auto;
-    width: 100%;
+    display: inline-flex;
+    flex: 0 0 60px;
+    width: 60px;
+    min-height: 28px;
   }
 
   .obcc-document-mode {
@@ -8782,17 +8898,21 @@ body.is-phone .obcc-document-native-preview {
   }
 
   .obcc-document-actions {
-    display: grid;
-    grid-template-columns: repeat(2, 30px);
-    align-self: end;
-    width: 62px;
+    display: inline-flex;
+    grid-template-columns: none;
+    align-self: center;
+    flex: 0 0 auto;
+    width: auto;
   }
 
   .obcc-document-meta {
-    max-height: 76px;
-    gap: 2px;
-    padding: 4px 6px;
-    overflow-y: auto;
+    max-height: none;
+    flex-wrap: nowrap;
+    gap: 8px;
+    padding: 2px 6px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    white-space: nowrap;
   }
 
   .obcc-document-body {

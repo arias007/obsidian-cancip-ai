@@ -1791,6 +1791,10 @@ type Settings = {
   useVaultSearchByDefault: boolean;
   showAttachmentButton: boolean;
   compactHeader: boolean;
+  documentWorkbenchDefaultMode: DocumentWorkbenchMode;
+  documentWorkbenchCompactHeader: boolean;
+  documentWorkbenchShowMetadata: boolean;
+  documentWorkbenchReuseSingleLeaf: boolean;
   codeBlockWrap: boolean;
   personalizedGreetingEnabled: boolean;
   personalizationFriendlyName: string;
@@ -2474,6 +2478,10 @@ const DEFAULT_SETTINGS: Settings = {
   useVaultSearchByDefault: false,
   showAttachmentButton: true,
   compactHeader: true,
+  documentWorkbenchDefaultMode: "preview",
+  documentWorkbenchCompactHeader: true,
+  documentWorkbenchShowMetadata: true,
+  documentWorkbenchReuseSingleLeaf: true,
   codeBlockWrap: false,
   personalizedGreetingEnabled: true,
   personalizationFriendlyName: "",
@@ -2892,6 +2900,14 @@ const EN = {
   documentOriginalFormat: "Original format",
   documentFileSize: "Size",
   documentModified: "Modified",
+  settingsDocumentWorkbenchDefaultMode: "Default opening mode",
+  settingsDocumentWorkbenchDefaultModeDesc: "Used by Open in document workbench and cancip.documents.open when no mode is specified.",
+  settingsDocumentWorkbenchCompactHeader: "Compact workbench header",
+  settingsDocumentWorkbenchCompactHeaderDesc: "Keep the document title and controls short so content starts near the top on narrow sidebars.",
+  settingsDocumentWorkbenchShowMetadata: "Show file metadata",
+  settingsDocumentWorkbenchShowMetadataDesc: "Show format, size, modified time, and conversion warnings above the document.",
+  settingsDocumentWorkbenchReuseSingleLeaf: "Reuse one workbench tab",
+  settingsDocumentWorkbenchReuseSingleLeafDesc: "Opening another file replaces the current workbench content instead of creating another tab.",
   speakMessage: "Read aloud",
   speakSession: "Read session",
   moreMenu: "More",
@@ -3300,6 +3316,7 @@ const EN = {
   configAuthority: "Config file: .cancip/config.json. It wins over settings on restart.",
   settingsGroupCommon: "Common",
   settingsGroupInterface: "Interface",
+  settingsGroupWorkbench: "Workbench",
   settingsGroupButtonEditing: "Button editing",
   settingsGroupAutocomplete: "Autocomplete",
   settingsGroupContext: "Context",
@@ -3721,6 +3738,14 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     documentOriginalFormat: "原始格式",
     documentFileSize: "大小",
     documentModified: "修改时间",
+    settingsDocumentWorkbenchDefaultMode: "默认打开方式",
+    settingsDocumentWorkbenchDefaultModeDesc: "“在文档工作台打开”和未指定模式的 cancip.documents.open 会使用这里的方式。",
+    settingsDocumentWorkbenchCompactHeader: "紧凑工作台顶部",
+    settingsDocumentWorkbenchCompactHeaderDesc: "压缩标题和工具栏，让窄侧栏里的文档内容尽量靠上显示。",
+    settingsDocumentWorkbenchShowMetadata: "显示文件信息",
+    settingsDocumentWorkbenchShowMetadataDesc: "在正文上方显示格式、大小、修改时间和转换警告。",
+    settingsDocumentWorkbenchReuseSingleLeaf: "复用一个工作台标签",
+    settingsDocumentWorkbenchReuseSingleLeafDesc: "打开其他文件时更新当前工作台，不再新建工作台标签。",
     speakMessage: "朗读",
     speakSession: "朗读会话",
     moreMenu: "更多",
@@ -4146,6 +4171,7 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     configAuthority: "配置文件：.cancip/config.json。重启后以该文件为准。",
     settingsGroupCommon: "常用设置",
     settingsGroupInterface: "界面",
+    settingsGroupWorkbench: "工作台",
     settingsGroupButtonEditing: "按钮编辑",
     settingsGroupAutocomplete: "自动补全",
     settingsGroupContext: "上下文",
@@ -6124,10 +6150,126 @@ const AUTOMATION_UI_I18N_PATCHES: Partial<Record<Language, Partial<Record<I18nKe
   }
 };
 
+const WORKBENCH_I18N_PATCHES: Partial<Record<Language, Partial<Record<I18nKey, string>>>> = {
+  "zh-TW": {
+    settingsGroupWorkbench: "工作台",
+    settingsDocumentWorkbenchDefaultMode: "預設開啟方式",
+    settingsDocumentWorkbenchDefaultModeDesc: "未指定模式時，工作台與 cancip.documents.open 會使用此方式。",
+    settingsDocumentWorkbenchCompactHeader: "緊湊工作台頂部",
+    settingsDocumentWorkbenchCompactHeaderDesc: "壓縮標題與工具列，讓窄側欄的內容靠上顯示。",
+    settingsDocumentWorkbenchShowMetadata: "顯示檔案資訊",
+    settingsDocumentWorkbenchShowMetadataDesc: "在內容上方顯示格式、大小、修改時間與轉換警告。",
+    settingsDocumentWorkbenchReuseSingleLeaf: "重用一個工作台分頁",
+    settingsDocumentWorkbenchReuseSingleLeafDesc: "開啟其他檔案時更新目前工作台，不建立新分頁。"
+  },
+  ug: {
+    settingsGroupWorkbench: "خىزمەت تاختىسى",
+    settingsDocumentWorkbenchDefaultMode: "سۈكۈتتىكى ئېچىش ھالىتى",
+    settingsDocumentWorkbenchDefaultModeDesc: "ھالەت بېرىلمىگەندە خىزمەت تاختىسى ۋە cancip.documents.open مۇشۇ ھالەتنى ئىشلىتىدۇ.",
+    settingsDocumentWorkbenchCompactHeader: "قىسقا خىزمەت تاختىسى بېشى",
+    settingsDocumentWorkbenchCompactHeaderDesc: "تار يان بالداقتا مەزمۇننى يۇقىرىدا كۆرسىتىش ئۈچۈن باشلىق ۋە قورال بالداقنى قىسقارتىدۇ.",
+    settingsDocumentWorkbenchShowMetadata: "ھۆججەت ئۇچۇرىنى كۆرسىتىش",
+    settingsDocumentWorkbenchShowMetadataDesc: "مەزمۇن ئۈستىدە فورمات، چوڭلۇق، ئۆزگەرتىلگەن ۋاقىت ۋە ئاگاھلاندۇرۇشنى كۆرسىتىدۇ.",
+    settingsDocumentWorkbenchReuseSingleLeaf: "بىر خىزمەت تاختىسى بەتكۈچىنى قايتا ئىشلىتىش",
+    settingsDocumentWorkbenchReuseSingleLeafDesc: "باشقا ھۆججەت ئېچىلغاندا يېڭى بەتكۈچ قۇرماي ھازىرقى خىزمەت تاختىسىنى يېڭىلايدۇ."
+  },
+  tr: {
+    settingsGroupWorkbench: "Çalışma alanı",
+    settingsDocumentWorkbenchDefaultMode: "Varsayılan açma modu",
+    settingsDocumentWorkbenchDefaultModeDesc: "Mod belirtilmediğinde çalışma alanı ve cancip.documents.open bu modu kullanır.",
+    settingsDocumentWorkbenchCompactHeader: "Kompakt çalışma alanı başlığı",
+    settingsDocumentWorkbenchCompactHeaderDesc: "Dar kenar çubuklarında içeriği yukarı taşımak için başlığı ve araç çubuğunu sıkıştırır.",
+    settingsDocumentWorkbenchShowMetadata: "Dosya bilgilerini göster",
+    settingsDocumentWorkbenchShowMetadataDesc: "İçeriğin üstünde biçim, boyut, değiştirme zamanı ve dönüştürme uyarılarını gösterir.",
+    settingsDocumentWorkbenchReuseSingleLeaf: "Tek çalışma alanı sekmesini kullan",
+    settingsDocumentWorkbenchReuseSingleLeafDesc: "Başka bir dosya açıldığında yeni sekme yerine mevcut çalışma alanını günceller."
+  },
+  ru: {
+    settingsGroupWorkbench: "Рабочая область",
+    settingsDocumentWorkbenchDefaultMode: "Режим открытия по умолчанию",
+    settingsDocumentWorkbenchDefaultModeDesc: "Используется рабочей областью и cancip.documents.open, если режим не указан.",
+    settingsDocumentWorkbenchCompactHeader: "Компактный заголовок",
+    settingsDocumentWorkbenchCompactHeaderDesc: "Уменьшает заголовок и панель инструментов, чтобы содержимое было выше в узкой боковой панели.",
+    settingsDocumentWorkbenchShowMetadata: "Показывать сведения о файле",
+    settingsDocumentWorkbenchShowMetadataDesc: "Показывает формат, размер, время изменения и предупреждения над содержимым.",
+    settingsDocumentWorkbenchReuseSingleLeaf: "Одна вкладка рабочей области",
+    settingsDocumentWorkbenchReuseSingleLeafDesc: "При открытии другого файла обновляет текущую рабочую область без новой вкладки."
+  },
+  ja: {
+    settingsGroupWorkbench: "ワークベンチ",
+    settingsDocumentWorkbenchDefaultMode: "既定の表示モード",
+    settingsDocumentWorkbenchDefaultModeDesc: "モード未指定時にワークベンチと cancip.documents.open が使用します。",
+    settingsDocumentWorkbenchCompactHeader: "コンパクトなヘッダー",
+    settingsDocumentWorkbenchCompactHeaderDesc: "狭いサイドバーで本文が上に表示されるよう、タイトルとツールバーを圧縮します。",
+    settingsDocumentWorkbenchShowMetadata: "ファイル情報を表示",
+    settingsDocumentWorkbenchShowMetadataDesc: "形式、サイズ、更新日時、変換警告を本文の上に表示します。",
+    settingsDocumentWorkbenchReuseSingleLeaf: "ワークベンチを1タブで再利用",
+    settingsDocumentWorkbenchReuseSingleLeafDesc: "別のファイルを開くと、新しいタブを作らず現在のワークベンチを更新します。"
+  },
+  ko: {
+    settingsGroupWorkbench: "작업대",
+    settingsDocumentWorkbenchDefaultMode: "기본 열기 모드",
+    settingsDocumentWorkbenchDefaultModeDesc: "모드를 지정하지 않으면 작업대와 cancip.documents.open이 이 모드를 사용합니다.",
+    settingsDocumentWorkbenchCompactHeader: "간결한 작업대 머리글",
+    settingsDocumentWorkbenchCompactHeaderDesc: "좁은 사이드바에서 내용이 위에 보이도록 제목과 도구 모음을 줄입니다.",
+    settingsDocumentWorkbenchShowMetadata: "파일 정보 표시",
+    settingsDocumentWorkbenchShowMetadataDesc: "형식, 크기, 수정 시간, 변환 경고를 내용 위에 표시합니다.",
+    settingsDocumentWorkbenchReuseSingleLeaf: "작업대 탭 하나 재사용",
+    settingsDocumentWorkbenchReuseSingleLeafDesc: "다른 파일을 열 때 새 탭 없이 현재 작업대를 갱신합니다."
+  },
+  es: {
+    settingsGroupWorkbench: "Área de trabajo",
+    settingsDocumentWorkbenchDefaultMode: "Modo de apertura predeterminado",
+    settingsDocumentWorkbenchDefaultModeDesc: "Se usa en el área de trabajo y cancip.documents.open cuando no se especifica un modo.",
+    settingsDocumentWorkbenchCompactHeader: "Encabezado compacto",
+    settingsDocumentWorkbenchCompactHeaderDesc: "Reduce el título y la barra para que el contenido quede arriba en paneles estrechos.",
+    settingsDocumentWorkbenchShowMetadata: "Mostrar información del archivo",
+    settingsDocumentWorkbenchShowMetadataDesc: "Muestra formato, tamaño, modificación y avisos de conversión sobre el contenido.",
+    settingsDocumentWorkbenchReuseSingleLeaf: "Reutilizar una pestaña",
+    settingsDocumentWorkbenchReuseSingleLeafDesc: "Al abrir otro archivo actualiza el área actual sin crear una pestaña nueva."
+  },
+  fr: {
+    settingsGroupWorkbench: "Espace de travail",
+    settingsDocumentWorkbenchDefaultMode: "Mode d'ouverture par défaut",
+    settingsDocumentWorkbenchDefaultModeDesc: "Utilisé par l'espace de travail et cancip.documents.open lorsqu'aucun mode n'est indiqué.",
+    settingsDocumentWorkbenchCompactHeader: "En-tête compact",
+    settingsDocumentWorkbenchCompactHeaderDesc: "Réduit le titre et la barre d'outils pour remonter le contenu dans les volets étroits.",
+    settingsDocumentWorkbenchShowMetadata: "Afficher les informations du fichier",
+    settingsDocumentWorkbenchShowMetadataDesc: "Affiche le format, la taille, la date de modification et les avertissements au-dessus du contenu.",
+    settingsDocumentWorkbenchReuseSingleLeaf: "Réutiliser un seul onglet",
+    settingsDocumentWorkbenchReuseSingleLeafDesc: "L'ouverture d'un autre fichier actualise l'espace courant sans créer d'onglet."
+  },
+  de: {
+    settingsGroupWorkbench: "Arbeitsbereich",
+    settingsDocumentWorkbenchDefaultMode: "Standard-Öffnungsmodus",
+    settingsDocumentWorkbenchDefaultModeDesc: "Wird vom Arbeitsbereich und cancip.documents.open ohne expliziten Modus verwendet.",
+    settingsDocumentWorkbenchCompactHeader: "Kompakter Kopfbereich",
+    settingsDocumentWorkbenchCompactHeaderDesc: "Verkleinert Titel und Werkzeugleiste, damit Inhalte in schmalen Seitenleisten weiter oben beginnen.",
+    settingsDocumentWorkbenchShowMetadata: "Dateiinformationen anzeigen",
+    settingsDocumentWorkbenchShowMetadataDesc: "Zeigt Format, Größe, Änderungszeit und Konvertierungswarnungen über dem Inhalt.",
+    settingsDocumentWorkbenchReuseSingleLeaf: "Einen Arbeitsbereich-Tab wiederverwenden",
+    settingsDocumentWorkbenchReuseSingleLeafDesc: "Beim Öffnen einer anderen Datei wird der aktuelle Arbeitsbereich ohne neuen Tab aktualisiert."
+  },
+  ar: {
+    settingsGroupWorkbench: "مساحة العمل",
+    settingsDocumentWorkbenchDefaultMode: "وضع الفتح الافتراضي",
+    settingsDocumentWorkbenchDefaultModeDesc: "تستخدمه مساحة العمل و cancip.documents.open عند عدم تحديد وضع.",
+    settingsDocumentWorkbenchCompactHeader: "رأس مساحة عمل مضغوط",
+    settingsDocumentWorkbenchCompactHeaderDesc: "يضغط العنوان وشريط الأدوات لإظهار المحتوى أعلى الشريط الجانبي الضيق.",
+    settingsDocumentWorkbenchShowMetadata: "إظهار معلومات الملف",
+    settingsDocumentWorkbenchShowMetadataDesc: "يعرض التنسيق والحجم ووقت التعديل وتحذيرات التحويل فوق المحتوى.",
+    settingsDocumentWorkbenchReuseSingleLeaf: "إعادة استخدام علامة تبويب واحدة",
+    settingsDocumentWorkbenchReuseSingleLeafDesc: "يحدّث مساحة العمل الحالية عند فتح ملف آخر من دون إنشاء علامة تبويب جديدة."
+  }
+};
+
 for (const [language, patch] of Object.entries(SETTINGS_I18N_PATCHES) as [Language, Partial<Record<I18nKey, string>>][]) {
   Object.assign(I18N[language], patch);
 }
 for (const [language, patch] of Object.entries(AUTOMATION_UI_I18N_PATCHES) as [Language, Partial<Record<I18nKey, string>>][]) {
+  Object.assign(I18N[language], patch);
+}
+for (const [language, patch] of Object.entries(WORKBENCH_I18N_PATCHES) as [Language, Partial<Record<I18nKey, string>>][]) {
   Object.assign(I18N[language], patch);
 }
 
@@ -6817,6 +6959,7 @@ export default class CancipPlugin extends Plugin {
   private universalSearchIndexCache: UniversalSearchIndex | null = null;
   private universalSearchInventoryCache: UniversalSearchInventoryItem[] | null = null;
   private documentSnapshotCache = new Map<string, DocumentSnapshot>();
+  private documentWorkbenchRestorePromise: Promise<number> | null = null;
   private universalSearchBuildPromise: Promise<{ indexed: number; total: number; complete: boolean }> | null = null;
   private universalSearchBuildTimer: number | null = null;
   private universalSearchBuildRequested = false;
@@ -6880,6 +7023,10 @@ export default class CancipPlugin extends Plugin {
     this.registerView(CANCIP_AUTOMATION_RUNNER_VIEW_TYPE, (leaf) => new CancipView(leaf, this, CANCIP_AUTOMATION_RUNNER_VIEW_TYPE));
     this.registerView(CANCIP_REVIEW_VIEW_TYPE, (leaf) => new CancipReviewLeafView(leaf, this));
     this.registerView(CANCIP_DOCUMENT_VIEW_TYPE, (leaf) => new CancipDocumentWorkbenchView(leaf, this));
+    void this.restoreDocumentWorkbenchLeaves();
+    this.app.workspace.onLayoutReady(() => {
+      activeWindow.setTimeout(() => void this.restoreDocumentWorkbenchLeaves(), 0);
+    });
     this.registerEditorExtension(createCancipEditorAutocompleteExtension(this));
     this.installAiVaultMutationCaptureBridge();
     void this.ensureVisibleDataFolders();
@@ -6950,7 +7097,7 @@ export default class CancipPlugin extends Plugin {
       checkCallback: (checking) => {
         const file = this.app.workspace.getActiveFile();
         if (!file) return false;
-        if (!checking) void this.activateDocumentWorkbench(file, "preview");
+        if (!checking) void this.activateDocumentWorkbench(file);
         return true;
       }
     });
@@ -7025,7 +7172,7 @@ export default class CancipPlugin extends Plugin {
           .setTitle(this.t("documentOpenWorkbench"))
           .setIcon("panels-top-left")
           .onClick(() => {
-            void this.activateDocumentWorkbench(file, "preview");
+            void this.activateDocumentWorkbench(file);
           });
       });
       menu.addItem((item) => {
@@ -18965,24 +19112,89 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     if (view) await view.newChat({ force: true });
   }
 
-  async activateDocumentWorkbench(fileOrPath: TFile | string, mode: DocumentWorkbenchMode = "preview"): Promise<CancipDocumentWorkbenchView | null> {
+  async restoreDocumentWorkbenchLeaves(): Promise<number> {
+    if (this.documentWorkbenchRestorePromise) return await this.documentWorkbenchRestorePromise;
+    const restore = async (): Promise<number> => {
+      if (this.unloading) return 0;
+      const leaves = [...this.app.workspace.getLeavesOfType(CANCIP_DOCUMENT_VIEW_TYPE)];
+      const results = await Promise.all(leaves.map(async (leaf): Promise<number> => {
+        if (this.unloading || leaf.view instanceof CancipDocumentWorkbenchView) return 0;
+        const wasActive = this.app.workspace.getMostRecentLeaf() === leaf;
+        return await this.restoreDocumentWorkbenchLeaf(leaf, wasActive) ? 1 : 0;
+      }));
+      return results.reduce((sum, result) => sum + result, 0);
+    };
+    const promise = restore();
+    this.documentWorkbenchRestorePromise = promise;
+    try {
+      return await promise;
+    } finally {
+      if (this.documentWorkbenchRestorePromise === promise) this.documentWorkbenchRestorePromise = null;
+    }
+  }
+
+  async restoreDocumentWorkbenchLeaf(leaf: WorkspaceLeaf, wasActive: boolean): Promise<boolean> {
+    if (this.unloading || leaf.view instanceof CancipDocumentWorkbenchView) return false;
+    const viewState = leaf.getViewState();
+    const state = isRecord(viewState.state) ? viewState.state : {};
+    try {
+      await leaf.setViewState({ type: "empty", active: false });
+      await leaf.setViewState({
+        ...viewState,
+        type: CANCIP_DOCUMENT_VIEW_TYPE,
+        state,
+        active: wasActive
+      });
+      if (!(leaf.view instanceof CancipDocumentWorkbenchView)) {
+        await leaf.setViewState({
+          ...viewState,
+          type: CANCIP_DOCUMENT_VIEW_TYPE,
+          state,
+          active: wasActive
+        });
+        await sleep(30);
+      }
+      return leaf.view instanceof CancipDocumentWorkbenchView;
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      this.devErrors.push(`document workbench leaf restore failed: ${reason}`);
+      return false;
+    }
+  }
+
+  refreshDocumentWorkbenchViews(): void {
+    for (const leaf of this.app.workspace.getLeavesOfType(CANCIP_DOCUMENT_VIEW_TYPE)) {
+      if (leaf.view instanceof CancipDocumentWorkbenchView) void leaf.view.refreshLayoutSettings();
+    }
+  }
+
+  async activateDocumentWorkbench(fileOrPath: TFile | string, mode?: DocumentWorkbenchMode): Promise<CancipDocumentWorkbenchView | null> {
     const file = typeof fileOrPath === "string" ? this.app.vault.getAbstractFileByPath(normalizePath(fileOrPath)) : fileOrPath;
     if (!(file instanceof TFile)) {
       new Notice(this.t("documentNoActiveFile"));
       return null;
     }
-    let leaf = this.app.workspace.getLeavesOfType(CANCIP_DOCUMENT_VIEW_TYPE)
+    const resolvedMode = mode ?? this.settings.documentWorkbenchDefaultMode;
+    await this.restoreDocumentWorkbenchLeaves();
+    const workbenchLeaves = this.app.workspace.getLeavesOfType(CANCIP_DOCUMENT_VIEW_TYPE);
+    const liveLeaves = workbenchLeaves.filter((candidate) => candidate.view instanceof CancipDocumentWorkbenchView);
+    let leaf = liveLeaves
       .find((candidate) => candidate.view instanceof CancipDocumentWorkbenchView && candidate.view.matchesFile(file.path));
+    if (!leaf && this.settings.documentWorkbenchReuseSingleLeaf) {
+      const recentLeaf = this.app.workspace.getMostRecentLeaf();
+      leaf = (recentLeaf && liveLeaves.includes(recentLeaf) ? recentLeaf : null) ?? liveLeaves[0];
+    }
     if (!leaf) {
+      if (workbenchLeaves.length) return null;
       leaf = this.app.workspace.getLeaf("tab");
       await leaf.setViewState({
         type: CANCIP_DOCUMENT_VIEW_TYPE,
         active: true,
-        state: { filePath: file.path, mode } satisfies DocumentWorkbenchState
+        state: { filePath: file.path, mode: resolvedMode } satisfies DocumentWorkbenchState
       });
     }
     if (!(leaf.view instanceof CancipDocumentWorkbenchView)) return null;
-    await leaf.view.openFile(file, mode);
+    await leaf.view.openFile(file, resolvedMode);
     await this.app.workspace.revealLeaf(leaf);
     const workspaceWithFocus = this.app.workspace as unknown as {
       setActiveLeaf?: (target: WorkspaceLeaf, params?: { focus?: boolean } | boolean) => void;
@@ -19106,6 +19318,7 @@ class CancipDocumentWorkbenchView extends ItemView {
   private editBuffer = "";
   private dirty = false;
   private loadGeneration = 0;
+  private scheduledLoadTimer: number | null = null;
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -19133,17 +19346,21 @@ class CancipDocumentWorkbenchView extends ItemView {
   async setState(state: unknown): Promise<void> {
     const value = isRecord(state) ? state : {};
     const path = typeof value.filePath === "string" ? normalizePath(value.filePath) : "";
-    const mode = isDocumentWorkbenchMode(value.mode) ? value.mode : "preview";
+    const mode = isDocumentWorkbenchMode(value.mode) ? value.mode : this.plugin.settings.documentWorkbenchDefaultMode;
     this.filePath = path;
     this.mode = mode;
-    if (this.contentEl.isConnected) await this.loadAndRender();
+    if (this.contentEl.isConnected) this.scheduleLoadAndRender();
   }
 
   async onOpen(): Promise<void> {
-    await this.loadAndRender();
+    this.scheduleLoadAndRender();
   }
 
   async onClose(): Promise<void> {
+    if (this.scheduledLoadTimer !== null) {
+      (this.contentEl.ownerDocument.defaultView ?? activeWindow).clearTimeout(this.scheduledLoadTimer);
+      this.scheduledLoadTimer = null;
+    }
     this.loadGeneration += 1;
     this.contentEl.empty();
   }
@@ -19152,7 +19369,7 @@ class CancipDocumentWorkbenchView extends ItemView {
     return normalizePath(path) === this.filePath;
   }
 
-  async openFile(file: TFile, mode: DocumentWorkbenchMode = "preview"): Promise<void> {
+  async openFile(file: TFile, mode: DocumentWorkbenchMode = this.plugin.settings.documentWorkbenchDefaultMode): Promise<void> {
     const changed = this.filePath !== file.path;
     this.filePath = file.path;
     this.mode = mode;
@@ -19164,10 +19381,14 @@ class CancipDocumentWorkbenchView extends ItemView {
   }
 
   private async loadAndRender(): Promise<void> {
+    if (this.scheduledLoadTimer !== null) {
+      (this.contentEl.ownerDocument.defaultView ?? activeWindow).clearTimeout(this.scheduledLoadTimer);
+      this.scheduledLoadTimer = null;
+    }
     const generation = ++this.loadGeneration;
     const root = this.contentEl;
     root.empty();
-    root.addClass("obcc-document-workbench");
+    this.applyRootSettings();
     root.createDiv({ cls: "obcc-document-loading", text: `${this.plugin.t("documentWorkbench")}...` });
     if (!this.filePath) {
       root.empty();
@@ -19189,11 +19410,25 @@ class CancipDocumentWorkbenchView extends ItemView {
     }
   }
 
+  private scheduleLoadAndRender(): void {
+    const hostWindow = this.contentEl.ownerDocument.defaultView ?? activeWindow;
+    if (this.scheduledLoadTimer !== null) hostWindow.clearTimeout(this.scheduledLoadTimer);
+    const root = this.contentEl;
+    root.empty();
+    this.applyRootSettings();
+    root.createDiv({ cls: "obcc-document-loading", text: `${this.plugin.t("documentWorkbench")}...` });
+    this.scheduledLoadTimer = hostWindow.setTimeout(() => {
+      this.scheduledLoadTimer = null;
+      if (!this.contentEl.isConnected) return;
+      void this.loadAndRender();
+    }, 80);
+  }
+
   private async render(): Promise<void> {
     const snapshot = this.snapshot;
     const root = this.contentEl;
     root.empty();
-    root.addClass("obcc-document-workbench");
+    this.applyRootSettings();
     root.setAttr("lang", this.plugin.language());
     root.setAttr("dir", this.plugin.textDirection());
     if (!snapshot) {
@@ -19233,14 +19468,16 @@ class CancipDocumentWorkbenchView extends ItemView {
       void this.loadAndRender();
     });
 
-    const meta = shell.createDiv({ cls: "obcc-document-meta" });
-    meta.createSpan({ text: `${this.plugin.t("documentOriginalFormat")}: ${snapshot.kind.toUpperCase()}` });
-    meta.createSpan({ text: `${this.plugin.t("documentFileSize")}: ${formatFileSize(snapshot.file.stat.size)}` });
-    meta.createSpan({ text: `${this.plugin.t("documentModified")}: ${new Date(snapshot.file.stat.mtime).toLocaleString()}` });
-    if (!snapshot.editableSource && this.mode === "edit") {
-      meta.createSpan({ cls: "is-warning", text: this.plugin.t("documentSourceProtected") });
+    if (this.plugin.settings.documentWorkbenchShowMetadata) {
+      const meta = shell.createDiv({ cls: "obcc-document-meta" });
+      meta.createSpan({ text: `${this.plugin.t("documentOriginalFormat")}: ${snapshot.kind.toUpperCase()}` });
+      meta.createSpan({ text: `${this.plugin.t("documentFileSize")}: ${formatFileSize(snapshot.file.stat.size)}` });
+      meta.createSpan({ text: `${this.plugin.t("documentModified")}: ${new Date(snapshot.file.stat.mtime).toLocaleString()}` });
+      if (!snapshot.editableSource && this.mode === "edit") {
+        meta.createSpan({ cls: "is-warning", text: this.plugin.t("documentSourceProtected") });
+      }
+      for (const warning of snapshot.warnings.slice(0, 3)) meta.createSpan({ cls: "is-warning", text: warning });
     }
-    for (const warning of snapshot.warnings.slice(0, 3)) meta.createSpan({ cls: "is-warning", text: warning });
 
     const body = shell.createDiv({ cls: `obcc-document-body is-${this.mode}` });
     if (this.mode === "edit") {
@@ -19250,6 +19487,17 @@ class CancipDocumentWorkbenchView extends ItemView {
     } else {
       await this.renderPreview(body);
     }
+  }
+
+  async refreshLayoutSettings(): Promise<void> {
+    if (this.snapshot) await this.render();
+    else this.applyRootSettings();
+  }
+
+  private applyRootSettings(): void {
+    this.contentEl.addClass("obcc-document-workbench");
+    this.contentEl.toggleClass("is-compact-header", this.plugin.settings.documentWorkbenchCompactHeader);
+    this.contentEl.toggleClass("is-metadata-hidden", !this.plugin.settings.documentWorkbenchShowMetadata);
   }
 
   private addModeButton(parent: HTMLElement, mode: DocumentWorkbenchMode, label: string): void {
@@ -35417,7 +35665,7 @@ class CancipView extends ItemView {
     if (normalized === "cancip.documents.open") {
       const activePath = this.app.workspace.getActiveFile()?.path ?? "";
       const path = normalizePath(typeof args.path === "string" ? args.path : activePath);
-      const mode = isDocumentWorkbenchMode(args.mode) ? args.mode : "preview";
+      const mode = isDocumentWorkbenchMode(args.mode) ? args.mode : this.plugin.settings.documentWorkbenchDefaultMode;
       if (!path) throw new Error("cancip.documents.open requires args.path or an active file");
       const view = await this.plugin.activateDocumentWorkbench(path, mode);
       if (!view) throw new Error(`Document workbench could not open: ${path}`);
@@ -40191,6 +40439,7 @@ class CancipSettingTab extends PluginSettingTab {
       const pages: Array<{ id: string; label: string; render: (parent: HTMLElement) => void }> = [
         { id: "common", label: this.plugin.t("settingsGroupCommon"), render: (parent) => this.displayCommonSettings(parent) },
         { id: "interface", label: this.plugin.t("settingsGroupInterface"), render: (parent) => this.displayInterfaceSettings(parent) },
+        { id: "workbench", label: this.plugin.t("settingsGroupWorkbench"), render: (parent) => this.displayDocumentWorkbenchSettings(parent) },
         { id: "buttons", label: this.plugin.t("settingsGroupButtonEditing"), render: (parent) => this.displayButtonEditingSettings(parent) },
         { id: "autocomplete", label: this.plugin.t("settingsGroupAutocomplete"), render: (parent) => this.displayAutocompleteSettings(parent) },
         { id: "context", label: this.plugin.t("settingsGroupContext"), render: (parent) => this.displayContextSettings(parent) },
@@ -40494,6 +40743,38 @@ class CancipSettingTab extends PluginSettingTab {
       this.plugin.applyStatusBarVisibility();
       this.plugin.scheduleUiButtonRulesApply(0);
     }, "settingsForceStatusBarVisibleDesc");
+  }
+
+  private displayDocumentWorkbenchSettings(parent: HTMLElement): void {
+    new Setting(parent)
+      .setName(this.plugin.t("settingsDocumentWorkbenchDefaultMode"))
+      .setDesc(this.plugin.t("settingsDocumentWorkbenchDefaultModeDesc"))
+      .addDropdown((dropdown) => {
+        dropdown
+          .addOption("preview", this.plugin.t("documentPreview"))
+          .addOption("markdown", this.plugin.t("documentMarkdown"))
+          .addOption("edit", this.plugin.t("documentEdit"))
+          .setValue(this.plugin.settings.documentWorkbenchDefaultMode)
+          .onChange(async (value) => {
+            if (!isDocumentWorkbenchMode(value)) return;
+            this.plugin.settings.documentWorkbenchDefaultMode = value;
+            await this.plugin.saveSettings();
+          });
+      });
+    this.addToggleSetting(parent, "settingsDocumentWorkbenchCompactHeader", this.plugin.settings.documentWorkbenchCompactHeader, async (value) => {
+      this.plugin.settings.documentWorkbenchCompactHeader = value;
+      await this.plugin.saveSettings();
+      this.plugin.refreshDocumentWorkbenchViews();
+    }, "settingsDocumentWorkbenchCompactHeaderDesc");
+    this.addToggleSetting(parent, "settingsDocumentWorkbenchShowMetadata", this.plugin.settings.documentWorkbenchShowMetadata, async (value) => {
+      this.plugin.settings.documentWorkbenchShowMetadata = value;
+      await this.plugin.saveSettings();
+      this.plugin.refreshDocumentWorkbenchViews();
+    }, "settingsDocumentWorkbenchShowMetadataDesc");
+    this.addToggleSetting(parent, "settingsDocumentWorkbenchReuseSingleLeaf", this.plugin.settings.documentWorkbenchReuseSingleLeaf, async (value) => {
+      this.plugin.settings.documentWorkbenchReuseSingleLeaf = value;
+      await this.plugin.saveSettings();
+    }, "settingsDocumentWorkbenchReuseSingleLeafDesc");
   }
 
   private displayButtonEditingSettings(parent: HTMLElement): void {
@@ -48090,6 +48371,10 @@ function normalizeSettings(input: Partial<Settings>): Settings {
     useVaultSearchByDefault: Boolean(merged.useVaultSearchByDefault),
     showAttachmentButton: typeof merged.showAttachmentButton === "boolean" ? merged.showAttachmentButton : DEFAULT_SETTINGS.showAttachmentButton,
     compactHeader: typeof merged.compactHeader === "boolean" ? merged.compactHeader : DEFAULT_SETTINGS.compactHeader,
+    documentWorkbenchDefaultMode: isDocumentWorkbenchMode(merged.documentWorkbenchDefaultMode) ? merged.documentWorkbenchDefaultMode : DEFAULT_SETTINGS.documentWorkbenchDefaultMode,
+    documentWorkbenchCompactHeader: typeof merged.documentWorkbenchCompactHeader === "boolean" ? merged.documentWorkbenchCompactHeader : DEFAULT_SETTINGS.documentWorkbenchCompactHeader,
+    documentWorkbenchShowMetadata: typeof merged.documentWorkbenchShowMetadata === "boolean" ? merged.documentWorkbenchShowMetadata : DEFAULT_SETTINGS.documentWorkbenchShowMetadata,
+    documentWorkbenchReuseSingleLeaf: typeof merged.documentWorkbenchReuseSingleLeaf === "boolean" ? merged.documentWorkbenchReuseSingleLeaf : DEFAULT_SETTINGS.documentWorkbenchReuseSingleLeaf,
     codeBlockWrap: typeof merged.codeBlockWrap === "boolean" ? merged.codeBlockWrap : DEFAULT_SETTINGS.codeBlockWrap,
     personalizedGreetingEnabled: typeof merged.personalizedGreetingEnabled === "boolean" ? merged.personalizedGreetingEnabled : DEFAULT_SETTINGS.personalizedGreetingEnabled,
     personalizationFriendlyName: typeof merged.personalizationFriendlyName === "string" ? sanitizePersonalizationName(merged.personalizationFriendlyName) : DEFAULT_SETTINGS.personalizationFriendlyName,
@@ -48189,6 +48474,10 @@ function settingsToCancipConfig(settings: Settings): Record<string, unknown> {
     useVaultSearchByDefault: settings.useVaultSearchByDefault,
     showAttachmentButton: settings.showAttachmentButton,
     compactHeader: settings.compactHeader,
+    documentWorkbenchDefaultMode: settings.documentWorkbenchDefaultMode,
+    documentWorkbenchCompactHeader: settings.documentWorkbenchCompactHeader,
+    documentWorkbenchShowMetadata: settings.documentWorkbenchShowMetadata,
+    documentWorkbenchReuseSingleLeaf: settings.documentWorkbenchReuseSingleLeaf,
     codeBlockWrap: settings.codeBlockWrap,
     personalizedGreetingEnabled: settings.personalizedGreetingEnabled,
     personalizationFriendlyName: settings.personalizationFriendlyName,
@@ -48299,6 +48588,10 @@ function parseCancipConfig(raw: unknown): Partial<Settings> {
   if (typeof raw.useVaultSearchByDefault === "boolean") config.useVaultSearchByDefault = raw.useVaultSearchByDefault;
   if (typeof raw.showAttachmentButton === "boolean") config.showAttachmentButton = raw.showAttachmentButton;
   if (typeof raw.compactHeader === "boolean") config.compactHeader = raw.compactHeader;
+  if (isDocumentWorkbenchMode(raw.documentWorkbenchDefaultMode)) config.documentWorkbenchDefaultMode = raw.documentWorkbenchDefaultMode;
+  if (typeof raw.documentWorkbenchCompactHeader === "boolean") config.documentWorkbenchCompactHeader = raw.documentWorkbenchCompactHeader;
+  if (typeof raw.documentWorkbenchShowMetadata === "boolean") config.documentWorkbenchShowMetadata = raw.documentWorkbenchShowMetadata;
+  if (typeof raw.documentWorkbenchReuseSingleLeaf === "boolean") config.documentWorkbenchReuseSingleLeaf = raw.documentWorkbenchReuseSingleLeaf;
   if (typeof raw.codeBlockWrap === "boolean") config.codeBlockWrap = raw.codeBlockWrap;
   if (typeof raw.personalizedGreetingEnabled === "boolean") config.personalizedGreetingEnabled = raw.personalizedGreetingEnabled;
   if (typeof raw.personalizationFriendlyName === "string") config.personalizationFriendlyName = raw.personalizationFriendlyName;
@@ -48390,6 +48683,7 @@ const CANCIP_CONFIG_STRING_KEYS = new Set([
   "personalizationWeatherLocation",
   "composerAutocompleteApiProfileId",
   "composerAutocompletePrompt",
+  "documentWorkbenchDefaultMode",
   "systemPrompt"
 ]);
 
@@ -48432,6 +48726,9 @@ const CANCIP_CONFIG_BOOLEAN_KEYS = new Set([
   "useVaultSearchByDefault",
   "showAttachmentButton",
   "compactHeader",
+  "documentWorkbenchCompactHeader",
+  "documentWorkbenchShowMetadata",
+  "documentWorkbenchReuseSingleLeaf",
   "codeBlockWrap",
   "personalizedGreetingEnabled",
   "personalizedDiaryEnabled",

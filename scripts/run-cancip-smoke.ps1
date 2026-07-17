@@ -45,6 +45,7 @@ $RunProfile = if ($Mobile) { 'mobile' } elseif (
   $Case -like '*code-block-wrap*' -or
   $Case -like '*context-editor-settings*' -or
   $Case -like '*editor-autocomplete*' -or
+  $Case -like '*document-workbench*' -or
   $Case -like '*personalization-autocomplete*' -or
   $Case -like '*process-detail-deferred-dom*' -or
   $Case -like '*interaction-regression-controls*'
@@ -4413,19 +4414,13 @@ if ($Write -and (Should-RunProgrammaticCase 'programmatic.document-workbench-wri
   }
 }
 
-if (Should-RunProgrammaticCase 'programmatic.document-workbench') {
+if (Should-RunProgrammaticCase 'programmatic.document-workbench-conversion') {
   try {
     $code = @'
 (async()=>{
-  const t=Date.now();
-  const p=app.plugins.plugins.cancip;
-  if(!p||typeof p.loadDocumentSnapshot!=='function'||typeof p.activateDocumentWorkbench!=='function')throw new Error('document workbench API unavailable');
-  const files=app.vault.getFiles();
-  const safe=(ext)=>{
-    const matches=files.filter((file)=>file.extension.toLowerCase()===ext);
-    const preferred=matches.filter((file)=>!file.path.toLowerCase().includes('/encript/'));
-    return (preferred.length?preferred:matches).sort((a,b)=>a.stat.size-b.stat.size)[0]||null;
-  };
+  const t=Date.now(),p=app.plugins.plugins.cancip,files=app.vault.getFiles();
+  if(!p||typeof p.loadDocumentSnapshot!=='function')throw new Error('document conversion API unavailable');
+  const safe=(ext)=>files.filter((file)=>file.extension.toLowerCase()===ext&&!file.path.toLowerCase().includes('/encript/')).sort((a,b)=>a.stat.size-b.stat.size)[0]||null;
   const expected={md:'markdown',html:'html',docx:'docx',xlsx:'xlsx',pdf:'pdf'};
   const samples=[];
   for(const [ext,kind] of Object.entries(expected)){
@@ -4434,43 +4429,80 @@ if (Should-RunProgrammaticCase 'programmatic.document-workbench') {
     const snapshot=await p.loadDocumentSnapshot(file);
     samples.push({ext,kind:snapshot.kind,markdownLength:snapshot.markdown.length,editableSource:snapshot.editableSource,previewKind:snapshot.previewKind,warnings:snapshot.warnings.length,expectedKind:kind});
   }
-  const markdownFile=safe('md');
-  if(!markdownFile)throw new Error('no Markdown fixture in Vault');
-  const beforeLeaves=app.workspace.getLeavesOfType('cancip-document-workbench-view').length;
-  let view=null;
-  try{
-    view=await p.activateDocumentWorkbench(markdownFile,'markdown');
-    await new Promise((resolve)=>setTimeout(resolve,120));
-    if(!view)throw new Error('workbench view did not open');
-    const afterFirst=app.workspace.getLeavesOfType('cancip-document-workbench-view').length;
-    const same=await p.activateDocumentWorkbench(markdownFile,'preview');
-    await new Promise((resolve)=>setTimeout(resolve,80));
-    const afterSecond=app.workspace.getLeavesOfType('cancip-document-workbench-view').length;
-    const root=view.contentEl;
-    const buttons=Array.from(root.querySelectorAll('.obcc-document-mode,.obcc-document-action')).filter((button)=>button.getBoundingClientRect().width>0);
-    const rects=buttons.map((button)=>{const r=button.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width,height:r.height}});
-    let overlaps=0;
-    for(let i=0;i<rects.length;i+=1)for(let j=i+1;j<rects.length;j+=1){const a=rects[i],b=rects[j];if(Math.min(a.right,b.right)-Math.max(a.left,b.left)>1&&Math.min(a.bottom,b.bottom)-Math.max(a.top,b.top)>1)overlaps+=1;}
-    const rootRect=root.getBoundingClientRect();
-    const outOfBounds=rects.filter((r)=>r.left<rootRect.left-1||r.right>rootRect.right+1).length;
-    return JSON.stringify({id:'programmatic.document-workbench',elapsedMs:Date.now()-t,samples,beforeLeaves,afterFirst,afterSecond,reused:same===view,buttons:buttons.length,overlaps,outOfBounds,viewType:view.getViewType(),mode:view.getState?.().mode});
-  } finally {
-    const leaf=app.workspace.getLeavesOfType('cancip-document-workbench-view').find((candidate)=>candidate.view===view);
-    leaf?.detach();
-  }
-})().catch((error)=>JSON.stringify({id:'programmatic.document-workbench',evalError:error instanceof Error?error.message:String(error),stack:error instanceof Error?error.stack:''}))
+  return JSON.stringify({id:'programmatic.document-workbench-conversion',elapsedMs:Date.now()-t,samples});
+})().catch((error)=>JSON.stringify({id:'programmatic.document-workbench-conversion',evalError:error instanceof Error?error.message:String(error),stack:error instanceof Error?error.stack:''}))
 '@
-    $item = Invoke-CancipEval -Code $code -TimeoutSeconds 90
-    if ([string]$item.evalError) { throw "document workbench eval failed: $($item.evalError)`n$($item.stack)" }
-    if ([string]$item.viewType -ne 'cancip-document-workbench-view' -or -not $item.reused -or [int]$item.afterSecond -ne [int]$item.afterFirst) { throw "document workbench did not reuse its file leaf: $($item | ConvertTo-Json -Compress -Depth 10)" }
-    if ([int]$item.overlaps -ne 0 -or [int]$item.outOfBounds -ne 0 -or [int]$item.buttons -lt 6) { throw "document workbench controls overlap or overflow: $($item | ConvertTo-Json -Compress -Depth 10)" }
+    $item = Invoke-CancipEval -Code $code -TimeoutSeconds 30
+    if ([string]$item.evalError) { throw "document conversion eval failed: $($item.evalError)`n$($item.stack)" }
     foreach ($sample in @($item.samples)) {
       if ([string]$sample.kind -ne [string]$sample.expectedKind -or [int]$sample.markdownLength -le 0) { throw "document conversion failed for $($sample.ext): $($sample | ConvertTo-Json -Compress)" }
       if (@('docx','xlsx','pdf') -contains [string]$sample.ext -and $sample.editableSource) { throw "binary source became directly editable: $($sample | ConvertTo-Json -Compress)" }
     }
-    Add-CaseResult -Group 'programmaticCases' -Item @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs; samples = @($item.samples).Count; buttons = $item.buttons }
+    Add-CaseResult -Group 'programmaticCases' -Item @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs; samples = @($item.samples).Count }
   } catch {
-    Add-CaseResult -Group 'programmaticCases' -Item @{ id = 'programmatic.document-workbench'; pass = $false; error = $_.Exception.Message }
+    Add-CaseResult -Group 'programmaticCases' -Item @{ id = 'programmatic.document-workbench-conversion'; pass = $false; error = $_.Exception.Message }
+  }
+}
+
+if (Should-RunProgrammaticCase 'programmatic.document-workbench-restore') {
+  try {
+    $code = @'
+(async()=>{
+  const t=Date.now(),p=app.plugins.plugins.cancip,type='cancip-document-workbench-view',workspace=app.workspace;
+  if(!p||typeof p.restoreDocumentWorkbenchLeaf!=='function')throw new Error('document workbench restore API unavailable');
+  let view=workspace.getLeavesOfType(type).find((leaf)=>leaf.view?.getIcon?.()==='panels-top-left')?.view??null,createdLeaf=null;
+  try{
+    if(!view){const file=app.vault.getFiles().find((entry)=>entry.extension.toLowerCase()==='md');view=await p.activateDocumentWorkbench(file,'preview');createdLeaf=workspace.getLeavesOfType(type).find((leaf)=>leaf.view===view)||null;}
+    if(!view)throw new Error('real workbench fixture unavailable');
+    const transitions=[],before=workspace.getLeavesOfType(type).length;
+    const fakeLeaf={view:{getViewType:()=>type},getViewState:()=>({type,state:{filePath:'fixture.md',mode:'preview'},active:true}),setViewState:async(next)=>{transitions.push(next.type);fakeLeaf.view=next.type===type?view:{getViewType:()=>next.type};}};
+    const restored=await p.restoreDocumentWorkbenchLeaf(fakeLeaf,true),after=workspace.getLeavesOfType(type).length;
+    return JSON.stringify({id:'programmatic.document-workbench-restore',elapsedMs:Date.now()-t,restored,transitions,before,after});
+  }finally{createdLeaf?.detach();}
+})().catch((error)=>JSON.stringify({id:'programmatic.document-workbench-restore',evalError:error instanceof Error?error.message:String(error),stack:error instanceof Error?error.stack:''}))
+'@
+    $item = Invoke-CancipEval -Code $code -TimeoutSeconds 30
+    if ([string]$item.evalError) { throw "document restore eval failed: $($item.evalError)`n$($item.stack)" }
+    if (-not $item.restored -or (@($item.transitions) -join ',') -ne 'empty,cancip-document-workbench-view' -or [int]$item.after -ne [int]$item.before) { throw "stale workbench leaf was not restored in place: $($item | ConvertTo-Json -Compress -Depth 10)" }
+    Add-CaseResult -Group 'programmaticCases' -Item @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs; transitions = @($item.transitions) }
+  } catch {
+    Add-CaseResult -Group 'programmaticCases' -Item @{ id = 'programmatic.document-workbench-restore'; pass = $false; error = $_.Exception.Message }
+  }
+}
+
+if (Should-RunProgrammaticCase 'programmatic.document-workbench-layout') {
+  try {
+    $mainSource = Get-Content -Raw -LiteralPath (Join-Path $Root 'src/main.ts') -Encoding UTF8
+    if ($mainSource -notmatch 'id:\s*"workbench"' -or $mainSource -notmatch 'displayDocumentWorkbenchSettings' -or $mainSource -notmatch 'restoreDocumentWorkbenchLeaves' -or $mainSource -notmatch 'documentWorkbenchReuseSingleLeaf') { throw 'document workbench settings, reuse, or leaf restoration source is missing' }
+    $code = @'
+(async()=>{
+  const t=Date.now(),p=app.plugins.plugins.cancip,type='cancip-document-workbench-view',workspace=app.workspace,sleep=(ms)=>new Promise((resolve)=>setTimeout(resolve,ms));
+  if(!p)throw new Error('document workbench API unavailable');
+  const leaves=[...workspace.getLeavesOfType(type)],leaf=leaves.find((candidate)=>candidate.view?.getIcon?.()==='panels-top-left')||null,activeBefore=workspace.getMostRecentLeaf();
+  if(!leaf)throw new Error('visible workbench fixture unavailable');
+  const view=leaf.view,root=view.contentEl,compactBefore=root.classList.contains('is-compact-header'),metadataHiddenBefore=root.classList.contains('is-metadata-hidden');
+  try{
+    root.addClass('is-compact-header');root.removeClass('is-metadata-hidden');await workspace.revealLeaf(leaf);await sleep(60);
+    const body=root.querySelector('.obcc-document-body'),meta=root.querySelector('.obcc-document-meta'),toolbar=root.querySelector('.obcc-document-toolbar'),rootBox=root.getBoundingClientRect(),bodyBox=body?.getBoundingClientRect(),toolbarBox=toolbar?.getBoundingClientRect();
+    const buttons=[...root.querySelectorAll('.obcc-document-mode,.obcc-document-action')].filter((button)=>button.getBoundingClientRect().width>0),rects=buttons.map((button)=>button.getBoundingClientRect());let overlaps=0;
+    for(let i=0;i<rects.length;i+=1)for(let j=i+1;j<rects.length;j+=1)if(Math.min(rects[i].right,rects[j].right)-Math.max(rects[i].left,rects[j].left)>1&&Math.min(rects[i].bottom,rects[j].bottom)-Math.max(rects[i].top,rects[j].top)>1)overlaps+=1;
+    const toolbarScrollable=toolbar&&['auto','scroll'].includes(getComputedStyle(toolbar).overflowX),outOfBounds=toolbarScrollable?0:rects.filter((rect)=>rect.left<rootBox.left-1||rect.right>rootBox.right+1).length;
+    root.addClass('is-metadata-hidden');const metadataHidden=!meta||getComputedStyle(meta).display==='none',bodyTop=Math.round((bodyBox?.top??rootBox.bottom)-rootBox.top),compact=root.classList.contains('is-compact-header');
+    return JSON.stringify({id:'programmatic.document-workbench-layout',elapsedMs:Date.now()-t,afterFirst:leaves.length,afterSecond:workspace.getLeavesOfType(type).length,reused:true,buttons:buttons.length,overlaps,outOfBounds,viewType:view.getViewType(),compact,bodyTop,toolbarHeight:Math.round(toolbarBox?.height??0),rootWidth:Math.round(rootBox.width),metaVisible:Boolean(meta),metadataHidden});
+  }finally{
+    root.toggleClass('is-compact-header',compactBefore);root.toggleClass('is-metadata-hidden',metadataHiddenBefore);
+    if(activeBefore&&workspace.getMostRecentLeaf()!==activeBefore)workspace.setActiveLeaf(activeBefore,{focus:true});
+  }
+})().catch((error)=>JSON.stringify({id:'programmatic.document-workbench-layout',evalError:error instanceof Error?error.message:String(error),stack:error instanceof Error?error.stack:''}))
+'@
+    $item = Invoke-CancipEval -Code $code -TimeoutSeconds 40
+    if ([string]$item.evalError) { throw "document workbench eval failed: $($item.evalError)`n$($item.stack)" }
+    if ([string]$item.viewType -ne 'cancip-document-workbench-view' -or -not $item.reused -or [int]$item.afterSecond -ne [int]$item.afterFirst) { throw "document workbench did not reuse its file leaf: $($item | ConvertTo-Json -Compress -Depth 10)" }
+    if ([int]$item.overlaps -ne 0 -or [int]$item.outOfBounds -ne 0 -or [int]$item.buttons -lt 6) { throw "document workbench controls overlap or overflow: $($item | ConvertTo-Json -Compress -Depth 10)" }
+    if (-not $item.compact -or [int]$item.bodyTop -ge 130 -or [int]$item.toolbarHeight -gt 32 -or -not $item.metaVisible -or -not $item.metadataHidden) { throw "document workbench compact layout or metadata toggle failed: $($item | ConvertTo-Json -Compress -Depth 10)" }
+    Add-CaseResult -Group 'programmaticCases' -Item @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs; buttons = $item.buttons; bodyTop = $item.bodyTop; toolbarHeight = $item.toolbarHeight; rootWidth = $item.rootWidth }
+  } catch {
+    Add-CaseResult -Group 'programmaticCases' -Item @{ id = 'programmatic.document-workbench-layout'; pass = $false; error = $_.Exception.Message }
   }
 }
 
