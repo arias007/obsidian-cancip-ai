@@ -3559,6 +3559,18 @@ details.obcc-process-step-details:not([open]) > :not(summary),
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
 }
 
+.obcc-composer > *,
+.obcc-queue-status,
+.obcc-live-plan,
+.obcc-live-plan-head,
+.obcc-live-plan-list,
+.obcc-live-plan-item {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
 .obcc-attachment-input {
   position: absolute;
   inset: 0;
@@ -3609,7 +3621,8 @@ details.obcc-process-step-details:not([open]) > :not(summary),
   gap: 4px;
   min-width: 0;
   max-width: 100%;
-  margin: -1px 3px 0;
+  margin: -1px 0 0;
+  overflow: hidden;
   color: var(--text-muted);
   font-size: 11px;
   line-height: 1.2;
@@ -3627,6 +3640,7 @@ details.obcc-process-step-details:not([open]) > :not(summary),
   border: 1px solid var(--background-modifier-border);
   border-radius: 7px;
   background: var(--background-secondary);
+  overflow: hidden;
 }
 
 .obcc-live-plan-head,
@@ -3681,6 +3695,7 @@ details.obcc-process-step-details:not([open]) > :not(summary),
 
 .obcc-live-plan-text {
   min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -7697,7 +7712,9 @@ body.is-phone .obcc-review-leaf .obcc-review-detail-rail {
   left: var(--obcc-footer-left, 0px);
   z-index: 2147482500;
   width: auto;
-  max-width: none;
+  max-width: calc(100vw - var(--obcc-footer-left, 0px) - var(--obcc-footer-right, 0px));
+  box-sizing: border-box;
+  overflow-x: hidden;
   padding-bottom: 2px;
 }
 

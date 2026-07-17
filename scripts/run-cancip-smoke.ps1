@@ -579,7 +579,7 @@ if (-not $Case -or 'programmatic.native-file-pins'.Contains($Case)) {
   try {
     $started = Get-Date
     $setup = Invoke-CancipEval -TimeoutSeconds 25 -Code @'
-(async()=>{const p=app.plugins.plugins.cancip;if(!p||typeof p.setFilePinned!=='function')throw new Error('native file pin API missing');const left=app.workspace.leftSplit,leftWasCollapsed=left?.collapsed!==false,emptyLeavesBefore=app.workspace.getLeavesOfType('empty').length;await app.commands.executeCommandById('file-explorer:open');if(left?.collapsed)left.expand();await new Promise(r=>setTimeout(r,320));const rows=()=>Array.from(activeDocument.querySelectorAll('.nav-file-title[data-path],.nav-folder-title[data-path]')).filter(el=>el.getBoundingClientRect().height>0).sort((a,b)=>a.getBoundingClientRect().top-b.getBoundingClientRect().top);const parent=path=>path.includes('/')?path.slice(0,path.lastIndexOf('/')):'';const original=JSON.parse(JSON.stringify(await p.loadFilePinState(true)));window.__cancipPinSmoke={original,leftWasCollapsed,emptyLeavesBefore};const visible=rows().map(el=>el.dataset.path).filter(Boolean);const rootPins=original.folders['']||[];const rootFolder=visible.find(path=>path&&!path.includes('/')&&!rootPins.includes(path)&&app.vault.getAbstractFileByPath(path)?.children);const stack=[app.vault.getRoot()];let mixed=null;while(stack.length&&!mixed){const folder=stack.shift(),children=Array.from(folder.children||[]),folderChildren=children.filter(item=>Array.isArray(item.children)),fileChildren=children.filter(item=>!Array.isArray(item.children));if(folderChildren.length&&fileChildren.length)mixed={parent:folder.path==='/'?'':folder.path,file:fileChildren[0].path,folder:folderChildren[0].path};stack.push(...folderChildren)}const files={};for(const path of visible.filter(path=>!app.vault.getAbstractFileByPath(path)?.children))(files[parent(path)]??=[]).push(path);const selected=Object.entries(files).find(([,paths])=>paths.length>=2);if(!rootFolder||!mixed||!selected)throw new Error('insufficient file explorer or Vault sibling rows');const plan={rootFolder,mixedFile:mixed.file,mixedFolder:mixed.folder,mixedParent:mixed.parent,folder:selected[0],first:selected[1][0],second:selected[1][1]};window.__cancipPinSmoke.plan=plan;return JSON.stringify({id:'programmatic.native-file-pins-setup',plan})})()
+(async()=>{const p=app.plugins.plugins.cancip;if(!p||typeof p.setFilePinned!=='function')throw new Error('native file pin API missing');p.stopFilePinSortMode?.(false);const left=app.workspace.leftSplit,leftWasCollapsed=left?.collapsed!==false,emptyLeavesBefore=app.workspace.getLeavesOfType('empty').length;await app.commands.executeCommandById('file-explorer:open');if(left?.collapsed)left.expand();await new Promise(r=>setTimeout(r,320));const rows=()=>Array.from(activeDocument.querySelectorAll('.nav-file-title[data-path],.nav-folder-title[data-path]')).filter(el=>el.getBoundingClientRect().height>0).sort((a,b)=>a.getBoundingClientRect().top-b.getBoundingClientRect().top);const parent=path=>path.includes('/')?path.slice(0,path.lastIndexOf('/')):'';const original=JSON.parse(JSON.stringify(await p.loadFilePinState(true)));window.__cancipPinSmoke={original,leftWasCollapsed,emptyLeavesBefore};const visible=rows().map(el=>el.dataset.path).filter(Boolean);const rootPins=original.folders['']||[];const rootFolder=visible.find(path=>path&&!path.includes('/')&&!rootPins.includes(path)&&app.vault.getAbstractFileByPath(path)?.children);const stack=[app.vault.getRoot()];let mixed=null;while(stack.length&&!mixed){const folder=stack.shift(),children=Array.from(folder.children||[]),folderChildren=children.filter(item=>Array.isArray(item.children)),fileChildren=children.filter(item=>!Array.isArray(item.children));if(folderChildren.length&&fileChildren.length)mixed={parent:folder.path==='/'?'':folder.path,file:fileChildren[0].path,folder:folderChildren[0].path};stack.push(...folderChildren)}const files={};for(const path of visible.filter(path=>!app.vault.getAbstractFileByPath(path)?.children))(files[parent(path)]??=[]).push(path);const selected=Object.entries(files).find(([,paths])=>paths.length>=2);if(!rootFolder||!mixed||!selected)throw new Error('insufficient file explorer or Vault sibling rows');const plan={rootFolder,mixedFile:mixed.file,mixedFolder:mixed.folder,mixedParent:mixed.parent,folder:selected[0],first:selected[1][0],second:selected[1][1]};window.__cancipPinSmoke.plan=plan;return JSON.stringify({id:'programmatic.native-file-pins-setup',plan})})()
 '@
     $folderResult = Invoke-CancipEval -TimeoutSeconds 35 -Code @'
 (async()=>{const p=app.plugins.plugins.cancip,{rootFolder}=window.__cancipPinSmoke.plan;await p.setFilePinned(rootFolder,true);await new Promise(r=>setTimeout(r,180));const row=Array.from(activeDocument.querySelectorAll('.nav-folder-title[data-path]')).find(el=>el.dataset.path===rootFolder);const pinned=Object.values((await p.loadFilePinState(true)).folders).flat().includes(rootFolder)&&!!row?.querySelector('.obcc-file-pin-indicator');await p.setFilePinned(rootFolder,false);await new Promise(r=>setTimeout(r,180));const unpinned=!Object.values((await p.loadFilePinState(true)).folders).flat().includes(rootFolder)&&!row?.querySelector('.obcc-file-pin-indicator');return JSON.stringify({folderPinSupported:pinned&&unpinned})})()
@@ -588,7 +588,34 @@ if (-not $Case -or 'programmatic.native-file-pins'.Contains($Case)) {
 (async()=>{const p=app.plugins.plugins.cancip,{mixedFile,mixedFolder,mixedParent}=window.__cancipPinSmoke.plan,view=app.workspace.getLeavesOfType('file-explorer')[0]?.view,folderNode=mixedParent?app.vault.getAbstractFileByPath(mixedParent):app.vault.getRoot();await view?.revealInFolder?.(app.vault.getAbstractFileByPath(mixedFile));await p.setFilePinned(mixedFolder,true);await p.setFilePinned(mixedFile,true);await p.setPinnedFileOrder(mixedParent,[mixedFile,mixedFolder]);await new Promise(r=>setTimeout(r,320));const native=Array.from(view?.getSortedFolderItems?.(folderNode)||[]).map(item=>item.file?.path).filter(Boolean),mixedOrderApplied=native[0]===mixedFile&&native[1]===mixedFolder,noStandalonePanel=!activeDocument.querySelector('.obcc-file-pins-panel,.obcc-file-pin-panel-row,.obcc-file-pin-sort-toolbar');await p.setFilePinned(mixedFile,false);await p.setFilePinned(mixedFolder,false);return JSON.stringify({mixedOrderApplied,noStandalonePanel,native:native.slice(0,4)})})()
 '@
     $fileResult = Invoke-CancipEval -TimeoutSeconds 55 -Code @'
-(async()=>{const p=app.plugins.plugins.cancip,{folder,first,second}=window.__cancipPinSmoke.plan,explorer=app.workspace.getLeavesOfType('file-explorer')[0]?.view,folderNode=folder?app.vault.getAbstractFileByPath(folder):app.vault.getRoot(),nativeOrder=()=>Array.from(explorer?.getSortedFolderItems?.(folderNode)||[]).map(item=>item.file?.path).filter(Boolean);const before=nativeOrder();await p.setFilePinned(first,true);await p.setFilePinned(first,false);await new Promise(r=>setTimeout(r,260));const unpinRestoresNative=before.join('|')===nativeOrder().join('|');await p.setFilePinned(first,true);await p.setFilePinned(second,true);await p.setPinnedFileOrder(folder,[second,first]);await new Promise(r=>setTimeout(r,260));const nativePinned=nativeOrder();await p.movePinnedFile(first,-1);const up=(await p.loadFilePinState(true)).folders[folder]||[];await p.movePinnedFile(first,1);const down=(await p.loadFilePinState(true)).folders[folder]||[];await new Promise(r=>setTimeout(r,260));const state=await p.loadFilePinState(true),pinned=state.folders[folder]||[],normalOrderPreserved=before.filter(path=>!pinned.includes(path)).join('|')===nativeOrder().filter(path=>!pinned.includes(path)).join('|');await explorer?.revealInFolder?.(app.vault.getAbstractFileByPath(first));p.scheduleFilePinsApply(0);await new Promise(r=>setTimeout(r,220));const row=Array.from(activeDocument.querySelectorAll('.nav-file-title[data-path]')).find(el=>el.dataset.path===first&&el.getBoundingClientRect().height>0),controls=row?.querySelector('.obcc-file-pin-row-controls'),view=app.workspace.getLeavesOfType('cancip-view')[0]?.view,emptyLeavesStable=app.workspace.getLeavesOfType('empty').length===window.__cancipPinSmoke.emptyLeavesBefore;return JSON.stringify({folder,stateOrder:pinned.slice(0,6),orderApplied:nativePinned[0]===second&&nativePinned[1]===first,normalOrderPreserved,unpinRestoresNative,indicator:!!controls?.querySelector('.obcc-file-pin-indicator'),rowControls:!!controls?.querySelector('.is-up')&&!!controls?.querySelector('.is-down')&&!!controls?.querySelector('.is-unpin'),moveButtonsRoundTrip:up[0]===first&&up[1]===second&&down[0]===second&&down[1]===first,writeNeedsApproval:!!view?.isWriteLikeAction({type:'command',command:'obsidian.files.pin',args:{path:first}}),emptyLeavesStable})})()
+(async()=>{
+  const p=app.plugins.plugins.cancip,{folder,first,second}=window.__cancipPinSmoke.plan;
+  const explorer=app.workspace.getLeavesOfType('file-explorer')[0]?.view;
+  const folderNode=folder?app.vault.getAbstractFileByPath(folder):app.vault.getRoot();
+  const nativeOrder=()=>Array.from(explorer?.getSortedFolderItems?.(folderNode)||[]).map(item=>item.file?.path).filter(Boolean);
+  const waitForOrder=async predicate=>{const deadline=Date.now()+1800;let order=nativeOrder();while(!predicate(order)&&Date.now()<deadline){await new Promise(r=>setTimeout(r,80));order=nativeOrder()}return order};
+  const before=nativeOrder();
+  await p.setFilePinned(first,true);
+  await p.setFilePinned(first,false);
+  const unpinnedOrder=await waitForOrder(order=>before.join('|')===order.join('|'));
+  const unpinRestoresNative=before.join('|')===unpinnedOrder.join('|');
+  await p.setFilePinned(first,true);
+  await p.setFilePinned(second,true);
+  await p.setPinnedFileOrder(folder,[second,first]);
+  const nativePinned=await waitForOrder(order=>order[0]===second&&order[1]===first);
+  await p.movePinnedFile(first,-1);
+  const up=(await p.loadFilePinState(true)).folders[folder]||[];
+  await p.movePinnedFile(first,1);
+  const down=(await p.loadFilePinState(true)).folders[folder]||[];
+  const state=await p.loadFilePinState(true),pinned=state.folders[folder]||[];
+  const normalNative=await waitForOrder(order=>before.filter(path=>!pinned.includes(path)).join('|')===order.filter(path=>!pinned.includes(path)).join('|'));
+  const normalOrderPreserved=before.filter(path=>!pinned.includes(path)).join('|')===normalNative.filter(path=>!pinned.includes(path)).join('|');
+  await explorer?.revealInFolder?.(app.vault.getAbstractFileByPath(first));
+  p.scheduleFilePinsApply(0);
+  await new Promise(r=>setTimeout(r,220));
+  const row=Array.from(activeDocument.querySelectorAll('.nav-file-title[data-path]')).find(el=>el.dataset.path===first&&el.getBoundingClientRect().height>0),controls=row?.querySelector('.obcc-file-pin-row-controls'),view=app.workspace.getLeavesOfType('cancip-view')[0]?.view,emptyLeavesStable=app.workspace.getLeavesOfType('empty').length===window.__cancipPinSmoke.emptyLeavesBefore;
+  return JSON.stringify({folder,stateOrder:pinned.slice(0,6),orderApplied:nativePinned[0]===second&&nativePinned[1]===first,normalOrderPreserved,unpinRestoresNative,indicator:!!controls?.querySelector('.obcc-file-pin-indicator'),rowControls:!!controls?.querySelector('.is-up')&&!!controls?.querySelector('.is-down')&&!!controls?.querySelector('.is-unpin'),moveButtonsRoundTrip:up[0]===first&&up[1]===second&&down[0]===second&&down[1]===first,writeNeedsApproval:!!view?.isWriteLikeAction({type:'command',command:'obsidian.files.pin',args:{path:first}}),emptyLeavesStable,nativePinned:nativePinned.slice(0,6)});
+})()
 '@
     $migrationResult = Invoke-CancipEval -TimeoutSeconds 45 -Code @'
 (async()=>{const p=app.plugins.plugins.cancip,{folder,first}=window.__cancipPinSmoke.plan;const state=await p.loadFilePinState(true),index=(state.folders[folder]||[]).indexOf(first),extension=first.includes('.')?first.slice(first.lastIndexOf('.')):'',prefix=folder?folder+'/':'',renamed=prefix+'__cancip-pin-rename-smoke'+extension;await p.migrateRenamedFilePins(first,renamed);const renameKeepsIndex=((await p.loadFilePinState(true)).folders[folder]||[]).indexOf(renamed)===index;const movedFolder=prefix+'__cancip-pin-move-smoke',moved=movedFolder+'/'+renamed.split('/').pop();await p.migrateRenamedFilePins(renamed,moved);const movedPresent=((await p.loadFilePinState(true)).folders[movedFolder]||[]).includes(moved);await p.removeDeletedFilePins(movedFolder);const deleteClears=!Object.values((await p.loadFilePinState(true)).folders).flat().includes(moved);return JSON.stringify({renameKeepsIndex,movedPresent,deleteClears})})()
@@ -1128,10 +1155,10 @@ if (-not $Case -or 'programmatic.automation-vault-curation-template'.Contains($C
     prompt:promptInfo&&promptInfo.prompt,
     hasRouteKinds:Boolean(promptInfo&&Object.prototype.hasOwnProperty.call(promptInfo,'routeKinds')),
     hasCuration:/auto-vault-curation/.test(templatesText),
-    hasNewOnly:/newly created Markdown files once/.test(templatesText),
-    hasOldSkill:/specified-scope curation Skill/.test(templatesText),
-    hasCurationActions:/beautif|refactor/.test(templatesText)&&/properties\/tags\/summaries\/links/.test(templatesText)&&/renam/.test(templatesText),
-    hasBenefitGate:/benefit gate/i.test(templatesText)&&/frequently referenced notes/i.test(templatesText)&&/protected/i.test(templatesText),
+    hasNewOnly:/newly created Markdown files once|新建 Markdown 文件执行一次/.test(templatesText),
+    hasOldSkill:/specified-scope curation Skill|指定范围整理 Skill/.test(templatesText),
+    hasCurationActions:/(beautif|refactor|美化|重构)/.test(templatesText)&&/(properties|tags|summaries|links|属性|标签|摘要|链接)/.test(templatesText)&&/(renam|重命名)/.test(templatesText),
+    hasBenefitGate:/(benefit gate|收益门)/i.test(templatesText)&&/(frequently referenced notes|高频引用笔记)/i.test(templatesText)&&/(protected|受保护)/i.test(templatesText),
     hasDeprecated:/auto-vault-content-beautify|auto-vault-auto-tags|auto-vault-file-summaries/.test(templatesText),
     hasMechanicalSettings:['specialistRoutingEnabled','mechanicalTaskApiProfileId','mechanicalTaskModel','mechanicalTaskRoutes'].some((key)=>Object.prototype.hasOwnProperty.call(settings,key))
   });
@@ -1628,30 +1655,50 @@ if (-not $Case -or 'programmatic.process-record-live-open-final-collapsed'.Conta
   const oldMessages=(v.messages||[]).slice();
   const oldActive=v.activeRequest;
   const oldDetails=v.detailsOpenState instanceof Map?new Map(v.detailsOpenState):null;
+  const oldUserDetails=v.userDetailsOpenState instanceof Map?new Map(v.userDetailsOpenState):null;
   try{
     const progress='<!-- cancip-progress-step -->\\n<!-- cancip-process-message -->\\n已执行 · 正在读取文件...';
-    v.messages=[{id:'smoke-process-live',role:'assistant',createdAt:Date.now(),content:progress}];
+    const user={id:'smoke-process-user',role:'user',createdAt:Date.now()-2000,content:'检查当前文件'};
+    v.messages=[user,{id:'smoke-process-live',role:'assistant',createdAt:Date.now(),content:progress}];
     v.activeRequest={};
     if(v.detailsOpenState instanceof Map)v.detailsOpenState.clear();
+    if(v.userDetailsOpenState instanceof Map)v.userDetailsOpenState.clear();
     v.renderMessages();
     const liveOpen=!!v.messagesEl?.querySelector('.obcc-process-record-details')?.open;
     const liveDetailsCount=v.messagesEl?.querySelectorAll('.is-process-record details').length||0;
     const nestedStepDetails=v.messagesEl?.querySelectorAll('.obcc-process-step details').length||0;
     v.messages=[
+      user,
       {id:'smoke-process-live',role:'assistant',createdAt:Date.now()-1000,content:progress},
       {id:'smoke-process-final',role:'assistant',createdAt:Date.now(),content:__PROCESS_FINAL_CONTENT__}
     ];
     v.activeRequest=null;
-    if(v.detailsOpenState instanceof Map)v.detailsOpenState.set('process-record:smoke-process-live',true);
     v.renderMessages();
-    const finalOpen=!!v.messagesEl?.querySelector('.obcc-process-record-details')?.open;
+    const autoFinalOpen=!!v.messagesEl?.querySelector('.obcc-process-record-details')?.open;
     const finalAnswer=v.messagesEl?.querySelector('.obcc-message.is-final-answer');
     const finalRole=finalAnswer?.querySelector('.obcc-role')?.textContent||'';
-    return JSON.stringify({id:'programmatic.process-record-live-open-final-collapsed',elapsedMs:Date.now()-t,liveOpen,finalOpen,liveDetailsCount,nestedStepDetails,hasFinalAnswer:!!finalAnswer,finalRole});
+    v.messages=[user,{id:'smoke-process-live',role:'assistant',createdAt:Date.now(),content:progress}];
+    v.activeRequest={};
+    if(v.detailsOpenState instanceof Map)v.detailsOpenState.clear();
+    if(v.userDetailsOpenState instanceof Map)v.userDetailsOpenState.clear();
+    v.renderMessages();
+    const manualSummary=v.messagesEl?.querySelector('.obcc-process-record-details > summary');
+    manualSummary?.click();
+    manualSummary?.click();
+    const manuallyOpen=!!v.messagesEl?.querySelector('.obcc-process-record-details')?.open;
+    v.messages=[user,{id:'smoke-process-live',role:'assistant',createdAt:Date.now()-1000,content:progress},{id:'smoke-process-live-2',role:'assistant',createdAt:Date.now(),content:progress.replace('读取文件','核对结果')}];
+    v.renderMessages();
+    const rerenderOpen=!!v.messagesEl?.querySelector('.obcc-process-record-details')?.open;
+    v.messages=[...v.messages,{id:'smoke-process-final-2',role:'assistant',createdAt:Date.now()+1000,content:__PROCESS_FINAL_CONTENT__}];
+    v.activeRequest=null;
+    v.renderMessages();
+    const userFinalOpen=!!v.messagesEl?.querySelector('.obcc-process-record-details')?.open;
+    return JSON.stringify({id:'programmatic.process-record-live-open-final-collapsed',elapsedMs:Date.now()-t,liveOpen,autoFinalOpen,manuallyOpen,rerenderOpen,userFinalOpen,liveDetailsCount,nestedStepDetails,hasFinalAnswer:!!finalAnswer,finalRole});
   } finally {
     v.messages=oldMessages;
     v.activeRequest=oldActive;
     if(oldDetails)v.detailsOpenState=oldDetails;
+    if(oldUserDetails)v.userDetailsOpenState=oldUserDetails;
     if(typeof v.renderMessages==='function')v.renderMessages();
   }
 })()
@@ -1660,7 +1707,8 @@ if (-not $Case -or 'programmatic.process-record-live-open-final-collapsed'.Conta
     $item = Invoke-CancipEval -Code $code -TimeoutSeconds 45
     if (-not $item.liveOpen) { throw "live process record did not open one level: $($item | ConvertTo-Json -Compress)" }
     if ([int]$item.liveDetailsCount -ne 1 -or [int]$item.nestedStepDetails -ne 0) { throw "process record contains nested folds: $($item | ConvertTo-Json -Compress)" }
-    if ($item.finalOpen) { throw "process record did not auto-collapse after final answer: $($item | ConvertTo-Json -Compress)" }
+    if ($item.autoFinalOpen) { throw "untouched process record did not auto-collapse after final answer: $($item | ConvertTo-Json -Compress)" }
+    if (-not $item.manuallyOpen -or -not $item.rerenderOpen -or -not $item.userFinalOpen) { throw "manual process expansion was lost during streaming/final render: $($item | ConvertTo-Json -Compress)" }
     if (-not $item.hasFinalAnswer -or [string]$item.finalRole -ne 'Cancip') { throw "final answer was not separated and labeled Cancip: $($item | ConvertTo-Json -Compress)" }
     Add-CaseResult -Group 'programmaticCases' -Item @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs }
   } catch {
@@ -1672,12 +1720,12 @@ if (Should-RunProgrammaticCase 'programmatic.process-detail-deferred-dom') {
   try {
     $started = Get-Date
     $setupCode = @'
-(()=>{try{const v=app.workspace.getLeavesOfType('cancip-view').map((leaf)=>leaf.view).find((view)=>view?.messagesEl?.isConnected);if(!v)throw new Error('rendered Cancip view unavailable');const sent='SENT-RAW-'+('s'.repeat(1800)),received='RECEIVED-RAW-'+('r'.repeat(1600)),content=['<!-- cancip-progress-step -->','<!-- cancip-process-message -->','已执行 · 过程审计','','## Raw Sent requestBody',sent,'','## Raw Received responseText',received].join('\n');window.__cancipProcessSmoke={v,oldMessages:(v.messages||[]).slice(),oldActive:v.activeRequest,oldDetails:v.detailsOpenState instanceof Map?new Map(v.detailsOpenState):null,sent,received};v.messages=[{id:'smoke-process-deferred',role:'assistant',createdAt:Date.now(),content}];v.activeRequest=null;if(v.detailsOpenState instanceof Map)v.detailsOpenState.clear();v.renderMessages();const details=v.messagesEl?.querySelector('.obcc-process-record-details');if(!details)throw new Error('process details unavailable');window.__cancipProcessSmoke.details=details;const raw=Array.from(details.querySelectorAll('.obcc-process-detail-raw code')).map((el)=>el.textContent||'').join('');return JSON.stringify({collapsedChars:raw.length,collapsedNodes:details.querySelectorAll('.obcc-process-detail-raw').length,fields:details.querySelectorAll('details.obcc-process-detail-field').length})}catch(error){return JSON.stringify({error:String(error?.stack||error)})}})()
+(()=>{try{const v=app.workspace.getLeavesOfType('cancip-view').map((leaf)=>leaf.view).find((view)=>view?.messagesEl?.isConnected);if(!v)throw new Error('rendered Cancip view unavailable');const sent='SENT-RAW-'+('s'.repeat(1800)),received='RECEIVED-RAW-'+('r'.repeat(1600)),content=['<!-- cancip-progress-step -->','<!-- cancip-process-message -->','已执行 · 过程审计','','## Raw Sent requestBody',sent,'','## Sent System / Instructions','DUPLICATE-SENT-SPLIT','','## Raw Received responseText',received,'','## Visible Answer after Filtering','DUPLICATE-VISIBLE-ANSWER'].join('\n');window.__cancipProcessSmoke={v,oldMessages:(v.messages||[]).slice(),oldActive:v.activeRequest,oldDetails:v.detailsOpenState instanceof Map?new Map(v.detailsOpenState):null,oldUserDetails:v.userDetailsOpenState instanceof Map?new Map(v.userDetailsOpenState):null,sent,received};v.messages=[{id:'smoke-process-user',role:'user',createdAt:Date.now()-1000,content:'过程详情精简测试'},{id:'smoke-process-deferred',role:'assistant',createdAt:Date.now(),content}];v.activeRequest=null;if(v.detailsOpenState instanceof Map)v.detailsOpenState.clear();if(v.userDetailsOpenState instanceof Map)v.userDetailsOpenState.clear();v.renderMessages();const details=v.messagesEl?.querySelector('.obcc-process-record-details');if(!details)throw new Error('process details unavailable');window.__cancipProcessSmoke.details=details;const raw=Array.from(details.querySelectorAll('.obcc-process-detail-raw code')).map((el)=>el.textContent||'').join('');return JSON.stringify({collapsedChars:raw.length,collapsedNodes:details.querySelectorAll('.obcc-process-detail-raw').length,fields:details.querySelectorAll('details.obcc-process-detail-field').length})}catch(error){return JSON.stringify({error:String(error?.stack||error)})}})()
 '@
     $expandCode = @'
 (()=>{try{const state=window.__cancipProcessSmoke,details=state?.details;if(!state||!details)throw new Error('process smoke state unavailable');const Win=details.ownerDocument.defaultView,rawText=()=>Array.from(details.querySelectorAll('.obcc-process-detail-raw code')).map((el)=>el.textContent||'').join(''),rawNodes=()=>details.querySelectorAll('.obcc-process-detail-raw').length;details.open=true;details.dispatchEvent(new Win.Event('toggle'));const stepBodiesVisible=Array.from(details.querySelectorAll('.obcc-process-step-detail-body')).every((el)=>Win.getComputedStyle(el).display!=='none'),outerOnlyChars=rawText().length,fields=Array.from(details.querySelectorAll('details.obcc-process-detail-field'));for(const field of fields){field.open=true;field.dispatchEvent(new Win.Event('toggle'))}const expandedText=rawText(),expandedSent=details.querySelector('.obcc-process-detail-group.is-sent .obcc-process-detail-raw code')?.textContent||'',expandedReceived=details.querySelector('.obcc-process-detail-group.is-received .obcc-process-detail-raw code')?.textContent||'',expandedNodes=rawNodes();details.open=false;details.dispatchEvent(new Win.Event('toggle'));details.open=true;details.dispatchEvent(new Win.Event('toggle'));const reopenedText=rawText(),reopenedNodes=rawNodes(),localizedTitles=fields.map((field)=>String(field.querySelector(':scope > summary.obcc-process-detail-field-title')?.textContent||'').trim());return JSON.stringify({stepBodiesVisible,outerOnlyChars,fieldsExpandable:fields.length>=2&&fields.every((field)=>field.querySelector(':scope > summary.obcc-process-detail-field-title')),expandedChars:expandedText.length,expandedNodes,reopenedNodes,exact:expandedSent===state.sent&&expandedReceived===state.received,stable:reopenedText===expandedText,localizedTitles})}catch(error){return JSON.stringify({error:String(error?.stack||error)})}})()
 '@
-    $cleanupCode = "(()=>{const state=window.__cancipProcessSmoke;if(state){state.v.messages=state.oldMessages;state.v.activeRequest=state.oldActive;if(state.oldDetails)state.v.detailsOpenState=state.oldDetails;state.v.renderMessages();delete window.__cancipProcessSmoke}return JSON.stringify({ok:true})})()"
+    $cleanupCode = "(()=>{const state=window.__cancipProcessSmoke;if(state){state.v.messages=state.oldMessages;state.v.activeRequest=state.oldActive;if(state.oldDetails)state.v.detailsOpenState=state.oldDetails;if(state.oldUserDetails)state.v.userDetailsOpenState=state.oldUserDetails;state.v.renderMessages();delete window.__cancipProcessSmoke}return JSON.stringify({ok:true})})()"
     $setup = Invoke-CancipEval -Code (ConvertTo-CancipEvalBootstrap -Code $setupCode) -TimeoutSeconds 20
     if ($setup.error) { throw "process detail setup failed: $($setup.error)" }
     try {
@@ -1686,12 +1734,12 @@ if (Should-RunProgrammaticCase 'programmatic.process-detail-deferred-dom') {
       try { Invoke-CancipEval -Code $cleanupCode -TimeoutSeconds 20 | Out-Null } catch { Write-Host "Process detail cleanup warning: $($_.Exception.Message)" }
     }
     if ($item.error) { throw "process detail expansion failed: $($item.error)" }
-    if ([int]$setup.collapsedChars -ne 0 -or [int]$setup.collapsedNodes -lt 2) { throw "collapsed process detail eagerly rendered raw text: $($setup | ConvertTo-Json -Compress)" }
+    if ([int]$setup.collapsedChars -ne 0 -or [int]$setup.collapsedNodes -ne 2 -or [int]$setup.fields -ne 2) { throw "process details were not reduced to two deferred raw groups: $($setup | ConvertTo-Json -Compress)" }
     if (-not $item.stepBodiesVisible) { throw "expanded process classification body is hidden by CSS: $($item | ConvertTo-Json -Compress)" }
     if ([int]$item.outerOnlyChars -ne 0 -or -not $item.fieldsExpandable) { throw "process raw fields are not independently expandable/deferred: $($item | ConvertTo-Json -Compress)" }
     if (-not $item.exact -or [int]$item.expandedChars -lt 3400) { throw "expanded process detail did not preserve exact raw fields: $($item | ConvertTo-Json -Compress)" }
     if (-not $item.stable -or [int]$item.reopenedNodes -ne [int]$item.expandedNodes) { throw "process detail duplicated DOM after reopening: $($item | ConvertTo-Json -Compress)" }
-    if (@($item.localizedTitles).Count -lt 2) { throw "process detail classification titles missing: $($item | ConvertTo-Json -Compress)" }
+    if (@($item.localizedTitles).Count -ne 2 -or -not (@($item.localizedTitles) -contains '发送原文') -or -not (@($item.localizedTitles) -contains '接收原文')) { throw "process detail classification titles are not compact/localized: $($item | ConvertTo-Json -Compress)" }
     Add-CaseResult -Group 'programmaticCases' -Item @{ id = 'programmatic.process-detail-deferred-dom'; pass = $true; elapsedMs = [int]((Get-Date) - $started).TotalMilliseconds; deferredChars = $item.expandedChars }
   } catch {
     Add-CaseResult -Group 'programmaticCases' -Item @{ id = 'programmatic.process-detail-deferred-dom'; pass = $false; error = $_.Exception.Message }
@@ -1743,6 +1791,53 @@ if (Should-RunProgrammaticCase 'programmatic.live-process-timer-actual-audit') {
   }
 }
 
+if (Should-RunProgrammaticCase 'programmatic.default-assets-persistent-localized') {
+  try {
+    $started = Get-Date
+    $code = @'
+(async()=>{
+  const p=app.plugins.plugins.cancip;
+  if(!p)throw new Error('Cancip unavailable');
+  const old={load:p.loadAutomations,save:p.saveAutomations,choices:p.automationSessionChoices,language:p.settings.language,dismissed:p.dismissedAutomationTemplateIds};
+  let saved=[];
+  const now=new Date().toISOString(),base={schedule:'daily',enabled:false,intervalMinutes:60,hour:3,minute:7,sessionMode:'current',watchNewFiles:false,newFileDebounceSeconds:45,notifyMode:'never',createdAt:now,updatedAt:now};
+  const custom={...base,id:'auto-cancip-memory-dream',title:'My permanent title',prompt:'My permanent prompt'};
+  const legacy={...base,id:'auto-local-version-daily',title:'Daily local version commit',prompt:'',command:'cancip.localVersionCommit'};
+  try{
+    const translatedLanguages=['zh-TW','ug','tr','ru','ja','ko','es','fr','de','ar'];
+    const translated=translatedLanguages.map((language)=>{p.settings.language=language;return [p.t('processSentRaw'),p.t('settingsGroupAutocomplete'),p.t('automationScheduleDaily')]});
+    const multilingualLabels=translated.every(([sent,autocomplete,daily])=>sent!=='Original sent content'&&autocomplete!=='Autocomplete'&&daily!=='Daily');
+    p.settings.language='zh';
+    p.dismissedAutomationTemplateIds=new Set(['auto-personalized-greeting-refresh']);
+    p.loadAutomations=async()=>[custom,legacy];
+    p.saveAutomations=async(tasks)=>{saved=tasks};
+    p.automationSessionChoices=async()=>[];
+    await p.ensureDefaultDailyAutomations();
+    const preserved=saved.find((task)=>task.id===custom.id),localizedLegacy=saved.find((task)=>task.id===legacy.id),diary=saved.find((task)=>task.id==='auto-personalized-diary-assist'),greeting=saved.find((task)=>task.id==='auto-personalized-greeting-refresh');
+    return JSON.stringify({
+      id:'programmatic.default-assets-persistent-localized',
+      permanentEdit:preserved?.title===custom.title&&preserved?.prompt===custom.prompt&&preserved?.enabled===false,
+      legacyLocalized:localizedLegacy?.title==='每日本地版本快照',
+      builtInDiary:!!diary&&diary.title==='个性化日记辅助写作'&&diary.prompt.includes('找到今天的日记笔记'),
+      dismissedStaysRemoved:!greeting,
+      localizedDefaults:saved.filter((task)=>task.id!=='auto-cancip-memory-dream').every((task)=>/[\u4e00-\u9fff]/.test(task.title)),
+      multilingualLabels
+    });
+  }finally{
+    p.loadAutomations=old.load;p.saveAutomations=old.save;p.automationSessionChoices=old.choices;p.settings.language=old.language;p.dismissedAutomationTemplateIds=old.dismissed;
+  }
+})()
+'@
+    $item = Invoke-CancipEval -Code (ConvertTo-CancipEvalBootstrap -Code $code) -TimeoutSeconds 25
+    foreach ($field in @('permanentEdit','legacyLocalized','builtInDiary','dismissedStaysRemoved','localizedDefaults','multilingualLabels')) {
+      if (-not [bool]$item.$field) { throw "default asset persistence/localization failed: $field; $($item | ConvertTo-Json -Compress -Depth 8)" }
+    }
+    Add-CaseResult -Group 'programmaticCases' -Item @{ id = $item.id; pass = $true; elapsedMs = [int]((Get-Date) - $started).TotalMilliseconds }
+  } catch {
+    Add-CaseResult -Group 'programmaticCases' -Item @{ id = 'programmatic.default-assets-persistent-localized'; pass = $false; error = $_.Exception.Message }
+  }
+}
+
 if (Should-RunProgrammaticCase 'programmatic.interaction-regression-controls') {
   try {
     $started = Get-Date
@@ -1762,7 +1857,11 @@ if (Should-RunProgrammaticCase 'programmatic.interaction-regression-controls') {
     $automation = Invoke-CancipEval -TimeoutSeconds 20 -Code @'
 (()=>{try{const p=app.plugins.plugins.cancip,settings=p?.settingTab,root=activeDocument.createElement('div');if(!p||!settings)throw new Error('settings unavailable');try{activeDocument.body.append(root);const task={id:'smoke-auto',title:'Cancip 日记整理',prompt:'整理今日 Cancip 日记',schedule:'daily',enabled:true,intervalMinutes:60,hour:9,minute:0,sessionMode:'session',sessionId:'session-cancip',watchNewFiles:false,newFileDebounceSeconds:8,notifyMode:'inherit',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()},choices=[{id:'session-trade',title:'MT5 交易复盘',updatedAt:'2026-07-16T08:00:00.000Z',archived:false},{id:'session-cancip',title:'Cancip 日记功能开发',updatedAt:'2026-07-15T08:00:00.000Z',archived:false}];settings.renderAutomationTaskCard(root,task,choices);const card=root.querySelector('details.obcc-automation-card');return JSON.stringify({automationCollapsed:!!card&&!card.open&&!!card.querySelector(':scope > summary.obcc-automation-card-summary'),automationMatched:p.recommendedAutomationSession(task,choices)?.id==='session-cancip'})}finally{root.remove()}}catch(error){return JSON.stringify({error:String(error?.stack||error)})}})()
 '@
-    foreach ($stage in @($navigation, $tts, $highlight, $automation)) {
+    Write-Host 'interaction stage: mobile-first-touch'
+    $mobileTouch = Invoke-CancipEval -TimeoutSeconds 20 -Code @'
+(()=>{try{const v=app.workspace.getLeavesOfType('cancip-view').map((leaf)=>leaf.view).find((view)=>view?.inputEl?.isConnected);if(!v)throw new Error('rendered Cancip view unavailable');const doc=v.containerEl.ownerDocument,body=doc.body,hadMobile=body.classList.contains('is-mobile'),button=v.contentEl.createEl('button',{cls:'obcc-composer-suggestion',attr:{type:'button'}}),PointerCtor=doc.defaultView.PointerEvent||doc.defaultView.MouseEvent;let calls=0;try{body.classList.add('is-mobile');button.addEventListener('click',()=>{calls+=1});const down=new PointerCtor('pointerdown',{bubbles:true,cancelable:true,button:0,pointerType:'touch',isPrimary:true});const firstCanceled=!button.dispatchEvent(down);button.dispatchEvent(new doc.defaultView.MouseEvent('click',{bubbles:true,cancelable:true,button:0}));return JSON.stringify({mobileFirstTouch:calls===1&&firstCanceled,calls,firstCanceled})}finally{button.remove();if(!hadMobile)body.classList.remove('is-mobile')}}catch(error){return JSON.stringify({error:String(error?.stack||error)})}})()
+'@
+    foreach ($stage in @($navigation, $tts, $highlight, $automation, $mobileTouch)) {
       if ($stage.error) { throw "interaction stage failed: $($stage.error)" }
     }
     $item = [pscustomobject]@{
@@ -1773,8 +1872,9 @@ if (Should-RunProgrammaticCase 'programmatic.interaction-regression-controls') {
       highlightCentered = $highlight.highlightCentered
       automationCollapsed = $automation.automationCollapsed
       automationMatched = $automation.automationMatched
+      mobileFirstTouch = $mobileTouch.mobileFirstTouch
     }
-    foreach ($field in @('previousPromptSequence','sessionTtsNoFlash','highlightCentered','automationCollapsed','automationMatched')) {
+    foreach ($field in @('previousPromptSequence','sessionTtsNoFlash','highlightCentered','automationCollapsed','automationMatched','mobileFirstTouch')) {
       if (-not [bool]$item.$field) { throw "interaction regression check failed: $field; $($item | ConvertTo-Json -Compress -Depth 8)" }
     }
     Add-CaseResult -Group 'programmaticCases' -Item @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs }
@@ -1786,11 +1886,21 @@ if (Should-RunProgrammaticCase 'programmatic.interaction-regression-controls') {
 if (Should-RunProgrammaticCase 'programmatic.context-editor-settings') {
   try {
     $started = Get-Date
+    $focusGuardCode = @'
+(async()=>{const previousActiveLeaf=app.workspace.activeLeaf??null,targetLeaf=app.workspace.getLeavesOfType('cancip-view').find((leaf)=>leaf.view?.inputEl?.isConnected)??app.workspace.getLeavesOfType('cancip-view')[0]??null;window.__contextEditorSettingsFocusSmoke={previousActiveLeaf,targetLeaf};activeDocument.activeElement?.blur?.();if(targetLeaf&&targetLeaf!==previousActiveLeaf)await app.workspace.setActiveLeaf(targetLeaf,{focus:true});await new Promise((resolve)=>setTimeout(resolve,650));return JSON.stringify({ok:true})})()
+'@
+    $focusRestoreCode = @'
+(async()=>{const s=window.__contextEditorSettingsFocusSmoke;delete window.__contextEditorSettingsFocusSmoke;if(s?.previousActiveLeaf&&s.previousActiveLeaf!==s.targetLeaf)await app.workspace.setActiveLeaf(s.previousActiveLeaf,{focus:false});return JSON.stringify({ok:true})})()
+'@
+    $focusGuard = Invoke-CancipEval -Code (ConvertTo-CancipEvalBootstrap -Code $focusGuardCode) -TimeoutSeconds 20
     $editorCode = @'
 (async()=>{const p=app.plugins.plugins.cancip,v=app.workspace.getLeavesOfType('cancip-view')[0]?.view;if(!p||!v)throw new Error('runtime unavailable');const now=new Date(),profile=p.activeApiProfile(),old={cache:p.personalizationCache,editorCache:p.editorAutocompleteCache,lastModel:p.editorAutocompleteLastModelAt,modelBusy:p.editorAutocompleteModelBusy,generate:p.generateEditorAutocompleteSuffix,chatLeaves:p.chatLeaves,apiUrl:profile.apiUrl,apiKey:profile.apiKey,model:profile.model,enabled:p.settings.composerAutocompleteEnabled,autocompleteProfile:p.settings.composerAutocompleteApiProfileId};let routedProfile='',spinnerDuring=false;try{p.settings.composerAutocompleteEnabled=true;p.settings.composerAutocompleteApiProfileId='';p.personalizationCache={schemaVersion:3,updatedAt:now.toISOString(),timeKey:'smoke',greeting:'test',greetings:[{text:'test',choices:[]}],friendlyName:'',weather:null,inferredWeatherLocation:'',diary:'',autocomplete:['继续优化Cancip并核对结果'],sourcePaths:[]};const local=p.editorLocalAutocompleteSuffix('继续优');p.personalizationCache={...p.personalizationCache,autocomplete:[]};p.editorAutocompleteCache=new Map();p.editorAutocompleteLastModelAt=0;p.editorAutocompleteModelBusy=false;profile.apiUrl='https://smoke.invalid/v1';profile.apiKey='smoke';profile.model='smoke-model';p.chatLeaves=()=>[];p.generateEditorAutocompleteSuffix=async(_prefix,_context,_path,routed)=>{routedProfile=routed?.id||'';spinnerDuring=!!p.statusBarEl?.classList.contains('is-editor-autocomplete-running')&&!!p.statusBarEl?.querySelector('.obcc-statusbar-icon-glyph svg');return JSON.stringify({suffix:'完成并核对结果'})};const before=[];app.workspace.iterateAllLeaves(x=>before.push(x));const model=await p.editorAutocompleteSuffix('今天继续','今天继续处理 Cancip 的编辑器补全','测试.md');const after=[];app.workspace.iterateAllLeaves(x=>after.push(x));const spinnerStopped=!p.statusBarEl?.classList.contains('is-editor-autocomplete-running'),extension=app.workspace.editorExtensions.some(x=>Array.isArray(x)&&x.length===3&&Array.isArray(x[2]?.value)&&x[2].value.some(binding=>binding?.key==='Tab'&&typeof binding.run==='function'));return JSON.stringify({editorLocal:local==='化Cancip并核对结果',editorModel:model==='完成并核对结果'&&before.length===after.length&&routedProfile===profile.id,editorWithoutChatLeaf:model==='完成并核对结果',editorSpinner:spinnerDuring&&spinnerStopped,editorExtension:extension})}finally{p.personalizationCache=old.cache;p.editorAutocompleteCache=old.editorCache;p.editorAutocompleteLastModelAt=old.lastModel;p.editorAutocompleteModelBusy=old.modelBusy;p.generateEditorAutocompleteSuffix=old.generate;p.chatLeaves=old.chatLeaves;profile.apiUrl=old.apiUrl;profile.apiKey=old.apiKey;profile.model=old.model;p.settings.composerAutocompleteEnabled=old.enabled;p.settings.composerAutocompleteApiProfileId=old.autocompleteProfile}})()
 '@
     $autocompleteModelCode = @'
 (async()=>{const p=app.plugins.plugins.cancip,v=app.workspace.getLeavesOfType('cancip-view')[0]?.view;if(!p||!v)throw new Error('runtime unavailable');const old={profiles:p.settings.apiProfiles,active:p.settings.activeApiProfileId,selected:p.settings.composerAutocompleteApiProfileId,enabled:p.settings.composerAutocompleteEnabled,save:p.saveSettings,editorCache:p.editorAutocompleteCache,generation:p.editorAutocompleteGeneration,signature:p.autocompleteProfileStateSignature,viewCache:v.autocompleteCache,requestId:v.autocompleteRequestId};const primary={id:'smoke-current',name:'当前配置',apiUrl:'https://smoke.invalid/v1',apiKey:'current-key',apiMode:'compatible',model:'smoke-current-model'},selected={id:'smoke-autocomplete',name:'补全专用',apiUrl:'https://smoke.invalid/v1',apiKey:'autocomplete-key',apiMode:'compatible',model:'smoke-autocomplete-model'};try{p.settings.apiProfiles=[primary,selected];p.settings.activeApiProfileId=primary.id;p.settings.composerAutocompleteApiProfileId='';p.settings.composerAutocompleteEnabled=false;p.editorAutocompleteCache=new Map([['stale','value']]);v.autocompleteCache=new Map([['stale',{suffix:'旧补全',choices:[]}]]);p.saveSettings=async()=>{};await p.selectAutocompleteApiProfile(selected.id);const routed=p.autocompleteApiProfile(),options=p.autocompleteApiProfileOptions(),selectedRoute=routed.id===selected.id&&routed.model===selected.model,selectionStored=p.settings.composerAutocompleteApiProfileId===selected.id,cacheInvalidated=p.editorAutocompleteCache.size===0&&v.autocompleteCache.size===0&&v.autocompleteRequestId>old.requestId,optionLabels=options.some(option=>option.value===''&&option.label.includes('跟随当前模型'))&&options.some(option=>option.value===selected.id&&option.label.includes(selected.model)&&option.label.includes(selected.name));selected.apiKey='';const missingCredentialFallback=p.autocompleteApiProfile().id===primary.id;p.settings.composerAutocompleteApiProfileId='missing-profile';const missingProfileFallback=p.autocompleteApiProfile().id===primary.id;return JSON.stringify({selectedRoute,selectionStored,cacheInvalidated,optionLabels,missingCredentialFallback,missingProfileFallback})}finally{p.settings.apiProfiles=old.profiles;p.settings.activeApiProfileId=old.active;p.settings.composerAutocompleteApiProfileId=old.selected;p.settings.composerAutocompleteEnabled=old.enabled;p.saveSettings=old.save;p.editorAutocompleteCache=old.editorCache;p.editorAutocompleteGeneration=old.generation;p.autocompleteProfileStateSignature=old.signature;v.autocompleteCache=old.viewCache;v.autocompleteRequestId=old.requestId}})()
+'@
+    $editorTreeCode = @'
+(async()=>{const p=app.plugins.plugins.cancip;if(!p)throw new Error('runtime unavailable');const h=Object.create(p),profile={...p.activeApiProfile(),id:'tree-smoke-profile',name:'tree smoke',apiUrl:'https://smoke.invalid/v1',apiKey:'smoke',model:'smoke-model'};h.settings={...p.settings,apiProfiles:[profile],activeApiProfileId:profile.id,composerAutocompleteApiProfileId:'',composerAutocompleteEnabled:true};h.personalizationCache=null;h.editorAutocompleteCache=new Map();h.editorAutocompleteBranchCache=new Map();h.editorAutocompleteModelBusy=false;h.editorAutocompleteLastModelAt=0;h.editorAutocompleteGeneration=0;h.editorLocalAutocompleteSuffix=()=>'';h.beginEditorAutocompleteActivity=()=>()=>{};let calls=0;h.generateEditorAutocompleteSuffix=async(_prefix,_context,path,_profile,_excluded,roots=[])=>{if(path!=='tree-smoke.md')return JSON.stringify({candidates:[]});calls+=1;const selected=Array.isArray(roots)&&roots.length?roots:['第一层A','第一层B','第一层C'];return JSON.stringify({candidates:selected.map((text,index)=>({text,next:[`下一级${index+1}-A`,`下一级${index+1}-B`,`下一级${index+1}-C`]}))})};const first=await h.editorAutocompleteCandidates('开始','开始<CURSOR>','tree-smoke.md',{force:true}),second=h.editorPrefetchedAutocompleteCandidates('开始第一层A','tree-smoke.md'),locked=await h.editorAutocompleteCandidates('开始第一层A','开始第一层A<CURSOR>','tree-smoke.md',{roots:second}),third=h.editorPrefetchedAutocompleteCandidates(`开始第一层A${second[0]}`,'tree-smoke.md');return JSON.stringify({editorTree:first.length===3&&first[0]==='第一层A'&&second.length===3&&locked.join('|')===second.join('|')&&third.length===3&&calls>=2,first,second,locked,third,calls})})()
 '@
     $editorMemoryCode = @'
 (async()=>{const p=app.plugins.plugins.cancip;if(!p)throw new Error('runtime unavailable');const old={include:p.settings.includeCoreMemory,enabled:p.settings.composerAutocompleteEnabled,corpus:p.editorAutocompleteMemoryCorpusCache,promise:p.editorAutocompleteMemoryCorpusPromise,call:p.callLightweightAutocompleteModel};let captured='';try{p.settings.includeCoreMemory=true;p.settings.composerAutocompleteEnabled=false;p.editorAutocompleteMemoryCorpusPromise=null;p.editorAutocompleteMemoryCorpusCache={at:Date.now(),documents:[{path:'AI/Cancip/Memory/USER_PREFERENCES_QUICK.md',content:'用户称呼木拉提。偏好中文、结论优先、回答精简。apiKey: smoke-secret-value',kind:'memory',priority:0,updatedAt:Date.now()},{path:'AI/Cancip/Memory/PROFILE.md',content:'木拉提负责医疗行政、转诊协调和证书整理。',kind:'memory',priority:1,updatedAt:Date.now()},{path:'AI/Cancip/Memory/WORKFLOWS.md',content:'复诊安排固定流程：核对患者、日期、材料，再确认通知结果。',kind:'memory',priority:4,updatedAt:Date.now()},{path:'.cancip/PROJECT_MEMORY.md',content:'当前项目正在优化 Cancip 笔记自动补全和记忆检索。',kind:'project',priority:12,updatedAt:Date.now()},{path:'.cancip/sessions/recent.json',content:'会话：继续安排复诊\n用户：整理复诊材料并核对通知。',kind:'session',priority:30,updatedAt:Date.now()},{path:'AI/Cancip/Memory/TRADING.md',content:'量化交易回测与仓位控制。',kind:'memory',priority:40,updatedAt:Date.now()}]};const context=await p.editorAutocompleteMemoryContext('继续安排复诊','今天需要继续安排复诊并核对材料','常用/日记/2026-07-17.md');p.callLightweightAutocompleteModel=async(_profile,input)=>{captured=input;return JSON.stringify({suffix:'并确认通知结果'})};const raw=await p.generateEditorAutocompleteSuffix('继续安排复诊','今天需要继续安排复诊并核对材料','常用/日记/2026-07-17.md',{id:'smoke',name:'smoke',apiUrl:'https://smoke.invalid/v1',apiKey:'smoke',apiMode:'compatible',model:'smoke-model'});return JSON.stringify({richMemory:context.includes('木拉提')&&context.includes('复诊安排固定流程')&&context.includes('继续安排复诊'),memoryRelevant:!context.includes('量化交易回测'),memoryBounded:context.length>120&&context.length<=3600,memoryRedacted:!context.includes('smoke-secret-value')&&context.includes('REDACTED'),memoryInjected:captured.includes('相关记忆')&&captured.includes('复诊安排固定流程'),modelCalled:raw.includes('确认通知结果')})}finally{p.settings.includeCoreMemory=old.include;p.settings.composerAutocompleteEnabled=old.enabled;p.editorAutocompleteMemoryCorpusCache=old.corpus;p.editorAutocompleteMemoryCorpusPromise=old.promise;p.callLightweightAutocompleteModel=old.call}})()
@@ -1805,7 +1915,7 @@ if (Should-RunProgrammaticCase 'programmatic.context-editor-settings') {
 (async()=>{const s=app.plugins.plugins.cancip?.settingTab;if(!s)throw new Error('settings unavailable');const old=s.containerEl,scroller=activeDocument.createElement('div'),root=activeDocument.createElement('div');try{activeDocument.body.append(scroller);scroller.append(root);scroller.style.position='fixed';scroller.style.left='-10000px';scroller.style.top='0';scroller.style.width='360px';scroller.style.height='180px';scroller.style.overflowY='auto';for(let i=0;i<12;i++){const item=activeDocument.createElement('div');item.className='setting-item';item.style.height='64px';const name=activeDocument.createElement('div');name.className='setting-item-name';name.textContent=`设置项-${i}`;item.append(name);root.append(item)}s.containerEl=root;scroller.scrollTop=230;const snapshots=s.captureScrollSnapshots(),identity=snapshots[0]?.anchorIdentity,anchor=Array.from(root.querySelectorAll('.setting-item')).find(x=>s.settingsAnchorIdentity(x)===identity);if(!anchor)throw new Error('anchor unavailable');const before=anchor.getBoundingClientRect().top-scroller.getBoundingClientRect().top,spacer=activeDocument.createElement('div');spacer.style.height='90px';root.prepend(spacer);s.restoreScrollSnapshots(snapshots);await new Promise(resolve=>setTimeout(resolve,80));const afterAnchor=Array.from(root.querySelectorAll('.setting-item')).find(x=>s.settingsAnchorIdentity(x)===identity),after=afterAnchor.getBoundingClientRect().top-scroller.getBoundingClientRect().top,error=Math.abs(after-before);return JSON.stringify({settingsScrollStable:error<2,settingsOffsetError:error})}finally{s.containerEl=old;scroller.remove()}})()
 '@
     $settingsTabsCode = @'
-(()=>{const s=app.plugins.plugins.cancip?.settingTab;if(!s)throw new Error('settings unavailable');const old=s.settingsPageTabsScrollLeft,host=activeDocument.createElement('div'),makeTabs=()=>{const tabs=activeDocument.createElement('div');tabs.className='obcc-settings-page-tabs';tabs.style.width='280px';tabs.style.overflowX='auto';const content=activeDocument.createElement('div');content.style.width='960px';content.style.height='20px';content.style.flex='0 0 960px';tabs.append(content);return tabs};try{host.style.position='fixed';host.style.left='-10000px';host.style.top='0';activeDocument.body.append(host);let tabs=makeTabs();host.append(tabs);tabs.scrollLeft=120;s.rememberSettingsPageTabsScroll(tabs);const before=s.settingsPageTabsScrollLeft;tabs.remove();tabs=makeTabs();host.append(tabs);s.restoreSettingsPageTabsScroll(tabs);const after=tabs.scrollLeft,source=String(s.display),wired=source.includes('rememberSettingsPageTabsScroll')&&source.includes('restoreSettingsPageTabsScroll');return JSON.stringify({settingsTabsStable:before>0&&Math.abs(after-before)<1&&wired,before,after})}finally{s.settingsPageTabsScrollLeft=old;host.remove()}})()
+(()=>{const s=app.plugins.plugins.cancip?.settingTab;if(!s)throw new Error('settings unavailable');const old=s.settingsPageTabsScrollLeft,host=activeDocument.createElement('div'),makeTabs=()=>{const tabs=activeDocument.createElement('div');tabs.className='obcc-settings-page-tabs';tabs.style.width='280px';tabs.style.overflowX='auto';const content=activeDocument.createElement('div');content.style.width='960px';content.style.height='20px';content.style.flex='0 0 960px';tabs.append(content);return tabs};try{host.style.position='fixed';host.style.left='-10000px';host.style.top='0';activeDocument.body.append(host);let tabs=makeTabs();host.append(tabs);tabs.scrollLeft=120;s.rememberSettingsPageTabsScroll(tabs);const before=s.settingsPageTabsScrollLeft;tabs.remove();tabs=makeTabs();host.append(tabs);s.restoreSettingsPageTabsScroll(tabs);const after=tabs.scrollLeft,source=String(s.display),wired=source.includes('rememberSettingsPageTabsScroll')&&source.includes('restoreSettingsPageTabsScroll'),settingsPagesSeparated=source.includes('"buttons"')&&source.includes('displayButtonEditingSettings')&&source.includes('"autocomplete"')&&source.includes('displayAutocompleteSettings');return JSON.stringify({settingsTabsStable:before>0&&Math.abs(after-before)<1&&wired,settingsPagesSeparated,before,after})}finally{s.settingsPageTabsScrollLeft=old;host.remove()}})()
 '@
     $evidenceCode = @'
 (()=>{const v=app.workspace.getLeavesOfType('cancip-view').map((leaf)=>leaf.view).find((view)=>typeof view?.personalizationCacheFromModel==='function');if(!v)throw new Error('personalization parser unavailable');const fallback={schemaVersion:3,updatedAt:new Date().toISOString(),timeKey:'smoke',greeting:'上午好。可靠回退。',greetings:[{text:'上午好。可靠回退。',choices:[]}],friendlyName:'',weather:null,inferredWeatherLocation:'',diary:'',autocomplete:[],sourcePaths:[]},source='用户姓名：木拉提\n常住地：乌鲁木齐',forged=v.personalizationCacheFromModel(JSON.stringify({friendlyName:'虚构名字',weatherLocation:'虚构市',greetings:[{text:'虚构名字，上午好。虚构市今天天气晴朗。',choices:['查看虚构市天气']}],autocomplete:[]}),fallback,[],'smoke',source),accepted=v.personalizationCacheFromModel(JSON.stringify({friendlyName:'木拉提',weatherLocation:'乌鲁木齐',greetings:[{text:'木拉提，上午好。最近事情不少，先处理最明确的一项。',choices:['继续处理 Cancip 并核对结果']}],autocomplete:[]}),fallback,[],'smoke',source),forgedText=forged.greetings.map((item)=>`${item.text} ${item.choices.join(' ')}`).join(' ');return JSON.stringify({personalizationEvidence:forged.friendlyName===''&&forged.inferredWeatherLocation===''&&!/虚构名字|虚构市|天气晴朗/.test(forgedText)&&accepted.friendlyName==='木拉提'&&accepted.inferredWeatherLocation==='乌鲁木齐'&&accepted.greetings.some((item)=>item.text.includes('木拉提'))})})()
@@ -1823,6 +1933,8 @@ if (Should-RunProgrammaticCase 'programmatic.context-editor-settings') {
     $spinner = Invoke-CancipEval -Code (ConvertTo-CancipEvalBootstrap -Code $spinnerCode) -TimeoutSeconds 20
     Write-Host 'context/editor stage: autocomplete-model'
     $autocompleteModel = Invoke-CancipEval -Code (ConvertTo-CancipEvalBootstrap -Code $autocompleteModelCode) -TimeoutSeconds 20
+    Write-Host 'context/editor stage: autocomplete-tree'
+    $editorTree = Invoke-CancipEval -Code (ConvertTo-CancipEvalBootstrap -Code $editorTreeCode) -TimeoutSeconds 25
     Write-Host 'context/editor stage: rich-memory'
     $editorMemory = Invoke-CancipEval -Code (ConvertTo-CancipEvalBootstrap -Code $editorMemoryCode) -TimeoutSeconds 20
     Write-Host 'context/editor stage: memory-invalidation'
@@ -1849,6 +1961,7 @@ if (Should-RunProgrammaticCase 'programmatic.context-editor-settings') {
       autocompleteModelOptions = $autocompleteModel.optionLabels
       autocompleteModelCredentialFallback = $autocompleteModel.missingCredentialFallback
       autocompleteModelMissingFallback = $autocompleteModel.missingProfileFallback
+      editorAutocompleteTree = $editorTree.editorTree
       editorRichMemory = $editorMemory.richMemory
       editorMemoryRelevant = $editorMemory.memoryRelevant
       editorMemoryBounded = $editorMemory.memoryBounded
@@ -1860,14 +1973,23 @@ if (Should-RunProgrammaticCase 'programmatic.context-editor-settings') {
       settingsScrollStable = $settings.settingsScrollStable
       settingsOffsetError = $settings.settingsOffsetError
       settingsTabsStable = $settingsTabs.settingsTabsStable
+      settingsPagesSeparated = $settingsTabs.settingsPagesSeparated
       personalizationEvidence = $evidence.personalizationEvidence
     }
-    foreach ($field in @('editorLocal','editorModel','editorWithoutChatLeaf','editorSpinner','editorExtension','autocompleteModelRoute','autocompleteModelStored','autocompleteModelCacheInvalidated','autocompleteModelOptions','autocompleteModelCredentialFallback','autocompleteModelMissingFallback','editorRichMemory','editorMemoryRelevant','editorMemoryBounded','editorMemoryRedacted','editorMemoryInjected','editorMemoryModelCalled','editorMemoryInvalidated','currentFileSnapshot','settingsScrollStable','settingsTabsStable','personalizationEvidence')) {
+    foreach ($field in @('editorLocal','editorModel','editorWithoutChatLeaf','editorSpinner','editorExtension','autocompleteModelRoute','autocompleteModelStored','autocompleteModelCacheInvalidated','autocompleteModelOptions','autocompleteModelCredentialFallback','autocompleteModelMissingFallback','editorAutocompleteTree','editorRichMemory','editorMemoryRelevant','editorMemoryBounded','editorMemoryRedacted','editorMemoryInjected','editorMemoryModelCalled','editorMemoryInvalidated','currentFileSnapshot','settingsScrollStable','settingsTabsStable','settingsPagesSeparated','personalizationEvidence')) {
       if (-not [bool]$item.$field) { throw "context/editor/settings check failed: $field; $($item | ConvertTo-Json -Compress -Depth 8)" }
     }
     Add-CaseResult -Group 'programmaticCases' -Item @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs; settingsOffsetError = $item.settingsOffsetError }
   } catch {
     Add-CaseResult -Group 'programmaticCases' -Item @{ id = 'programmatic.context-editor-settings'; pass = $false; error = $_.Exception.Message }
+  } finally {
+    try {
+      if ($focusRestoreCode) {
+        Invoke-CancipEval -Code (ConvertTo-CancipEvalBootstrap -Code $focusRestoreCode) -TimeoutSeconds 20 | Out-Null
+      }
+    } catch {
+      Write-Host "Context/editor focus cleanup warning: $($_.Exception.Message)"
+    }
   }
 }
 
@@ -1875,10 +1997,32 @@ if (Should-RunProgrammaticCase 'programmatic.editor-autocomplete-mounted') {
   try {
     $started = Get-Date
     $setupCode = @'
-(()=>{const p=app.plugins.plugins.cancip,leaf=app.workspace.getLeavesOfType('markdown').find((item)=>item.view?.editor?.cm);if(!p||!leaf)throw new Error('mounted Markdown editor unavailable');const editor=leaf.view.editor,cm=editor.cm,before=editor.getValue(),oldCursor=editor.getCursor(),old={enabled:p.settings.composerAutocompleteEnabled,local:p.editorLocalAutocompleteSuffix,model:p.editorAutocompleteCandidates};let target=null;for(let line=0;line<editor.lineCount();line+=1){const text=editor.getLine(line)||'';if(text.trim().length>=3){target={line,ch:text.length};break}}if(!target)throw new Error('eligible Markdown line unavailable');const smoke={leaf,editor,cm,before,oldCursor,old,target,calls:0};p.__editorAutocompleteSmoke=smoke;p.settings.composerAutocompleteEnabled=true;p.editorLocalAutocompleteSuffix=()=>'';p.editorAutocompleteCandidates=async()=>{smoke.calls+=1;return ['第一项完整补全','第二项\n包含换行','第三项完整补全']};editor.focus();editor.setCursor(target);cm.dispatch({selection:{anchor:cm.state.selection.main.head}});return JSON.stringify({ok:true,target,path:leaf.view.file?.path||''})})()
+(async()=>{
+  const p=app.plugins.plugins.cancip,previousActiveLeaf=app.workspace.activeLeaf??null;
+  const leaves=app.workspace.getLeavesOfType('markdown').filter((item)=>item.view?.editor?.cm);
+  const leaf=leaves.find((item)=>{const rect=item.view.editor.cm.contentDOM.getBoundingClientRect();return rect.width>0&&rect.height>0})||leaves[0];
+  if(!p||!leaf)throw new Error('mounted Markdown editor unavailable');
+  await app.workspace.revealLeaf(leaf);
+  await app.workspace.setActiveLeaf(leaf,{focus:true});
+  await new Promise((resolve)=>setTimeout(resolve,80));
+  const editor=leaf.view.editor,cm=editor.cm,doc=cm.dom.ownerDocument,before=editor.getValue(),oldCursor=editor.getCursor(),old={enabled:p.settings.composerAutocompleteEnabled,local:p.editorLocalAutocompleteSuffix,model:p.editorAutocompleteCandidates};
+  let target=null;
+  for(let line=0;line<editor.lineCount();line+=1){const text=editor.getLine(line)||'';if(text.trim().length>=3){target={line,ch:text.length};break}}
+  if(!target)throw new Error('eligible Markdown line unavailable');
+  const smoke={leaf,previousActiveLeaf,editor,cm,doc,before,oldCursor,old,target,calls:0,hadOwnDocumentHasFocus:Object.prototype.hasOwnProperty.call(doc,'hasFocus'),oldDocumentHasFocus:doc.hasFocus};
+  p.__editorAutocompleteSmoke=smoke;
+  doc.hasFocus=()=>true;
+  p.settings.composerAutocompleteEnabled=true;
+  p.editorLocalAutocompleteSuffix=()=>'';
+  p.editorAutocompleteCandidates=async()=>{smoke.calls+=1;return ['第一项完整补全','第二项\n包含换行','第三项完整补全']};
+  cm.focus();
+  editor.setCursor(target);
+  cm.dispatch({selection:{anchor:cm.state.selection.main.head}});
+  return JSON.stringify({ok:true,target,path:leaf.view.file?.path||'',hasFocus:cm.hasFocus});
+})()
 '@
     $snapshotCode = @'
-(()=>{const p=app.plugins.plugins.cancip,s=p?.__editorAutocompleteSmoke;if(!s)throw new Error('autocomplete smoke state unavailable');const ghostEl=s.leaf.containerEl.querySelector('.obcc-editor-autocomplete-ghost'),style=ghostEl?getComputedStyle(ghostEl):null;return JSON.stringify({ghost:ghostEl?.textContent||'',position:s.leaf.containerEl.querySelector('.obcc-editor-autocomplete-position')?.textContent||'',whiteSpace:style?.whiteSpace||'',textOverflow:style?.textOverflow||'',calls:s.calls,documentUntouched:s.editor.getValue()===s.before})})()
+(()=>{const p=app.plugins.plugins.cancip,s=p?.__editorAutocompleteSmoke;if(!s)throw new Error('autocomplete smoke state unavailable');const ghostEl=s.leaf.containerEl.querySelector('.obcc-editor-autocomplete-ghost'),style=ghostEl?getComputedStyle(ghostEl):null;return JSON.stringify({ghost:ghostEl?.textContent||'',position:s.leaf.containerEl.querySelector('.obcc-editor-autocomplete-position')?.textContent||'',whiteSpace:style?.whiteSpace||'',textOverflow:style?.textOverflow||'',calls:s.calls,hasFocus:s.cm.hasFocus,documentFocus:s.doc.hasFocus(),documentUntouched:s.editor.getValue()===s.before})})()
 '@
     $menuCode = @'
 (()=>{const p=app.plugins.plugins.cancip,s=p?.__editorAutocompleteSmoke;if(!s)throw new Error('autocomplete smoke state unavailable');const doc=s.cm.dom.ownerDocument,button=s.leaf.containerEl.querySelector('.obcc-editor-autocomplete-apply'),beforePosition=s.leaf.containerEl.querySelector('.obcc-editor-autocomplete-position')?.textContent||'';button?.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,view:doc.defaultView}));const menus=Array.from(doc.querySelectorAll('.menu')),menu=menus[menus.length-1],menuText=menu?.textContent||'',menuComplete=['上一个补全','下一个补全','换一批补全','应用补全','选择补全模型','编辑补全提示','关闭自动补全'].every((label)=>menuText.includes(label)),nextItem=Array.from(menu?.querySelectorAll('.menu-item')||[]).find((item)=>(item.textContent||'').includes('下一个补全'));nextItem?.click();const afterPosition=s.leaf.containerEl.querySelector('.obcc-editor-autocomplete-position')?.textContent||'';return JSON.stringify({menuComplete,menuAction:!menu?.isConnected&&!!beforePosition&&!!afterPosition&&afterPosition!==beforePosition})})()
@@ -1890,8 +2034,9 @@ if (Should-RunProgrammaticCase 'programmatic.editor-autocomplete-mounted') {
 (()=>{const p=app.plugins.plugins.cancip,s=p?.__editorAutocompleteSmoke;if(!s)throw new Error('autocomplete smoke state unavailable');return JSON.stringify({ghost:s.leaf.containerEl.querySelector('.obcc-editor-autocomplete-ghost')?.textContent||'',calls:s.calls,callsBeforeBlocked:s.callsBeforeBlocked,documentUntouched:s.editor.getValue()===s.before})})()
 '@
     $cleanupCode = @'
-(()=>{const p=app.plugins.plugins.cancip,s=p?.__editorAutocompleteSmoke;if(!p||!s)return JSON.stringify({ok:true,cleaned:false});s.editor.setCursor(s.oldCursor);p.settings.composerAutocompleteEnabled=s.old.enabled;p.editorLocalAutocompleteSuffix=s.old.local;p.editorAutocompleteCandidates=s.old.model;delete p.__editorAutocompleteSmoke;s.cm.focus();return JSON.stringify({ok:true,cleaned:true})})()
+(async()=>{const p=app.plugins.plugins.cancip,s=p?.__editorAutocompleteSmoke;if(!p||!s)return JSON.stringify({ok:true,cleaned:false});s.editor.setCursor(s.oldCursor);p.settings.composerAutocompleteEnabled=s.old.enabled;p.editorLocalAutocompleteSuffix=s.old.local;p.editorAutocompleteCandidates=s.old.model;if(s.hadOwnDocumentHasFocus)s.doc.hasFocus=s.oldDocumentHasFocus;else delete s.doc.hasFocus;delete p.__editorAutocompleteSmoke;if(s.previousActiveLeaf&&s.previousActiveLeaf!==s.leaf){await app.workspace.revealLeaf(s.previousActiveLeaf);await app.workspace.setActiveLeaf(s.previousActiveLeaf,{focus:false})}return JSON.stringify({ok:true,cleaned:true})})()
 '@
+    $rotationWatch = [System.Diagnostics.Stopwatch]::StartNew()
     $setup = Invoke-CancipEval -Code (ConvertTo-CancipEvalBootstrap -Code $setupCode) -TimeoutSeconds 12
     try {
       Start-Sleep -Milliseconds 1800
@@ -1902,6 +2047,7 @@ if (Should-RunProgrammaticCase 'programmatic.editor-autocomplete-mounted') {
         $rotated = Invoke-CancipEval -Code (ConvertTo-CancipEvalBootstrap -Code $snapshotCode) -TimeoutSeconds 12
         if ($rotated.position -eq '2/3') { break }
       }
+      $rotationElapsedMs = [int]$rotationWatch.ElapsedMilliseconds
       $menu = Invoke-CancipEval -Code (ConvertTo-CancipEvalBootstrap -Code $menuCode) -TimeoutSeconds 12
       $blockedSetup = Invoke-CancipEval -Code (ConvertTo-CancipEvalBootstrap -Code $blockCode) -TimeoutSeconds 12
       Start-Sleep -Milliseconds 900
@@ -1912,13 +2058,14 @@ if (Should-RunProgrammaticCase 'programmatic.editor-autocomplete-mounted') {
     $item = [pscustomobject]@{
       mountedSuggestion = $initial.ghost -eq '第一项完整补全' -and $initial.position -eq '1/3'
       rotatesCandidates = $rotated.ghost -eq "第二项`n包含换行" -and $rotated.position -eq '2/3'
+      rotationIsFiveSeconds = $rotationElapsedMs -ge 4500
       multilineComplete = ([string]$rotated.ghost).Contains("`n") -and $initial.whiteSpace -eq 'pre-wrap' -and $initial.textOverflow -ne 'ellipsis'
       blockedByFollowingText = $blocked.ghost -eq '' -and $blocked.calls -eq $blocked.callsBeforeBlocked
       documentUntouched = $initial.documentUntouched -and $blocked.documentUntouched
       menuComplete = $menu.menuComplete
       menuAction = $menu.menuAction
     }
-    foreach ($field in @('mountedSuggestion','rotatesCandidates','multilineComplete','menuComplete','menuAction','blockedByFollowingText','documentUntouched')) {
+    foreach ($field in @('mountedSuggestion','rotatesCandidates','rotationIsFiveSeconds','multilineComplete','menuComplete','menuAction','blockedByFollowingText','documentUntouched')) {
       if (-not [bool]$item.$field) { throw "mounted editor autocomplete failed: $field; $($item | ConvertTo-Json -Compress -Depth 8)" }
     }
     Add-CaseResult -Group 'programmaticCases' -Item @{ id = 'programmatic.editor-autocomplete-mounted'; pass = $true; elapsedMs = [int]((Get-Date) - $started).TotalMilliseconds }
@@ -1995,7 +2142,13 @@ if (Should-RunProgrammaticCase 'programmatic.note-code-block-wrap-global-persist
   const t=Date.now();
   const p=app.plugins.plugins.cancip;
   if(!p||typeof p.enhanceNoteCodeBlocks!=='function'||typeof p.syncAllCodeBlockWrap!=='function')throw new Error('note code wrap API unavailable');
-  const surfaces=Array.from(activeDocument.querySelectorAll('.workspace-leaf-content[data-type="markdown"] .markdown-preview-view, .workspace-leaf-content[data-type="markdown"] .markdown-source-view'));
+  const previousActiveLeaf=app.workspace.activeLeaf??null;
+  const leaf=app.workspace.getLeavesOfType('markdown').find((item)=>item.view?.editor?.cm);
+  if(!leaf)throw new Error('mounted Markdown leaf unavailable');
+  await app.workspace.setActiveLeaf(leaf,{focus:true});
+  await new Promise((resolve)=>setTimeout(resolve,80));
+  const doc=leaf.containerEl.ownerDocument;
+  const surfaces=Array.from(leaf.containerEl.querySelectorAll('.markdown-preview-view, .markdown-source-view'));
   const surface=surfaces.find((candidate)=>{const rect=candidate.getBoundingClientRect(),style=getComputedStyle(candidate);return rect.width>0&&rect.height>0&&style.display!=='none'&&style.visibility!=='hidden'})||surfaces[0];
   if(!surface)throw new Error('mounted Markdown note surface unavailable');
   const oldSetting=p.settings.codeBlockWrap===true;
@@ -2004,7 +2157,7 @@ if (Should-RunProgrammaticCase 'programmatic.note-code-block-wrap-global-persist
   p.saveSettings=function(){savedValues.push(this.settings.codeBlockWrap===true);return Promise.resolve()};
   p.settings.codeBlockWrap=false;
   p.syncAllCodeBlockWrap();
-  const host=activeDocument.createElement('div');
+  const host=doc.createElement('div');
   host.className='obcc-note-code-wrap-smoke';
   host.style.position='fixed';
   host.style.left='-10000px';
@@ -2012,10 +2165,10 @@ if (Should-RunProgrammaticCase 'programmatic.note-code-block-wrap-global-persist
   host.style.width='320px';
   host.style.maxWidth='320px';
   host.style.contain='layout style paint';
-  const pre=activeDocument.createElement('pre');
-  const code=activeDocument.createElement('code');
+  const pre=doc.createElement('pre');
+  const code=doc.createElement('code');
   code.textContent='abcdefghij'.repeat(12);
-  const copy=activeDocument.createElement('button');
+  const copy=doc.createElement('button');
   copy.type='button';
   copy.className='copy-code-button';
   copy.dataset.noteSmokeNative='1';
@@ -2034,7 +2187,7 @@ if (Should-RunProgrammaticCase 'programmatic.note-code-block-wrap-global-persist
   const actionsFixed=!!scrolledWrapRect&&Math.abs(scrolledCopyRect.left-copyRect.left)<1&&Math.abs(scrolledWrapRect.left-wrapRect.left)<1;
   const scrollLeft=pre.scrollLeft,scrollVar=pre.style.getPropertyValue('--obcc-code-action-scroll-x'),copyTransform=getComputedStyle(copy).transform,wrapTransform=wrap?getComputedStyle(wrap).transform:'',copyDelta=scrolledCopyRect.left-copyRect.left,wrapDelta=scrolledWrapRect?scrolledWrapRect.left-wrapRect.left:0;
   pre.scrollLeft=0;
-  window.__noteCodeWrapSmoke={t,p,host,pre,copy,wrap,oldSetting,oldSaveSettings,savedValues,roots:[host]};
+  window.__noteCodeWrapSmoke={t,p,leaf,previousActiveLeaf,host,pre,copy,wrap,oldSetting,oldSaveSettings,savedValues,roots:[host]};
   return JSON.stringify({
     nativePreserved:copy.isConnected&&copy.parentElement===actionLayer,
     adjacent:buttons.length===2&&buttons[0]===copy&&buttons[1]===wrap,
@@ -2173,7 +2326,7 @@ if (Should-RunProgrammaticCase 'programmatic.note-code-block-wrap-global-persist
   } finally {
     try {
       $null = Invoke-CancipEval -TimeoutSeconds 25 -Code @'
-(()=>{const s=window.__noteCodeWrapSmoke;if(!s)return JSON.stringify({clean:true});for(const root of s.roots||[])root.remove();s.p.saveSettings=s.oldSaveSettings;s.p.settings.codeBlockWrap=s.oldSetting;s.p.syncAllCodeBlockWrap();delete window.__noteCodeWrapSmoke;return JSON.stringify({clean:true})})()
+(async()=>{const s=window.__noteCodeWrapSmoke;if(!s)return JSON.stringify({clean:true});for(const root of s.roots||[])root.remove();s.p.saveSettings=s.oldSaveSettings;s.p.settings.codeBlockWrap=s.oldSetting;s.p.syncAllCodeBlockWrap();delete window.__noteCodeWrapSmoke;if(s.previousActiveLeaf&&s.previousActiveLeaf!==s.leaf)await app.workspace.setActiveLeaf(s.previousActiveLeaf,{focus:true});return JSON.stringify({clean:true})})()
 '@
     } catch {
       Write-Host "Note code wrap smoke cleanup warning: $($_.Exception.Message)"
@@ -3593,7 +3746,7 @@ if (-not $Case -or 'programmatic.plan-manual-todo-separation'.Contains($Case)) {
   const manualId='smoke-manual-'+Date.now();
   try{
     v.manualTodos=[{id:manualId,text:'manual-smoke-todo',done:false,sendToModel:true,source:'manual',createdAt:new Date().toISOString()}];
-    await v.executeAction({type:'todo',op:'set',items:[{text:'agent-plan-step-one'},{text:'agent-plan-step-two'}]});
+    await v.executeAction({type:'todo',op:'set',items:[{text:'agent-plan-step-one'},{text:'agent-plan-step-two-'+('非常长的待办内容'.repeat(30))}]});
     const afterSet={manual:v.visibleManualTodos().length,agent:v.agentPlanTodos().length};
     await v.executeAction({type:'todo',op:'update',text:'agent-plan-step-one',done:true});
     v.renderQueueStatus();
@@ -3601,7 +3754,8 @@ if (-not $Case -or 'programmatic.plan-manual-todo-separation'.Contains($Case)) {
       count:v.queueEl?.querySelectorAll('.obcc-live-plan-item').length||0,
       done:v.queueEl?.querySelectorAll('.obcc-live-plan-item.is-done').length||0,
       current:v.queueEl?.querySelectorAll('.obcc-live-plan-item.is-current').length||0,
-      hidden:!!v.queueEl?.classList.contains('is-hidden')
+      hidden:!!v.queueEl?.classList.contains('is-hidden'),
+      bounded:(()=>{const box=v.queueEl?.getBoundingClientRect(),plan=v.queueEl?.querySelector('.obcc-live-plan')?.getBoundingClientRect(),rows=Array.from(v.queueEl?.querySelectorAll('.obcc-live-plan-item')||[]).map((el)=>el.getBoundingClientRect());return !!box&&!!plan&&getComputedStyle(v.queueEl).overflowX==='hidden'&&plan.left>=box.left-.5&&plan.right<=box.right+.5&&rows.every((rect)=>rect.left>=box.left-.5&&rect.right<=box.right+.5)})()
     };
     const manual=v.visibleManualTodos()[0]||null;
     const agentDone=!!v.agentPlanTodos().find((item)=>item.text==='agent-plan-step-one'&&item.done);
@@ -3619,7 +3773,7 @@ if (-not $Case -or 'programmatic.plan-manual-todo-separation'.Contains($Case)) {
     if ([int]$item.afterSet.agent -ne 2) { throw "agent plan count after set expected 2 got $($item.afterSet.agent)" }
     if (-not $item.agentDone) { throw 'agent plan update did not mark the target item done' }
     if ($item.manualDone) { throw 'manual todo was modified by agent todo update' }
-    if ([int]$item.livePlan.count -ne 2 -or [int]$item.livePlan.done -ne 1 -or [int]$item.livePlan.current -ne 1 -or $item.livePlan.hidden) { throw "live plan strip did not reflect completion state: $($item.livePlan | ConvertTo-Json -Compress)" }
+    if ([int]$item.livePlan.count -ne 2 -or [int]$item.livePlan.done -ne 1 -or [int]$item.livePlan.current -ne 1 -or $item.livePlan.hidden -or -not $item.livePlan.bounded) { throw "live plan strip did not reflect bounded completion state: $($item.livePlan | ConvertTo-Json -Compress)" }
     if ([int]$item.afterClear.manual -ne 1 -or [int]$item.afterClear.agent -ne 0) { throw "todo clear did not preserve manual todo: $($item.afterClear | ConvertTo-Json -Compress)" }
     Add-CaseResult 'programmaticCases' @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs }
   } catch {
