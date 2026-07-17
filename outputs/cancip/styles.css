@@ -1643,12 +1643,37 @@ body .obcc-view-tts-action {
   -webkit-overflow-scrolling: touch;
 }
 
-body .obcc-code-pre.obcc-code-pre > button.copy-code-button.copy-code-button {
+.obcc-code-frame {
+  position: relative;
+  display: flow-root;
+  width: auto;
+  max-width: 100%;
+  margin: var(--obcc-code-frame-margin-top, 0) var(--obcc-code-frame-margin-right, 0) var(--obcc-code-frame-margin-bottom, 0) var(--obcc-code-frame-margin-left, 0);
+}
+
+.obcc-code-frame > .obcc-code-pre.obcc-code-pre {
+  margin: 0;
+}
+
+.obcc-code-action-layer {
   position: absolute;
+  z-index: 4;
   top: 6px;
+  right: 6px;
+  left: auto;
+  display: flex;
+  flex-direction: row-reverse;
+  align-items: center;
+  gap: 6px;
+  pointer-events: none;
+}
+
+body .obcc-code-action-layer.obcc-code-action-layer > button.copy-code-button.copy-code-button {
+  position: static;
+  top: auto;
   right: auto;
   left: auto;
-  inset-inline-end: 6px;
+  inset-inline-end: auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1658,18 +1683,13 @@ body .obcc-code-pre.obcc-code-pre > button.copy-code-button.copy-code-button {
   min-height: 26px;
   padding: 4px;
   box-sizing: border-box;
-  z-index: 2;
-  transform: translateX(var(--obcc-code-action-scroll-x, 0px));
-  will-change: transform;
+  z-index: auto;
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
 }
 
-body .obcc-code-pre.obcc-code-pre > button.obcc-code-wrap-toggle.obcc-code-wrap-toggle {
-  right: auto;
-  left: auto;
-  inset-inline-end: 38px;
-}
-
-.obcc-code-pre > .obcc-code-wrap-toggle.is-active {
+.obcc-code-action-layer > .obcc-code-wrap-toggle.is-active {
   color: var(--interactive-accent);
 }
 

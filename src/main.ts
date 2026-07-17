@@ -5875,6 +5875,8 @@ type EditorAutocompleteSuggestion = {
   from: number;
   suffix: string;
   signature: string;
+  prefix: string;
+  lineFrom: number;
 };
 
 const setEditorAutocompleteSuggestion = StateEffect.define<EditorAutocompleteSuggestion | null>();
@@ -5952,11 +5954,28 @@ function editorAutocompleteSnapshot(view: EditorView, plugin: CancipPlugin): Edi
   const line = view.state.doc.lineAt(from);
   if (from !== line.to || line.text.trim().length < AUTOCOMPLETE_MIN_INPUT_CHARS) return null;
   const prefix = line.text;
+  if (/^(?:\s*`{3,}|\s*~{3,}|\s*(?:-{3,}|\*{3,}|_{3,}))\s*$/.test(prefix)) return null;
+  if (/[。！？!?；;]\s*$/.test(prefix)) return null;
   return {
     from,
     suffix: "",
-    signature: `${view.state.doc.length}:${from}:${stableTextHash(prefix)}`
+    signature: `${view.state.doc.length}:${line.from}:${from}:${stableTextHash(prefix)}`,
+    prefix,
+    lineFrom: line.from
   };
+}
+
+function rebaseEditorAutocompleteSuggestion(
+  source: EditorAutocompleteSuggestion,
+  suffix: string,
+  current: EditorAutocompleteSuggestion | null
+): EditorAutocompleteSuggestion | null {
+  if (!current || !suffix || current.lineFrom !== source.lineFrom) return null;
+  if (!current.prefix.startsWith(source.prefix)) return null;
+  const completed = `${source.prefix}${suffix}`;
+  if (!completed.startsWith(current.prefix)) return null;
+  const remaining = completed.slice(current.prefix.length);
+  return remaining ? { ...current, suffix: remaining } : null;
 }
 
 function applyEditorAutocompleteSuggestion(view: EditorView): boolean {
@@ -5980,6 +5999,8 @@ function createCancipEditorAutocompleteExtension(plugin: CancipPlugin): Extensio
     private timer: number | null = null;
     private requestId = 0;
     private destroyed = false;
+    private modelInFlight = false;
+    private queuedSnapshot: EditorAutocompleteSuggestion | null = null;
     private readonly compositionEnd = () => {
       const win = this.view.dom.ownerDocument.defaultView;
       if (!win) return;
@@ -5992,12 +6013,17 @@ function createCancipEditorAutocompleteExtension(plugin: CancipPlugin): Extensio
     }
 
     update(update: ViewUpdate): void {
-      if (update.docChanged || update.selectionSet || update.focusChanged) this.schedule();
+      if (update.docChanged) {
+        this.schedule(update.startState.field(editorAutocompleteState));
+        return;
+      }
+      if (update.selectionSet || update.focusChanged) this.schedule();
     }
 
     destroy(): void {
       this.destroyed = true;
       this.requestId += 1;
+      this.queuedSnapshot = null;
       this.clearTimer();
       this.view.dom.removeEventListener("compositionend", this.compositionEnd);
     }
@@ -6022,21 +6048,31 @@ function createCancipEditorAutocompleteExtension(plugin: CancipPlugin): Extensio
       this.view.dispatch({ effects: setEditorAutocompleteSuggestion.of(value) });
     }
 
-    private schedule(): void {
+    private schedule(previous?: EditorAutocompleteSuggestion | null): void {
       this.clearTimer();
       const requestId = ++this.requestId;
       const snapshot = editorAutocompleteSnapshot(this.view, plugin);
       const win = this.view.dom.ownerDocument.defaultView;
       if (!win) return;
       if (!snapshot) {
+        this.queuedSnapshot = null;
         win.setTimeout(() => {
-          if (requestId === this.requestId) this.dispatchSuggestion({ from: 0, suffix: "", signature: "" }, "");
+          if (requestId === this.requestId) this.dispatchSuggestion({ from: 0, suffix: "", signature: "", prefix: "", lineFrom: 0 }, "");
+        }, 0);
+        return;
+      }
+      const carried = previous ? rebaseEditorAutocompleteSuggestion(previous, previous.suffix, snapshot) : null;
+      if (carried) {
+        this.queuedSnapshot = null;
+        win.setTimeout(() => {
+          if (requestId === this.requestId) this.dispatchSuggestion(carried, carried.suffix);
         }, 0);
         return;
       }
       const line = this.view.state.doc.lineAt(snapshot.from);
       const local = plugin.editorLocalAutocompleteSuffix(line.text);
       if (local) {
+        this.queuedSnapshot = null;
         win.setTimeout(() => {
           if (requestId === this.requestId) this.dispatchSuggestion(snapshot, local);
         }, 0);
@@ -6047,21 +6083,61 @@ function createCancipEditorAutocompleteExtension(plugin: CancipPlugin): Extensio
       }, 0);
       this.timer = win.setTimeout(() => {
         this.timer = null;
-        void this.requestModelSuggestion(snapshot, requestId);
+        const current = editorAutocompleteSnapshot(this.view, plugin);
+        if (requestId !== this.requestId || !current || current.signature !== snapshot.signature) return;
+        if (this.modelInFlight) {
+          this.queuedSnapshot = current;
+          return;
+        }
+        void this.requestModelSuggestion(current);
       }, AUTOCOMPLETE_DEBOUNCE_MS);
     }
 
-    private async requestModelSuggestion(snapshot: EditorAutocompleteSuggestion, requestId: number): Promise<void> {
+    private async requestModelSuggestion(snapshot: EditorAutocompleteSuggestion): Promise<void> {
       const current = editorAutocompleteSnapshot(this.view, plugin);
-      if (!current || current.signature !== snapshot.signature || requestId !== this.requestId) return;
+      if (!current || current.signature !== snapshot.signature || this.destroyed || this.modelInFlight) return;
       const line = this.view.state.doc.lineAt(snapshot.from);
       const contextFrom = Math.max(0, snapshot.from - 720);
       const contextTo = Math.min(this.view.state.doc.length, snapshot.from + 180);
       const context = this.view.state.sliceDoc(contextFrom, contextTo);
       const path = plugin.app.workspace.getActiveFile()?.path ?? "";
-      const suffix = await plugin.editorAutocompleteSuffix(line.text, context, path);
-      if (requestId !== this.requestId) return;
-      this.dispatchSuggestion(snapshot, suffix);
+      this.modelInFlight = true;
+      let suffix = "";
+      try {
+        suffix = await plugin.editorAutocompleteSuffix(line.text, context, path);
+      } finally {
+        this.modelInFlight = false;
+      }
+      if (this.destroyed) return;
+      const latest = editorAutocompleteSnapshot(this.view, plugin);
+      if (!latest) {
+        this.queuedSnapshot = null;
+        this.dispatchSuggestion(snapshot, "");
+        return;
+      }
+      const displayed = this.view.state.field(editorAutocompleteState);
+      if (displayed?.signature === latest.signature && displayed.suffix) {
+        this.queuedSnapshot = null;
+        return;
+      }
+      const rebased = rebaseEditorAutocompleteSuggestion(snapshot, suffix, latest);
+      if (rebased) {
+        this.clearTimer();
+        this.queuedSnapshot = null;
+        this.dispatchSuggestion(rebased, rebased.suffix);
+        return;
+      }
+      const queued = this.queuedSnapshot;
+      this.queuedSnapshot = null;
+      if (queued?.signature === latest.signature) {
+        void this.requestModelSuggestion(latest);
+        return;
+      }
+      if (latest.signature !== snapshot.signature) {
+        this.schedule();
+        return;
+      }
+      this.dispatchSuggestion(snapshot, "");
     }
   });
   return [
@@ -13726,7 +13802,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     const local = this.editorLocalAutocompleteSuffix(prefix);
     if (local) return local;
     const profile = this.activeApiProfile();
-    if (!profile.apiKey || !profile.apiUrl || !profile.model || this.editorAutocompleteModelBusy) return "";
+    if (!profile.apiKey || !profile.apiUrl || !profile.model) return "";
     const cacheKey = stableTextHash([
       this.settings.composerAutocompletePrompt.trim().toLocaleLowerCase(),
       normalizePath(path),
@@ -13735,6 +13811,13 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     ].join("\n"));
     const cached = this.editorAutocompleteCache.get(cacheKey);
     if (cached !== undefined) return cached;
+    const busyDeadline = Date.now() + 15000;
+    while (this.editorAutocompleteModelBusy && this.settings.composerAutocompleteEnabled && Date.now() < busyDeadline) {
+      await sleep(80);
+    }
+    if (this.editorAutocompleteModelBusy || !this.settings.composerAutocompleteEnabled) return "";
+    const cachedAfterWait = this.editorAutocompleteCache.get(cacheKey);
+    if (cachedAfterWait !== undefined) return cachedAfterWait;
     const view = this.chatLeaves()
       .map((leaf) => leaf.view)
       .find((candidate): candidate is CancipView => candidate instanceof CancipView && !candidate.automationSessionBusy());
@@ -17142,13 +17225,18 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       }
       const code = pre.querySelector<HTMLElement>(":scope > code");
       if (!code) continue;
-      const directCopyButtons = Array.from(pre.querySelectorAll<HTMLButtonElement>(":scope > button.copy-code-button:not(.obcc-code-wrap-toggle)"));
+      const actionScope = fixedCodeBlockActionScope(pre);
+      const directCopyButtons = Array.from(new Set([
+        ...Array.from(pre.querySelectorAll<HTMLButtonElement>(":scope > button.copy-code-button:not(.obcc-code-wrap-toggle)")),
+        ...Array.from(actionScope.querySelectorAll<HTMLButtonElement>(":scope > button.copy-code-button:not(.obcc-code-wrap-toggle)"))
+      ]));
       const fallbackCopy = directCopyButtons.find((button) => button.dataset.cancipNoteCodeCopy === "fallback") ?? null;
       const nativeCopy = directCopyButtons.find((button) => button.dataset.cancipNoteCodeCopy !== "fallback") ?? null;
       if (nativeCopy && fallbackCopy) fallbackCopy.remove();
       const copyButton = nativeCopy ?? fallbackCopy ?? this.createNoteCodeCopyButton(pre);
       copyButton.addClass("obcc-code-copy-control");
-      let wrapButton = pre.querySelector<HTMLButtonElement>(":scope > button.obcc-note-code-wrap-toggle");
+      let wrapButton = pre.querySelector<HTMLButtonElement>(":scope > button.obcc-note-code-wrap-toggle")
+        ?? actionScope.querySelector<HTMLButtonElement>(":scope > button.obcc-note-code-wrap-toggle");
       if (!wrapButton) {
         wrapButton = pre.createEl("button", {
           cls: "copy-code-button obcc-code-wrap-toggle obcc-note-code-wrap-toggle",
@@ -17238,7 +17326,17 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     const handleMutations = (mutations: MutationRecord[]): void => {
       for (const mutation of mutations) {
         for (const node of Array.from(mutation.addedNodes)) {
-          if (node.nodeType === 1) this.enhanceNoteCodeBlocks(node as HTMLElement);
+          if (node.nodeType !== 1) continue;
+          const element = node as HTMLElement;
+          const frame = element.closest<HTMLElement>(".obcc-code-frame");
+          if (frame) {
+            if (element.matches("button.copy-code-button:not(.obcc-code-wrap-toggle)")) {
+              const pre = frame.querySelector<HTMLPreElement>(":scope > pre.obcc-note-code-pre");
+              if (pre) this.enhanceNoteCodeBlocks(pre);
+            }
+            continue;
+          }
+          this.enhanceNoteCodeBlocks(element);
         }
       }
     };
@@ -37645,16 +37743,20 @@ class CancipView extends ItemView {
       const summary = completed.length ? this.toolRunCompactSummary(completed).replace(/\s+/g, " ").trim() : "";
       if (summary && !isPromptishProgressNoteLine(summary)) return trimContext(summary, 180);
     }
-    const text = (messageOutlineText(message.content) || display.visibleContent)
+    const outline = (messageOutlineText(message.content) || display.visibleContent)
       .replace(/<details\b[^>]*>[\s\S]*?<\/details>/gi, " ")
       .replace(/```[\s\S]*?```/g, " ")
       .replace(/<[^>]+>/g, " ")
       .replace(/\[truncated(?::|\s)[^\]]+\]/gi, " ")
-      .replace(/^(?:执行中|已执行|失败|running|executed|failed)\s*[·:：-]\s*/i, "")
-      .replace(/\s*·\s*(?:字数|chars|tokens?)\s*(?:发送|sent|in)?[\s\S]*$/i, "")
       .replace(/\s+/g, " ")
       .trim();
-    if (isPromptishProgressNoteLine(text)) return "";
+    const text = isProgrammaticProgressHeadline(outline)
+      ? outline.replace(/\s*·\s*(?:字数|chars|tokens?)\s*(?:发送|sent|in)?[\s\S]*?(?=\s*·\s*(?:耗时|elapsed)\b)/i, "").trim()
+      : outline
+        .replace(/^(?:执行中|已执行|失败|running|executed|failed)\s*[·:：-]\s*/i, "")
+        .replace(/\s*·\s*(?:字数|chars|tokens?)\s*(?:发送|sent|in)?[\s\S]*$/i, "")
+        .trim();
+    if (isPromptishProgressNoteLine(text) && !isProgrammaticProgressHeadline(text)) return "";
     if (/^(?:过程详情|工具结果|工具反馈|等待工具结果|继续处理|process details?|tool results?|waiting for tool results?)$/i.test(text)) return "";
     return trimContext(text, 180);
   }
@@ -37670,6 +37772,19 @@ class CancipView extends ItemView {
     });
   }
 
+  private structuredProcessBlockContent(block: FoldedMessageBlock): string {
+    const content = redactSensitiveText(block.content)
+      .replace(/^(?:text|markdown|md)\s*\n/i, "")
+      .replace(/^`+\s*(?:text|markdown|md)?\s*\n/i, "")
+      .replace(/\n`+\s*$/i, "")
+      .trim();
+    if (!/^#{2,3}\s+.+$/m.test(content)) return "";
+    const recognized = [...content.matchAll(/^#{2,3}\s+(.+?)\s*$/gm)].some((match) => (
+      /^(?:api profile|token usage|model exchange raw contents|actual api call audit|input sizes|reply filter|raw sent|raw received|parsed extracted|visible answer|sent system|sent contexttext|sent turn prompt|sent actual user inputtext|original user prompt|previous attempt)/i.test(match[1].trim())
+    ));
+    return recognized ? content : "";
+  }
+
   private processStepDetailText(text: string, headline: string): string {
     let detail = text.trim();
     const title = headline.trim();
@@ -37680,7 +37795,7 @@ class CancipView extends ItemView {
       .replace(/^\s*\[truncated(?::|\s)[^\]]+\]\s*$/gim, "")
       .split(/\r?\n/)
       .map((line) => line.trimEnd())
-      .filter((line) => !isPromptishProgressNoteLine(line.trim()))
+      .filter((line) => !/^\s*`+\s*$/.test(line) && !isPromptishProgressNoteLine(line.trim()))
       .join("\n")
       .replace(/\n{3,}/g, "\n\n")
       .trim();
@@ -37698,8 +37813,14 @@ class CancipView extends ItemView {
     const steps = items
       .map((rendered) => {
         const headline = this.processStepHeadline(rendered.message, rendered.display);
-        const detail = this.processStepDetailText(rendered.display.visibleContent, headline);
-        const blocks = this.meaningfulProcessBlocks(rendered.display.hiddenToolBlocks);
+        const visibleDetail = this.processStepDetailText(rendered.display.visibleContent, headline);
+        const allBlocks = this.meaningfulProcessBlocks(rendered.display.hiddenToolBlocks);
+        const structuredBlocks = allBlocks
+          .map((block) => ({ block, content: this.structuredProcessBlockContent(block) }))
+          .filter((item) => Boolean(item.content));
+        const structuredSet = new Set(structuredBlocks.map((item) => item.block));
+        const blocks = allBlocks.filter((block) => !structuredSet.has(block));
+        const detail = [visibleDetail, ...structuredBlocks.map((item) => item.content)].filter(Boolean).join("\n\n");
         const hasDetail = Boolean(detail)
           || blocks.length > 0
           || Boolean(rendered.message.toolRuns?.length)
@@ -38826,7 +38947,7 @@ function syncCodeBlockWrapElement(
 ): void {
   block.toggleClass("is-nowrap", !enabled);
   block.toggleClass("is-wrapped", enabled);
-  const button = block.querySelector<HTMLButtonElement>(":scope > .obcc-code-wrap-toggle");
+  const button = fixedCodeBlockActionScope(block).querySelector<HTMLButtonElement>(":scope > .obcc-code-wrap-toggle");
   if (!button) return;
   button.toggleClass("is-active", enabled);
   button.setAttr("aria-pressed", enabled ? "true" : "false");
@@ -38837,6 +38958,8 @@ function syncCodeBlockWrapElement(
 
 type FixedCodeBlockActionsBinding = {
   version: number;
+  frame: HTMLElement;
+  actions: HTMLElement;
   sync: () => void;
   cleanup: () => void;
 };
@@ -38845,7 +38968,17 @@ type FixedCodeBlockElement = HTMLElement & {
   __cancipFixedCodeActionsBinding?: FixedCodeBlockActionsBinding;
 };
 
-const FIXED_CODE_BLOCK_ACTIONS_VERSION = 2;
+const FIXED_CODE_BLOCK_ACTIONS_VERSION = 3;
+
+function fixedCodeBlockActionScope(block: HTMLElement): HTMLElement {
+  const binding = (block as FixedCodeBlockElement).__cancipFixedCodeActionsBinding;
+  if (binding?.actions.isConnected) return binding.actions;
+  const frame = block.parentElement;
+  if (frame?.hasClass("obcc-code-frame")) {
+    return frame.querySelector<HTMLElement>(":scope > .obcc-code-action-layer") ?? block;
+  }
+  return block;
+}
 
 function wireFixedCodeBlockActions(block: HTMLElement): void {
   const target = block as FixedCodeBlockElement;
@@ -38855,38 +38988,44 @@ function wireFixedCodeBlockActions(block: HTMLElement): void {
     return;
   }
   existing?.cleanup();
-  let baselineLeft: number | null = null;
-  let compensationRatio: number | null = null;
+  const doc = block.ownerDocument;
+  const win = doc.defaultView;
+  const frame = createDetachedElement(doc, "div");
+  frame.addClass("obcc-code-frame");
+  frame.dataset.cancipCodeFrame = "true";
+  const computed = win?.getComputedStyle(block);
+  frame.setCssProps({
+    "--obcc-code-frame-margin-top": computed?.marginTop || "0px",
+    "--obcc-code-frame-margin-right": computed?.marginRight || "0px",
+    "--obcc-code-frame-margin-bottom": computed?.marginBottom || "0px",
+    "--obcc-code-frame-margin-left": computed?.marginLeft || "0px"
+  });
+  block.parentNode?.insertBefore(frame, block);
+  frame.appendChild(block);
+  const actions = frame.createDiv({ cls: "obcc-code-action-layer" });
   const sync = () => {
-    const action = block.querySelector<HTMLElement>(":scope > button.copy-code-button");
-    if (!action) {
-      block.setCssProps({ "--obcc-code-action-scroll-x": "0px" });
-      return;
+    const controls = Array.from(block.querySelectorAll<HTMLButtonElement>(":scope > button.copy-code-button"));
+    for (const control of controls) actions.appendChild(control);
+    const current = Array.from(actions.querySelectorAll<HTMLButtonElement>(":scope > button.copy-code-button"));
+    const ordered = [...current]
+      .sort((left, right) => Number(left.hasClass("obcc-code-wrap-toggle")) - Number(right.hasClass("obcc-code-wrap-toggle")));
+    if (ordered.some((control, index) => current[index] !== control)) {
+      for (const control of ordered) actions.appendChild(control);
     }
-    const scrollLeft = block.scrollLeft;
-    if (Math.abs(scrollLeft) < 0.5) {
-      block.setCssProps({ "--obcc-code-action-scroll-x": "0px" });
-      baselineLeft = action.getBoundingClientRect().left;
-      compensationRatio = null;
-      return;
-    }
-    if (baselineLeft === null) {
-      baselineLeft = action.getBoundingClientRect().left;
-      compensationRatio = block.hasClass("obcc-note-code-pre") ? 0 : 1;
-    }
-    if (compensationRatio === null) {
-      block.setCssProps({ "--obcc-code-action-scroll-x": "0px" });
-      const naturalLeft = action.getBoundingClientRect().left;
-      const neededOffset = baselineLeft - naturalLeft;
-      compensationRatio = Math.max(-2, Math.min(2, neededOffset / scrollLeft));
-    }
-    const offset = compensationRatio * scrollLeft;
-    block.setCssProps({ "--obcc-code-action-scroll-x": `${Math.abs(offset) < 0.5 ? 0 : offset}px` });
   };
-  const cleanup = () => block.removeEventListener("scroll", sync);
-  target.__cancipFixedCodeActionsBinding = { version: FIXED_CODE_BLOCK_ACTIONS_VERSION, sync, cleanup };
+  const cleanup = () => {
+    for (const control of Array.from(actions.querySelectorAll<HTMLButtonElement>(":scope > button.copy-code-button"))) {
+      block.appendChild(control);
+    }
+    actions.remove();
+    const parent = frame.parentNode;
+    if (parent) {
+      parent.insertBefore(block, frame);
+      frame.remove();
+    }
+  };
+  target.__cancipFixedCodeActionsBinding = { version: FIXED_CODE_BLOCK_ACTIONS_VERSION, frame, actions, sync, cleanup };
   block.dataset.cancipFixedCodeActions = "true";
-  block.addEventListener("scroll", sync, { passive: true });
   sync();
 }
 
@@ -38895,7 +39034,6 @@ function clearFixedCodeBlockActions(block: HTMLElement): void {
   target.__cancipFixedCodeActionsBinding?.cleanup();
   delete target.__cancipFixedCodeActionsBinding;
   delete block.dataset.cancipFixedCodeActions;
-  block.setCssProps({ "--obcc-code-action-scroll-x": "0px" });
 }
 
 class CancipSettingTab extends PluginSettingTab {
@@ -38903,6 +39041,7 @@ class CancipSettingTab extends PluginSettingTab {
   private renderingSettings = false;
   private activeSettingsPage = "common";
   private restoreSettingsAnchorOnNextDisplay = true;
+  private settingsPageTabsScrollLeft = 0;
 
   constructor(
     app: App,
@@ -38917,6 +39056,8 @@ class CancipSettingTab extends PluginSettingTab {
 
   display(): void {
     const { containerEl } = this;
+    const existingTabs = containerEl.querySelector<HTMLElement>(":scope > .obcc-settings-page-tabs");
+    if (existingTabs) this.settingsPageTabsScrollLeft = existingTabs.scrollLeft;
     const scrollSnapshots = containerEl.childElementCount ? this.captureScrollSnapshots() : [];
     if (!this.restoreSettingsAnchorOnNextDisplay) {
       for (const snapshot of scrollSnapshots) {
@@ -38953,6 +39094,10 @@ class CancipSettingTab extends PluginSettingTab {
       ];
       if (!pages.some((page) => page.id === this.activeSettingsPage)) this.activeSettingsPage = "common";
       const tabs = containerEl.createDiv({ cls: "obcc-settings-page-tabs", attr: { role: "tablist" } });
+      const restoreTabsScroll = () => {
+        if (tabs.isConnected) tabs.scrollLeft = this.settingsPageTabsScrollLeft;
+      };
+      restoreTabsScroll();
       for (const page of pages) {
         const tab = tabs.createEl("button", {
           cls: `obcc-settings-page-tab ${page.id === this.activeSettingsPage ? "is-active" : ""}`,
@@ -38961,6 +39106,7 @@ class CancipSettingTab extends PluginSettingTab {
         });
         tab.addEventListener("click", () => {
           if (page.id === this.activeSettingsPage) return;
+          this.settingsPageTabsScrollLeft = tabs.scrollLeft;
           this.activeSettingsPage = page.id;
           this.restoreSettingsAnchorOnNextDisplay = false;
           this.display();
@@ -38969,6 +39115,7 @@ class CancipSettingTab extends PluginSettingTab {
       const body = containerEl.createDiv({ cls: "obcc-settings-page-body" });
       const active = pages.find((page) => page.id === this.activeSettingsPage) ?? pages[0];
       active.render(body);
+      (containerEl.ownerDocument.defaultView ?? window).requestAnimationFrame(restoreTabsScroll);
     } finally {
       this.renderingSettings = false;
       this.restoreScrollSnapshots(scrollSnapshots);
@@ -47648,7 +47795,7 @@ function prepareMessageDisplay(content: string): MessageDisplay {
     const trimmed = line.trim();
     if (trimmed === PROGRESS_STEP_MARKER || trimmed === PROCESS_MESSAGE_MARKER) continue;
     if (trimmed.startsWith(TOOL_FEEDBACK_MARKER_PREFIX)) continue;
-    if (isPromptishProgressNoteLine(trimmed)) continue;
+    if (isPromptishProgressNoteLine(trimmed) && !isProgrammaticProgressHeadline(trimmed)) continue;
     const rawJson = trimmed.replace(/^(?:代码|code)\s*/i, "");
     if (/^\{\s*"?(?:actions|action|type)"?\s*:/.test(rawJson)) {
       hiddenToolBlocks.push({ title: "action json", content: rawJson });
@@ -47667,7 +47814,7 @@ function isMeaningfulProcessRecord(message: ChatMessage, display: MessageDisplay
   if (display.hiddenToolBlocks.length > 0) return true;
   if (isToolFeedbackMessage(message.content)) return true;
   const visible = display.visibleContent.replace(/\s+/g, " ").trim();
-  if (isProgressMessage(message.content)) return visible.length > 24;
+  if (isProgressMessage(message.content)) return Boolean(visible);
   if (!visible) return false;
   if (/^(?:完成|done|executed|工具执行完成)[。.!！\s]*$/i.test(visible)) return false;
   return visible.length > 12;
@@ -48004,6 +48151,12 @@ function scrollTtsHighlightIntoView(element: HTMLElement): void {
     return;
   }
   element.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
+}
+
+function isProgrammaticProgressHeadline(line: string): boolean {
+  const text = line.replace(/\s+/g, " ").trim();
+  return /^(?:执行中|已执行|失败|running|executed|failed)\s*[·:：-]/i.test(text)
+    && /(?:耗时|elapsed)\s*[^·\s]+/i.test(text);
 }
 
 function mergePdfTextLayerSpans(items: Array<{ rect: DOMRect; text: string }>): string {

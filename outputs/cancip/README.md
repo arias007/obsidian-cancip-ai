@@ -59,6 +59,13 @@ Cancip is a lightweight prototype for managing an Obsidian vault from a mobile-f
 - New-file curation runs in an isolated session with a stable minimal prompt prefix. A programmatic benefit gate classifies each file as curate, skip, or protected before any model call: only concrete high-value defects become candidates; clean, cosmetic-only, or Inbox-only cases are consumed silently; templates, frequently referenced notes, plugin syntax, and generated files are protected from automatic rename/restructure. Each candidate carries a defect-derived action allowlist so one formatting issue cannot authorize unrelated tags, links, summaries, or renaming.
 - TTS is provider-routed by language. English defaults to Web Speech / system TTS and does not need a local model package. Chinese can auto-download and use the current compact PrimeTTS Chinese/English ONNX package. Other languages use system/Web/custom URL unless a compatible local PrimeTTS package is installed under `tts/<package>/` with a manifest.
 
+## 2.14.4
+
+- Moved Copy and Wrap into a fixed action layer outside horizontal code scrolling, eliminating the visible move-then-snap effect in chat and rendered notes.
+- Restored live elapsed-time headlines and classified real fenced API audits into sent, received, runtime, and other details without exposing redundant progress prose.
+- Settings category redraws now retain the horizontal tab-strip position as well as the visible vertical option.
+- Markdown editor autocomplete now keeps one model request in flight, rebases a matching response onto continued input, retries only after a mismatch, and cancels stale work after a newline, completed sentence, block delimiter, selection change, or focus loss.
+
 ## 2.14.3
 
 - Removed the precomputed diary button and file-list insertion flow. Diary-writing requests in an active daily note now use the current model with a bounded record of today's real prompts and verified tool outcomes, while normal review still governs note writes.
