@@ -1860,7 +1860,55 @@ if (Should-RunProgrammaticCase 'programmatic.interaction-regression-controls') {
 '@
     Write-Host 'interaction stage: mobile-first-touch'
     $mobileTouch = Invoke-CancipEval -TimeoutSeconds 20 -Code @'
-(()=>{try{const v=app.workspace.getLeavesOfType('cancip-view').map((leaf)=>leaf.view).find((view)=>view?.inputEl?.isConnected);if(!v)throw new Error('rendered Cancip view unavailable');const doc=v.containerEl.ownerDocument,body=doc.body,hadMobile=body.classList.contains('is-mobile'),button=v.contentEl.createEl('button',{cls:'obcc-composer-suggestion',attr:{type:'button'}}),PointerCtor=doc.defaultView.PointerEvent||doc.defaultView.MouseEvent;let calls=0;try{body.classList.add('is-mobile');button.addEventListener('click',()=>{calls+=1});const down=new PointerCtor('pointerdown',{bubbles:true,cancelable:true,button:0,pointerType:'touch',isPrimary:true});const firstCanceled=!button.dispatchEvent(down);button.dispatchEvent(new doc.defaultView.MouseEvent('click',{bubbles:true,cancelable:true,button:0}));return JSON.stringify({mobileFirstTouch:calls===1&&firstCanceled,calls,firstCanceled})}finally{button.remove();if(!hadMobile)body.classList.remove('is-mobile')}}catch(error){return JSON.stringify({error:String(error?.stack||error)})}})()
+(()=>{
+  try {
+    const v=app.workspace.getLeavesOfType('cancip-view').map((leaf)=>leaf.view).find((view)=>view?.inputEl?.isConnected);
+    if(!v)throw new Error('rendered Cancip view unavailable');
+    const doc=v.containerEl.ownerDocument,body=doc.body,hadMobile=body.classList.contains('is-mobile'),originalFooter=v.footerEl;
+    const fixture=doc.createElement('div'),button=doc.createElement('button'),autocomplete=doc.createElement('button');
+    const PointerCtor=doc.defaultView.PointerEvent||doc.defaultView.MouseEvent;
+    let calls=0,autocompleteOpens=0;
+    const oldOpen=v.openAutocompleteSettings;
+    try {
+      body.classList.add('is-mobile');
+      fixture.className='obcc-footer is-viewport-floating';
+      button.className='obcc-composer-suggestion';
+      button.type='button';
+      autocomplete.className='obcc-autocomplete-apply';
+      autocomplete.type='button';
+      fixture.append(button,autocomplete);
+      body.append(fixture);
+      v.footerEl=fixture;
+      button.addEventListener('click',()=>{calls+=1});
+      v.openAutocompleteSettings=()=>{autocompleteOpens+=1};
+      v.bindAutocompleteApplyButton(autocomplete);
+      v.inputEl.focus();
+      const down=new PointerCtor('pointerdown',{bubbles:true,cancelable:true,button:0,pointerType:'touch',isPrimary:true});
+      const floatingFirstCanceled=!button.dispatchEvent(down);
+      button.dispatchEvent(new doc.defaultView.MouseEvent('click',{bubbles:true,cancelable:true,button:0}));
+      const autocompleteDown=new PointerCtor('pointerdown',{bubbles:true,cancelable:true,button:0,pointerType:'touch',isPrimary:true});
+      const autocompleteCanceled=!autocomplete.dispatchEvent(autocompleteDown);
+      autocomplete.dispatchEvent(new PointerCtor('pointerup',{bubbles:true,cancelable:true,button:0,pointerType:'touch',isPrimary:true}));
+      autocomplete.dispatchEvent(new doc.defaultView.MouseEvent('click',{bubbles:true,cancelable:true,button:0}));
+      return JSON.stringify({
+        mobileFirstTouch:calls===1&&floatingFirstCanceled,
+        floatingFooterFirstTouch:calls===1&&floatingFirstCanceled,
+        autocompleteFirstTouch:autocompleteCanceled&&autocompleteOpens===1,
+        calls,
+        floatingFirstCanceled,
+        autocompleteCanceled,
+        autocompleteOpens
+      });
+    } finally {
+      v.openAutocompleteSettings=oldOpen;
+      v.footerEl=originalFooter;
+      fixture.remove();
+      if(!hadMobile)body.classList.remove('is-mobile');
+    }
+  } catch(error) {
+    return JSON.stringify({error:String(error?.stack||error)});
+  }
+})()
 '@
     foreach ($stage in @($navigation, $tts, $highlight, $automation, $mobileTouch)) {
       if ($stage.error) { throw "interaction stage failed: $($stage.error)" }
@@ -1874,8 +1922,10 @@ if (Should-RunProgrammaticCase 'programmatic.interaction-regression-controls') {
       automationCollapsed = $automation.automationCollapsed
       automationMatched = $automation.automationMatched
       mobileFirstTouch = $mobileTouch.mobileFirstTouch
+      floatingFooterFirstTouch = $mobileTouch.floatingFooterFirstTouch
+      autocompleteFirstTouch = $mobileTouch.autocompleteFirstTouch
     }
-    foreach ($field in @('previousPromptSequence','sessionTtsNoFlash','highlightCentered','automationCollapsed','automationMatched','mobileFirstTouch')) {
+    foreach ($field in @('previousPromptSequence','sessionTtsNoFlash','highlightCentered','automationCollapsed','automationMatched','mobileFirstTouch','floatingFooterFirstTouch','autocompleteFirstTouch')) {
       if (-not [bool]$item.$field) { throw "interaction regression check failed: $field; $($item | ConvertTo-Json -Compress -Depth 8)" }
     }
     Add-CaseResult -Group 'programmaticCases' -Item @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs }

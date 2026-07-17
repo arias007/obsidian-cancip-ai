@@ -22607,12 +22607,19 @@ class CancipView extends ItemView {
   }
 
   private bindAutocompleteApplyButton(button: HTMLButtonElement): void {
+    let pointerTapActivatedAt = 0;
     const cancelLongPress = () => {
       if (this.autocompleteLongPressTimer !== null) window.clearTimeout(this.autocompleteLongPressTimer);
       this.autocompleteLongPressTimer = null;
     };
+    const activate = () => {
+      if (this.autocompleteSuggestion) this.applyAutocompleteSuggestion();
+      else this.openAutocompleteSettings();
+    };
     button.addEventListener("pointerdown", (event) => {
       if (event.pointerType === "mouse" && event.button !== 0) return;
+      if (event.isPrimary === false) return;
+      event.preventDefault();
       cancelLongPress();
       this.autocompleteLongPressOpened = false;
       this.autocompleteLongPressTimer = window.setTimeout(() => {
@@ -22621,7 +22628,14 @@ class CancipView extends ItemView {
         this.openAutocompleteSettings();
       }, 520);
     });
-    button.addEventListener("pointerup", cancelLongPress);
+    button.addEventListener("pointerup", (event) => {
+      cancelLongPress();
+      if (event.pointerType === "mouse" || this.autocompleteLongPressOpened) return;
+      event.preventDefault();
+      event.stopPropagation();
+      pointerTapActivatedAt = Date.now();
+      activate();
+    });
     button.addEventListener("pointercancel", cancelLongPress);
     button.addEventListener("pointerleave", cancelLongPress);
     button.addEventListener("contextmenu", (event) => {
@@ -22630,13 +22644,18 @@ class CancipView extends ItemView {
       this.openAutocompleteSettings();
     });
     button.addEventListener("click", (event) => {
+      if (pointerTapActivatedAt && Date.now() - pointerTapActivatedAt <= 900) {
+        event.preventDefault();
+        event.stopPropagation();
+        pointerTapActivatedAt = 0;
+        return;
+      }
       if (this.autocompleteLongPressOpened) {
         event.preventDefault();
         this.autocompleteLongPressOpened = false;
         return;
       }
-      if (this.autocompleteSuggestion) this.applyAutocompleteSuggestion();
-      else this.openAutocompleteSettings();
+      activate();
     });
   }
 
@@ -23415,7 +23434,9 @@ class CancipView extends ItemView {
     if (element.closest(".obcc-autocomplete-apply, .obcc-editor-autocomplete-apply, .obcc-tts-drag-handle, .obcc-document-stage, .obcc-review-resize-handle, [draggable='true']")) return;
     const actionable = element.closest<HTMLElement>("button, summary, [role='button']");
     if (!actionable || actionable.matches(":disabled") || actionable.getAttribute("aria-disabled") === "true") return;
-    const owned = this.contentEl.contains(actionable) || Boolean(this.overlayLayerEl?.contains(actionable));
+    const owned = this.contentEl.contains(actionable)
+      || Boolean(this.footerEl?.contains(actionable))
+      || Boolean(this.overlayLayerEl?.contains(actionable));
     if (!owned) return;
     event.preventDefault();
     event.stopPropagation();
