@@ -1917,7 +1917,7 @@ body .obcc-code-action-layer.obcc-code-action-layer > button.copy-code-button.co
   word-break: break-word;
 }
 
-.obcc-process-step-details:not([open]) > :not(summary),
+details.obcc-process-step-details:not([open]) > :not(summary),
 .obcc-process-audit-section:not([open]) > :not(summary) {
   display: none;
 }
