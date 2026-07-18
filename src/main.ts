@@ -2260,7 +2260,7 @@ class CancipButtonEditModal extends Modal {
 
 const CANCIP_AI_DIR = "AI/Cancip";
 const DEFAULT_MEMORY_FOLDER = `${CANCIP_AI_DIR}/Memory`;
-const DEFAULT_CODEX_MEMORY_IMPORT_PATH = "C:/Users/35007/.codex/memories";
+const DEFAULT_CODEX_MEMORY_IMPORT_PATH = "~/.codex/memories";
 const DEFAULT_CODEX_SKILLS_IMPORT_ROOT = `${CANCIP_AI_DIR}/Skills/Desktop`;
 const LEGACY_DEFAULT_MEMORY_FOLDER = "AI/Memory";
 const INTERRUPTED_DEFAULT_MEMORY_FOLDER = "Cancip/Memory";
@@ -2285,10 +2285,10 @@ const CODEX_CORE_MEMORY_FILES = [
   "INDEX.md"
 ] as const;
 const CODEX_SKILL_SOURCE_DIRS = [
-  "C:/Users/35007/.codex/skills",
-  "C:/Users/35007/.agents/skills"
+  "~/.codex/skills",
+  "~/.agents/skills"
 ] as const;
-const CODEX_PLUGIN_CACHE_DIR = "C:/Users/35007/.codex/plugins/cache";
+const CODEX_PLUGIN_CACHE_DIR = "~/.codex/plugins/cache";
 const CODEX_RECOMMENDED_SKILLS = [
   "memory-system",
   "obsidian",
@@ -41755,13 +41755,13 @@ class CancipSettingTab extends PluginSettingTab {
       this.plugin.refreshPersonalizedSurfaces();
       if (value) this.plugin.schedulePersonalizationRefresh(0);
     }, "settingsPersonalizedGreetingDesc");
-    this.addTextSetting(parent, "settingsPersonalizationFriendlyName", this.plugin.settings.personalizationFriendlyName, "木拉提", async (value) => {
+    this.addTextSetting(parent, "settingsPersonalizationFriendlyName", this.plugin.settings.personalizationFriendlyName, "例如：你的称呼", async (value) => {
       this.plugin.settings.personalizationFriendlyName = sanitizePersonalizationName(value);
       await this.plugin.saveSettings();
       this.plugin.invalidatePersonalizationFreshness();
       this.plugin.schedulePersonalizationRefresh(0);
     }, "settingsPersonalizationFriendlyNameDesc");
-    this.addTextSetting(parent, "settingsPersonalizationWeatherLocation", this.plugin.settings.personalizationWeatherLocation, "例如：乌鲁木齐", async (value) => {
+    this.addTextSetting(parent, "settingsPersonalizationWeatherLocation", this.plugin.settings.personalizationWeatherLocation, "例如：城市名", async (value) => {
       this.plugin.settings.personalizationWeatherLocation = sanitizePersonalizationLocation(value);
       await this.plugin.saveSettings();
       this.plugin.invalidatePersonalizationFreshness();
@@ -43092,7 +43092,24 @@ function normalizeImportedMarkdown(content: string): string {
 }
 
 function normalizeExternalPath(path: string): string {
-  return path.trim().replace(/\\/g, "/").replace(/\/+$/, "");
+  let normalized = path.trim().replace(/\\/g, "/").replace(/\/+$/, "");
+  if (normalized === "~" || normalized.startsWith("~/")) {
+    const home = getExternalHomeDirectory();
+    if (home) normalized = normalized === "~" ? home : `${home}/${normalized.slice(2)}`;
+  }
+  return normalized;
+}
+
+function getExternalHomeDirectory(): string | null {
+  try {
+    const requireLike = (window as unknown as { require?: (name: string) => unknown }).require;
+    if (typeof requireLike !== "function") return null;
+    const os = requireLike("os") as { homedir?: () => string };
+    const home = typeof os.homedir === "function" ? os.homedir() : "";
+    return home.trim().replace(/\\/g, "/").replace(/\/+$/, "") || null;
+  } catch {
+    return null;
+  }
 }
 
 function joinExternalPath(base: string, child: string): string {

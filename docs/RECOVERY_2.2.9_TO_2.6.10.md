@@ -6,12 +6,12 @@
 - The `2.2.9` TypeScript tree is the last large maintainable source before the catastrophic `2.6.10` replacement. `src/main.ts` has 38,795 lines and contains the full button editor, long-press registration, sorting, clipboard migration, custom sibling buttons, and rule matching code.
 - It is not an exact source copy of the released `2.2.9` runtime. A clean build from that source reproduces the `2.1.9` `main.js` exactly, while the released `2.2.9` runtime contains 35 additional hot-patched methods.
 - New recovery branch: `codex/2.8.0-recovery`.
-- Immutable source archive: `C:/Users/35007/Documents/Codex/backups/cancip-source-2.2.9-65ed357-20260713.zip`.
+- Immutable source archive: `<local-workspace>/backups/cancip-source-2.2.9-65ed357-20260713.zip`.
 - Source archive SHA256: `AAC009E30E42B2161CFE255517DFBB4E22ED453AB389279B6C8CEEB205A346A3`.
-- Runtime patch-chain archive: `C:/Users/35007/Documents/Codex/backups/cancip-runtime-patch-chain-2.5.4-to-2.6.10-20260713.zip`.
+- Runtime patch-chain archive: `<local-workspace>/backups/cancip-runtime-patch-chain-2.5.4-to-2.6.10-20260713.zip`.
 - Patch-chain archive SHA256: `7ACD20FA4A09D1393A34FA8E73EBA29B09C7168B813BD2759FDFDCC5BB1765FA`.
-- Closest recovered source candidate found later: `C:/Users/35007/Documents/Codex/github-staging/cancip-2.3.9-skills`, dirty worktree manifest `2.5.3`.
-- Closest source candidate archive: `C:/Users/35007/Documents/Codex/backups/cancip-source-2.5.3-dirty-near-2.6.10-20260713.zip`.
+- Closest recovered source candidate found later: `<local-workspace>/github-staging/cancip-2.3.9-skills`, dirty worktree manifest `2.5.3`.
+- Closest source candidate archive: `<local-workspace>/backups/cancip-source-2.5.3-dirty-near-2.6.10-20260713.zip`.
 - Closest source candidate SHA256: `EAD0732DE06CC79B23551EF2F520A61DB5DD9E7BC30FC19FCA57B21E17A41FBD`.
 
 ## Why 2.6.10 is not a valid source base
@@ -41,7 +41,7 @@ The `2.8.0` recovery tree therefore preserves the released `2.2.9` runtime files
 
 The best local candidate is no longer the tagged `2.2.9` source. A later dirty worktree exists at:
 
-`C:/Users/35007/Documents/Codex/github-staging/cancip-2.3.9-skills`
+`<local-workspace>/github-staging/cancip-2.3.9-skills`
 
 Important facts:
 
@@ -71,7 +71,7 @@ The first recovery batch is the following 35 methods:
 - GitHub tags and commit history checked back through the button-management versions.
 - GitHub Actions artifacts: zero retained artifacts.
 - Local Cancip Git object database: no unreachable commits containing another source tree.
-- Local Codex workspace, Desktop, Downloads, and `D:/share`: no complete `2.6.10` TypeScript source found. However, `C:/Users/35007/Documents/Codex/github-staging/cancip-2.3.9-skills` contains the closest recovered dirty `2.5.3` TypeScript source candidate.
+- Local Codex workspace, Desktop, Downloads, and `<shared-inbox>`: no complete `2.6.10` TypeScript source found. However, `<local-workspace>/github-staging/cancip-2.3.9-skills` contains the closest recovered dirty `2.5.3` TypeScript source candidate.
 - Local `work/cancip-2.5.4` through `work/cancip-2.6.10`: no TypeScript source, but the sequential runtime patch scripts, version tests, screenshots, README, and final runtime are preserved.
 
 ## Functional improvements after 2.2.9
@@ -198,7 +198,7 @@ High-risk replacement areas include Review Gate reconciliation, automation-state
 
 ## 2.8.0 recovery status on 2026-07-13
 
-- Active recovery repo: `C:/Users/35007/Documents/Codex/2026-07-13/cancip-2.8.0-recovery`.
+- Active recovery repo: `<local-workspace>/2026-07-13/cancip-2.8.0-recovery`.
 - Branch: `codex/2.8.0-recovery`.
 - Build version: `2.8.0`.
 - Source/runtime parity after rebuild: source methods `1154`, runtime methods `1154`, missing `0`, extra `0`.
