@@ -59,6 +59,11 @@ Cancip is a lightweight prototype for managing an Obsidian vault from a mobile-f
 - New-file curation runs in an isolated session with a stable minimal prompt prefix. A programmatic benefit gate classifies each file as curate, skip, or protected before any model call: only concrete high-value defects become candidates; clean, cosmetic-only, or Inbox-only cases are consumed silently; templates, frequently referenced notes, plugin syntax, and generated files are protected from automatic rename/restructure. Each candidate carries a defect-derived action allowlist so one formatting issue cannot authorize unrelated tags, links, summaries, or renaming.
 - TTS is provider-routed by language. English defaults to Web Speech / system TTS and does not need a local model package. Chinese can auto-download and use the current compact PrimeTTS Chinese/English ONNX package. Other languages use system/Web/custom URL unless a compatible local PrimeTTS package is installed under `tts/<package>/` with a manifest.
 
+## 2.14.14
+
+- 编辑器自动补全改为真正的前瞻流水线：首批三个轮换候选只有在各自三个二级候选全部进入缓存后才显示，当前批次始终先备齐 3+9 共 12 项；选中一级后同步切换到对应三个二级候选，不再临时等待模型。
+- 一级与二级改为一次紧凑的 3×3 树请求，首个响应直接缓存完整 12 项；显示下一层时再用一次批量请求准备新的九项，并按完整文件、前缀、模型和补全偏好复用进行中的 Promise。重复刷新不重复消耗请求，强制换批同样先通过 12 项就绪检查，生成期间保留现有候选。
+
 ## 2.14.13
 
 - 默认开启编辑器自动补全；只要光标仍在当前活动编辑器，即使焦点短暂转移到工作台或其他 UI，也会继续准备候选。首批 3 个候选先快速返回，3×3 二级候选随后后台预取；个性化缓存刷新只更新记忆，不再取消正在返回的补全。新会话启动立即后台预热个性化问候；没有可靠资料时只显示自然的时段问候，不声称“没有信息”或猜测近况。
