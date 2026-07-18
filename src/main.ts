@@ -2643,7 +2643,7 @@ const EDITOR_AUTOCOMPLETE_ROTATION_SECONDS_MIN = 2;
 const EDITOR_AUTOCOMPLETE_ROTATION_SECONDS_MAX = 30;
 const EDITOR_AUTOCOMPLETE_DEBOUNCE_MS = 300;
 const EDITOR_AUTOCOMPLETE_MODEL_COOLDOWN_MS = 650;
-const EDITOR_AUTOCOMPLETE_NETWORK_TIMEOUT_MS = 12_000;
+const EDITOR_AUTOCOMPLETE_NETWORK_TIMEOUT_MS = 20_000;
 const EDITOR_AUTOCOMPLETE_MAX_CANDIDATE_CHARS = 420;
 const EDITOR_AUTOCOMPLETE_MAX_BRANCH_CHARS = 320;
 const EDITOR_AUTOCOMPLETE_NEARBY_CONTEXT_CHARS = 1200;
@@ -6775,7 +6775,7 @@ function createCancipEditorAutocompleteExtension(plugin: CancipPlugin): Extensio
         return;
       }
       if (effects.some((effect) => effect.is(refreshEditorAutocompleteSuggestion))) {
-        this.schedule();
+        this.schedule(undefined, { force: true });
         return;
       }
       if (update.docChanged) {
@@ -6819,7 +6819,7 @@ function createCancipEditorAutocompleteExtension(plugin: CancipPlugin): Extensio
       }, plugin.editorAutocompleteRotationMs());
     }
 
-    private dispatchSuggestion(snapshot: EditorAutocompleteSuggestion, candidates: string[], candidateIndex = 0): void {
+    private dispatchSuggestion(snapshot: EditorAutocompleteSuggestion, candidates: string[], candidateIndex = 0, allowReplace = false): void {
       if (this.destroyed) return;
       const existing = this.view.state.field(editorAutocompleteState);
       const normalizedCandidates = uniqueEditorAutocompleteCandidates(candidates, plugin.editorAutocompleteCandidateCount());
@@ -6831,6 +6831,7 @@ function createCancipEditorAutocompleteExtension(plugin: CancipPlugin): Extensio
       if (!current || current.signature !== snapshot.signature) return;
       const sameBatch = existing?.signature === snapshot.signature
         && sameStringArray(existing.candidates, normalizedCandidates);
+      if (!allowReplace && existing?.signature === snapshot.signature && existing.candidates.length && !sameBatch) return;
       const requestedIndex = Math.max(0, Math.min(candidateIndex, normalizedCandidates.length - 1));
       const nextIndex = sameBatch
         ? Math.max(0, Math.min(existing.candidateIndex, normalizedCandidates.length - 1))
@@ -6877,6 +6878,16 @@ function createCancipEditorAutocompleteExtension(plugin: CancipPlugin): Extensio
       const path = plugin.app.workspace.getActiveFile()?.path ?? "";
       const prefetched = options.force ? [] : plugin.editorPrefetchedAutocompleteCandidates(snapshot.prefix, path);
       const waitForCompleteModelTree = plugin.editorAutocompleteModelConfigured();
+      const displayed = this.view.state.field(editorAutocompleteState);
+      const displayedBatchIsStable = !options.force
+        && displayed?.signature === snapshot.signature
+        && displayed.from === snapshot.from
+        && displayed.candidates.length > 0;
+      if (displayedBatchIsStable) {
+        this.queuedSnapshot = null;
+        this.queuedForce = false;
+        return;
+      }
       const immediateCandidates = uniqueEditorAutocompleteCandidates([
         ...(prefetched ?? []),
         ...(carried?.candidates ?? []),
@@ -6890,7 +6901,6 @@ function createCancipEditorAutocompleteExtension(plugin: CancipPlugin): Extensio
           if (prefetched.length) this.scheduleBranchPrefetch(snapshot, immediateCandidates, path);
         }, 0);
       }
-      const displayed = this.view.state.field(editorAutocompleteState);
       if (!immediateCandidates.length && (!displayed?.suffix || displayed.from !== snapshot.from)) {
         win.setTimeout(() => {
           if (requestId === this.requestId) this.dispatchSuggestion(snapshot, []);
@@ -6985,7 +6995,7 @@ function createCancipEditorAutocompleteExtension(plugin: CancipPlugin): Extensio
         return;
       }
       if (candidates.length) {
-        this.dispatchSuggestion(snapshot, candidates);
+        this.dispatchSuggestion(snapshot, candidates, 0, force);
         this.scheduleBranchPrefetch(snapshot, candidates, path);
       }
     }
@@ -14431,6 +14441,15 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
 
   async callLightweightAutocompleteModel(profile: ApiProfile, inputText: string, system: string, maxTokens: number): Promise<string> {
     if (!profile.apiUrl || !profile.apiKey || !profile.model) return "";
+    const finishActivity = this.beginEditorAutocompleteActivity();
+    try {
+      return await this.callLightweightAutocompleteModelCore(profile, inputText, system, maxTokens);
+    } finally {
+      finishActivity();
+    }
+  }
+
+  private async callLightweightAutocompleteModelCore(profile: ApiProfile, inputText: string, system: string, maxTokens: number): Promise<string> {
     const endpoint = normalizeApiUrl(profile.apiUrl);
     const requestDeadline = Date.now() + EDITOR_AUTOCOMPLETE_NETWORK_TIMEOUT_MS;
     const post = async (url: string, body: unknown): Promise<string> => {
@@ -14504,12 +14523,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
   }
 
   private async runEditorAutocompleteNetworkRequest<T>(request: () => Promise<T>, timeoutMs: number): Promise<T> {
-    const finishActivity = this.beginEditorAutocompleteActivity();
-    try {
-      return await withTimeout(request(), Math.max(1, timeoutMs), "editor autocomplete network timed out");
-    } finally {
-      finishActivity();
-    }
+    return await withTimeout(request(), Math.max(1, timeoutMs), "editor autocomplete network timed out");
   }
 
   private syncEditorAutocompleteMemorySettingsState(force = false): void {
@@ -15203,6 +15217,33 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     return trimContext(this.personalizationUsage.autocompleteSummary?.summary ?? "", 420);
   }
 
+  autocompletePreferenceAutomationSummary(days: number): string {
+    const sinceMs = Date.now() - days * 24 * 60 * 60 * 1000;
+    const events = (this.personalizationUsage.autocompleteSelections ?? [])
+      .filter((event) => Date.parse(event.at) >= sinceMs);
+    if (!events.length) return "- 最近窗口没有可用的自动补全选择记录。";
+    const summary = summarizeAutocompletePreference(events);
+    const positionCounts = summary.positionCounts
+      .map((count, index) => count ? `${index + 1}项${count}次` : "")
+      .filter(Boolean)
+      .join("、");
+    const triggerCounts = Object.entries(summary.triggerCounts)
+      .filter(([, count]) => count > 0)
+      .map(([trigger, count]) => `${trigger}${count}次`)
+      .join("、");
+    const reasonCounts = Object.entries(summary.reasonCounts)
+      .filter(([, count]) => count > 0)
+      .map(([reason, count]) => `${reason}${count}次`)
+      .join("、");
+    const preloadRate = Math.round((summary.preloadedNextBranchCount / summary.totalSelections) * 100);
+    return [
+      `- 最近${days}天记录：${summary.totalSelections}次；常接受第${summary.preferredPosition}项；位置分布：${positionCounts || "无"}。`,
+      `- 触发方式：${triggerCounts || "无"}；接受原因：${reasonCounts || "无"}；下一层预加载命中率：${preloadRate}%。`,
+      "- 改良依据：后续补全仅把上述统计作为低置信度排序参考，优先保持当前光标上下文和完整换行；不因统计自动改设置、不重复请求、不把未验证偏好写成硬规则。",
+      `- 现有摘要：${summary.summary}`
+    ].join("\n");
+  }
+
   editorLocalAutocompleteSuffix(prefix: string): string {
     const normalized = prefix.replace(/\s+/g, " ").trim();
     const tail = normalized.split(/[。！？!?；;]+/).pop()?.trim() ?? normalized;
@@ -15317,7 +15358,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
         try {
           const raw = await withTimeout(
             this.generateEditorAutocompleteSuffix(prefix, nearbyContext, path, profile, [], unclaimed),
-            14000,
+            EDITOR_AUTOCOMPLETE_NETWORK_TIMEOUT_MS,
             "editor autocomplete branch prefetch timed out"
           );
           if (generation !== this.editorAutocompleteGeneration
@@ -15424,7 +15465,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     }
     const cached = this.editorAutocompleteCache.get(cacheKey);
     if (cached !== undefined) return cached;
-    const busyDeadline = Date.now() + 15000;
+    const busyDeadline = Date.now() + EDITOR_AUTOCOMPLETE_NETWORK_TIMEOUT_MS;
     while (this.editorAutocompleteModelBusy && generation === this.editorAutocompleteGeneration && this.settings.composerAutocompleteEnabled && Date.now() < busyDeadline) {
       await sleep(80);
     }
@@ -15440,7 +15481,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     try {
         const raw = await withTimeout(
           this.generateEditorAutocompleteSuffix(prefix, nearbyContext, path, profile, options.excluded, options.roots),
-          14000,
+          EDITOR_AUTOCOMPLETE_NETWORK_TIMEOUT_MS,
           "editor autocomplete timed out"
         );
         if (generation !== this.editorAutocompleteGeneration) return [];
@@ -27434,6 +27475,7 @@ class CancipView extends ItemView {
   }
 
   private async buildMemoryDreamSourcePack(days: number): Promise<string> {
+    await this.plugin.loadPersonalizationUsage();
     const adapter = this.app.vault.adapter;
     const sinceMs = Date.now() - days * 24 * 60 * 60 * 1000;
     const readOptional = async (path: string, maxChars: number): Promise<string> => {
@@ -27454,6 +27496,7 @@ class CancipView extends ItemView {
       .slice(-80);
     const skills = await this.discoverSkills(true);
     const skillSummary = this.formatSkillsList(skills.slice(0, 40));
+    const autocompleteUsage = this.plugin.autocompletePreferenceAutomationSummary(days);
     return [
       "# Cancip Memory Dream Source Pack",
       `- generatedAt: ${new Date().toISOString()}`,
@@ -27478,6 +27521,9 @@ class CancipView extends ItemView {
       "## Existing dream log tail",
       dream || "- none",
       "",
+      "## 自动补全选择习惯",
+      autocompleteUsage,
+      "",
       "## Indexed Skills",
       skillSummary || "- none"
     ].join("\n");
@@ -27490,6 +27536,7 @@ class CancipView extends ItemView {
     const events = countRegex(sourcePack, /^- \d{4}-\d{2}-\d{2}T/gm);
     const skillCount = Number(sourcePack.match(/^- skillCount:\s*(\d+)/m)?.[1] ?? 0);
     const lines = sourcePack.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    const autocompleteSummary = sourcePack.split("## 自动补全选择习惯\n")[1]?.split(/\n## /)[0]?.trim() ?? "";
     const pickLines = (pattern: RegExp, limit = 6): string[] => lines
       .filter((line) => pattern.test(line))
       .slice(-limit)
@@ -27525,7 +27572,9 @@ class CancipView extends ItemView {
       skillLines.length ? skillLines.join("\n") : "- 本窗口无新增 Skill 候选。",
       "8. 噪音处理：",
       noiseSummary,
-      "9. 分类去向：稳定偏好进 PREFERENCES/CANCIP_RULES；项目状态进 PROJECT_MEMORY；执行经验进 experience；可复用流程进 built-in/generated Skill；低价值重复日志只保留归档或压缩摘要。",
+      "9. 自动补全选择习惯：",
+      autocompleteSummary ? autocompleteSummary : "- 本窗口没有可用的自动补全选择记录。",
+      "10. 分类去向：稳定偏好进 PREFERENCES/CANCIP_RULES；项目状态进 PROJECT_MEMORY；执行经验进 experience；可复用流程进 built-in/generated Skill；低价值重复日志只保留归档或压缩摘要。",
       "",
       "总：DREAM.md 保存可读结论，skills-index 保存机器索引，experience 超阈值时会备份后压缩，后续按需读取而不是默认发送大段历史。"
     ].join("\n");
@@ -43252,6 +43301,7 @@ function buildMemoryDreamPrompt(): string {
     "第二阶段：重复流程审计。",
     "1. 回顾最近 30 天工作记录；不足 30 天则查看全部可用记录。信息优先级严格为：近期会话 > 记忆记录 > 外部纪事。",
     "2. 覆盖编码、写作、办公和其他实际工作场景，寻找重复、耗时、易出错的固定手动流程。",
+    "2.5. 同时读取本地‘自动补全选择习惯’摘要，分析用户常接受的位置、触发方式、自动轮换和预加载命中情况；只把统计作为低置信度改良依据，不把推断当成指令，不额外发送模型请求。",
     "3. 仅保留同时满足四项的候选：重复至少 2 次；步骤固定；标准化后能明显提升效率或降低错误；当前尚未被 Skill、子代理路线、自动化或等效功能覆盖。",
     "4. 一次性任务、描述模糊、证据不足、仅有偏好规则、已经标准化或需要每次重新判断的任务直接跳过，不为凑数量创建资产。",
     "",
