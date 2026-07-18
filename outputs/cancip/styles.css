@@ -3975,20 +3975,40 @@ details.obcc-process-step-details:not([open]) > :not(summary),
 }
 
 .obcc-editor-autocomplete-widget {
-  display: inline-flex;
-  align-items: flex-end;
-  gap: 3px;
-  max-width: min(74vw, 72ch);
-  margin-inline-start: 1px;
+  display: inline-block;
+  position: relative;
+  width: 0;
+  height: 1em;
+  overflow: visible;
   color: var(--text-faint);
   vertical-align: baseline;
   user-select: none;
+  pointer-events: none;
+}
+
+.obcc-editor-autocomplete-overlay {
+  display: block;
+  position: absolute;
+  z-index: 2;
+  inset-block-start: var(--obcc-editor-autocomplete-block-start, 0);
+  inset-inline-start: var(--obcc-editor-autocomplete-inline-start, 0);
+  width: var(--obcc-editor-autocomplete-overlay-width, min(74vw, 72ch));
+  min-width: 0;
+  color: var(--text-faint);
+  text-indent: var(--obcc-editor-autocomplete-first-line-indent, 0);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.obcc-editor-autocomplete-widget.is-positioned > .obcc-editor-autocomplete-overlay {
+  visibility: visible;
 }
 
 .obcc-editor-autocomplete-ghost {
-  display: inline-block;
+  display: inline;
   min-width: 0;
-  max-width: 100%;
   overflow: visible;
   color: var(--text-faint);
   opacity: 0.72;
@@ -3999,14 +4019,18 @@ details.obcc-process-step-details:not([open]) > :not(summary),
 }
 
 .obcc-editor-autocomplete-position {
-  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-width: 3ch;
+  margin-inline-start: 3px;
   color: var(--text-faint);
   font-size: var(--font-smallest);
   line-height: 20px;
   opacity: 0.72;
   text-align: center;
   white-space: nowrap;
+  pointer-events: auto;
 }
 
 .obcc-editor-autocomplete-apply {
@@ -4019,6 +4043,7 @@ details.obcc-process-step-details:not([open]) > :not(summary),
   height: 20px;
   min-height: 20px;
   margin: 0;
+  margin-inline-start: 3px;
   padding: 3px;
   border: 0;
   border-radius: 4px;
@@ -4027,6 +4052,7 @@ details.obcc-process-step-details:not([open]) > :not(summary),
   box-shadow: none;
   opacity: 0.72;
   vertical-align: middle;
+  pointer-events: auto;
 }
 
 .obcc-editor-autocomplete-apply:hover,

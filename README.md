@@ -59,6 +59,12 @@ Cancip is a lightweight prototype for managing an Obsidian vault from a mobile-f
 - New-file curation runs in an isolated session with a stable minimal prompt prefix. A programmatic benefit gate classifies each file as curate, skip, or protected before any model call: only concrete high-value defects become candidates; clean, cosmetic-only, or Inbox-only cases are consumed silently; templates, frequently referenced notes, plugin syntax, and generated files are protected from automatic rename/restructure. Each candidate carries a defect-derived action allowlist so one formatting issue cannot authorize unrelated tags, links, summaries, or renaming.
 - TTS is provider-routed by language. English defaults to Web Speech / system TTS and does not need a local model package. Chinese can auto-download and use the current compact PrimeTTS Chinese/English ONNX package. Other languages use system/Web/custom URL unless a compatible local PrimeTTS package is installed under `tts/<package>/` with a manifest.
 
+## 2.14.12
+
+- Keeps recursive 3-by-3 editor completion prefetch, but makes it lighter: compact complete candidates, smaller relevant context, lower output budget, shorter debounce/cooldown, and a cached working Responses/Chat Completions route avoid repeated failed transport probes.
+- Selecting a completion synchronously adopts its prefetched children at the new cursor, including multiline candidates. If recursive prefetch finishes after selection, the inserted text is matched and its children are handed off without losing the branch.
+- Editor ghost text now participates in the same inline text flow as inserted text instead of moving as one atomic flex box, so wrapping and explicit newlines begin at the real cursor position and match the applied result.
+
 ## 2.14.11
 
 - Mobile buttons inside the keyboard-lifted composer footer now remain owned by the Cancip view after the footer is portaled to the document body, so recommendations, menus, queue controls, model/access actions, and Send execute on the first touch instead of only dismissing the keyboard.

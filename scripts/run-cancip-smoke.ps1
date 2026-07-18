@@ -1951,10 +1951,43 @@ if (Should-RunProgrammaticCase 'programmatic.context-editor-settings') {
 (async()=>{const p=app.plugins.plugins.cancip,v=app.workspace.getLeavesOfType('cancip-view')[0]?.view;if(!p||!v)throw new Error('runtime unavailable');const old={profiles:p.settings.apiProfiles,active:p.settings.activeApiProfileId,selected:p.settings.composerAutocompleteApiProfileId,enabled:p.settings.composerAutocompleteEnabled,save:p.saveSettings,editorCache:p.editorAutocompleteCache,generation:p.editorAutocompleteGeneration,signature:p.autocompleteProfileStateSignature,viewCache:v.autocompleteCache,requestId:v.autocompleteRequestId};const primary={id:'smoke-current',name:'当前配置',apiUrl:'https://smoke.invalid/v1',apiKey:'current-key',apiMode:'compatible',model:'smoke-current-model'},selected={id:'smoke-autocomplete',name:'补全专用',apiUrl:'https://smoke.invalid/v1',apiKey:'autocomplete-key',apiMode:'compatible',model:'smoke-autocomplete-model'};try{p.settings.apiProfiles=[primary,selected];p.settings.activeApiProfileId=primary.id;p.settings.composerAutocompleteApiProfileId='';p.settings.composerAutocompleteEnabled=false;p.editorAutocompleteCache=new Map([['stale','value']]);v.autocompleteCache=new Map([['stale',{suffix:'旧补全',choices:[]}]]);p.saveSettings=async()=>{};await p.selectAutocompleteApiProfile(selected.id);const routed=p.autocompleteApiProfile(),options=p.autocompleteApiProfileOptions(),selectedRoute=routed.id===selected.id&&routed.model===selected.model,selectionStored=p.settings.composerAutocompleteApiProfileId===selected.id,cacheInvalidated=p.editorAutocompleteCache.size===0&&v.autocompleteCache.size===0&&v.autocompleteRequestId>old.requestId,optionLabels=options.some(option=>option.value===''&&option.label.includes('跟随当前模型'))&&options.some(option=>option.value===selected.id&&option.label.includes(selected.model)&&option.label.includes(selected.name));selected.apiKey='';const missingCredentialFallback=p.autocompleteApiProfile().id===primary.id;p.settings.composerAutocompleteApiProfileId='missing-profile';const missingProfileFallback=p.autocompleteApiProfile().id===primary.id;return JSON.stringify({selectedRoute,selectionStored,cacheInvalidated,optionLabels,missingCredentialFallback,missingProfileFallback})}finally{p.settings.apiProfiles=old.profiles;p.settings.activeApiProfileId=old.active;p.settings.composerAutocompleteApiProfileId=old.selected;p.settings.composerAutocompleteEnabled=old.enabled;p.saveSettings=old.save;p.editorAutocompleteCache=old.editorCache;p.editorAutocompleteGeneration=old.generation;p.autocompleteProfileStateSignature=old.signature;v.autocompleteCache=old.viewCache;v.autocompleteRequestId=old.requestId}})()
 '@
     $editorTreeCode = @'
-(async()=>{const p=app.plugins.plugins.cancip;if(!p)throw new Error('runtime unavailable');const h=Object.create(p),profile={...p.activeApiProfile(),id:'tree-smoke-profile',name:'tree smoke',apiUrl:'https://smoke.invalid/v1',apiKey:'smoke',model:'smoke-model'};h.settings={...p.settings,apiProfiles:[profile],activeApiProfileId:profile.id,composerAutocompleteApiProfileId:'',composerAutocompleteEnabled:true};h.personalizationCache=null;h.editorAutocompleteCache=new Map();h.editorAutocompleteBranchCache=new Map();h.editorAutocompleteModelBusy=false;h.editorAutocompleteLastModelAt=0;h.editorAutocompleteGeneration=0;h.editorLocalAutocompleteSuffix=()=>'';h.beginEditorAutocompleteActivity=()=>()=>{};let calls=0;h.generateEditorAutocompleteSuffix=async(_prefix,_context,path,_profile,_excluded,roots=[])=>{if(path!=='tree-smoke.md')return JSON.stringify({candidates:[]});calls+=1;const selected=Array.isArray(roots)&&roots.length?roots:['第一层A','第一层B','第一层C'];return JSON.stringify({candidates:selected.map((text,index)=>({text,next:[`下一级${index+1}-A`,`下一级${index+1}-B`,`下一级${index+1}-C`]}))})};const first=await h.editorAutocompleteCandidates('开始','开始<CURSOR>','tree-smoke.md',{force:true}),second=h.editorPrefetchedAutocompleteCandidates('开始第一层A','tree-smoke.md'),locked=await h.editorAutocompleteCandidates('开始第一层A','开始第一层A<CURSOR>','tree-smoke.md',{roots:second}),third=h.editorPrefetchedAutocompleteCandidates(`开始第一层A${second[0]}`,'tree-smoke.md');return JSON.stringify({editorTree:first.length===3&&first[0]==='第一层A'&&second.length===3&&locked.join('|')===second.join('|')&&third.length===3&&calls>=2,first,second,locked,third,calls})})()
+(async()=>{
+  const p=app.plugins.plugins.cancip;
+  if(!p)throw new Error('runtime unavailable');
+  const h=Object.create(p),path='tree-smoke.md',profile={...p.activeApiProfile(),id:'tree-smoke-profile',name:'tree smoke',apiUrl:'https://smoke.invalid/v1',apiKey:'smoke',model:'smoke-model'};
+  h.settings={...p.settings,apiProfiles:[profile],activeApiProfileId:profile.id,composerAutocompleteApiProfileId:'',composerAutocompleteEnabled:true};
+  h.personalizationCache=null;
+  h.editorAutocompleteCache=new Map();
+  h.editorAutocompleteBranchCache=new Map();
+  h.editorAutocompleteModelBusy=false;
+  h.editorAutocompleteLastModelAt=0;
+  h.editorAutocompleteGeneration=0;
+  h.editorLocalAutocompleteSuffix=()=>'';
+  h.beginEditorAutocompleteActivity=()=>()=>{};
+  let calls=0;
+  h.generateEditorAutocompleteSuffix=async(_prefix,_context,requestPath,_profile,_excluded,roots=[])=>{
+    if(requestPath!==path)return JSON.stringify({candidates:[]});
+    calls+=1;
+    const selected=Array.isArray(roots)&&roots.length?roots:['第一层A\n接续','第一层B','第一层C'];
+    return JSON.stringify({candidates:selected.map((text,index)=>({text,next:[`下一级${calls}-${index+1}-A`,`下一级${calls}-${index+1}-B`,`下一级${calls}-${index+1}-C`]}))});
+  };
+  const first=await h.editorAutocompleteCandidates('开始','开始<CURSOR>',path,{force:true});
+  const second=h.editorPrefetchedAutocompleteCandidates(`开始${first[0]}`,path);
+  const alias=h.rememberEditorAutocompleteCandidateAlias('接续',path,second);
+  const aliasHit=h.editorPrefetchedAutocompleteCandidates('接续',path);
+  const locked=await h.editorAutocompleteCandidates('接续','开始第一层A\n接续<CURSOR>',path,{roots:aliasHit});
+  const third=h.editorPrefetchedAutocompleteCandidates(`接续${locked[0]}`,path);
+  const completeFirstLayer=first.length===3&&first[0]==='第一层A\n接续';
+  const completeSecondLayer=second.length===3&&alias.length===3&&aliasHit.join('|')===second.join('|');
+  const completeRecursiveLayer=locked.length===3&&locked.join('|')===second.join('|')&&third.length===3&&calls>=2;
+  return JSON.stringify({editorTree:completeFirstLayer&&completeSecondLayer&&completeRecursiveLayer,multilineAlias:completeSecondLayer,recursivePrefetch:completeRecursiveLayer,first,second,locked,third,calls});
+})()
 '@
     $editorMemoryCode = @'
-(async()=>{const p=app.plugins.plugins.cancip;if(!p)throw new Error('runtime unavailable');const old={include:p.settings.includeCoreMemory,enabled:p.settings.composerAutocompleteEnabled,corpus:p.editorAutocompleteMemoryCorpusCache,promise:p.editorAutocompleteMemoryCorpusPromise,call:p.callLightweightAutocompleteModel};let captured='';try{p.settings.includeCoreMemory=true;p.settings.composerAutocompleteEnabled=false;p.editorAutocompleteMemoryCorpusPromise=null;p.editorAutocompleteMemoryCorpusCache={at:Date.now(),documents:[{path:'AI/Cancip/Memory/USER_PREFERENCES_QUICK.md',content:'用户称呼木拉提。偏好中文、结论优先、回答精简。apiKey: smoke-secret-value',kind:'memory',priority:0,updatedAt:Date.now()},{path:'AI/Cancip/Memory/PROFILE.md',content:'木拉提负责医疗行政、转诊协调和证书整理。',kind:'memory',priority:1,updatedAt:Date.now()},{path:'AI/Cancip/Memory/WORKFLOWS.md',content:'复诊安排固定流程：核对患者、日期、材料，再确认通知结果。',kind:'memory',priority:4,updatedAt:Date.now()},{path:'.cancip/PROJECT_MEMORY.md',content:'当前项目正在优化 Cancip 笔记自动补全和记忆检索。',kind:'project',priority:12,updatedAt:Date.now()},{path:'.cancip/sessions/recent.json',content:'会话：继续安排复诊\n用户：整理复诊材料并核对通知。',kind:'session',priority:30,updatedAt:Date.now()},{path:'AI/Cancip/Memory/TRADING.md',content:'量化交易回测与仓位控制。',kind:'memory',priority:40,updatedAt:Date.now()}]};const context=await p.editorAutocompleteMemoryContext('继续安排复诊','今天需要继续安排复诊并核对材料','常用/日记/2026-07-17.md');p.callLightweightAutocompleteModel=async(_profile,input)=>{captured=input;return JSON.stringify({suffix:'并确认通知结果'})};const raw=await p.generateEditorAutocompleteSuffix('继续安排复诊','今天需要继续安排复诊并核对材料','常用/日记/2026-07-17.md',{id:'smoke',name:'smoke',apiUrl:'https://smoke.invalid/v1',apiKey:'smoke',apiMode:'compatible',model:'smoke-model'});return JSON.stringify({richMemory:context.includes('木拉提')&&context.includes('复诊安排固定流程')&&context.includes('继续安排复诊'),memoryRelevant:!context.includes('量化交易回测'),memoryBounded:context.length>120&&context.length<=3600,memoryRedacted:!context.includes('smoke-secret-value')&&context.includes('REDACTED'),memoryInjected:captured.includes('相关记忆')&&captured.includes('复诊安排固定流程'),modelCalled:raw.includes('确认通知结果')})}finally{p.settings.includeCoreMemory=old.include;p.settings.composerAutocompleteEnabled=old.enabled;p.editorAutocompleteMemoryCorpusCache=old.corpus;p.editorAutocompleteMemoryCorpusPromise=old.promise;p.callLightweightAutocompleteModel=old.call}})()
+(async()=>{const p=app.plugins.plugins.cancip;if(!p)throw new Error('runtime unavailable');const old={include:p.settings.includeCoreMemory,enabled:p.settings.composerAutocompleteEnabled,corpus:p.editorAutocompleteMemoryCorpusCache,promise:p.editorAutocompleteMemoryCorpusPromise};try{p.settings.includeCoreMemory=true;p.settings.composerAutocompleteEnabled=false;p.editorAutocompleteMemoryCorpusPromise=null;p.editorAutocompleteMemoryCorpusCache={at:Date.now(),documents:[{path:'AI/Cancip/Memory/USER_PREFERENCES_QUICK.md',content:'用户称呼木拉提。偏好中文、结论优先、回答精简。apiKey: smoke-secret-value',kind:'memory',priority:0,updatedAt:Date.now()},{path:'AI/Cancip/Memory/PROFILE.md',content:'木拉提负责医疗行政、转诊协调和证书整理。',kind:'memory',priority:1,updatedAt:Date.now()},{path:'AI/Cancip/Memory/WORKFLOWS.md',content:'复诊安排固定流程：核对患者、日期、材料，再确认通知结果。',kind:'memory',priority:4,updatedAt:Date.now()},{path:'.cancip/PROJECT_MEMORY.md',content:'当前项目正在优化 Cancip 笔记自动补全和记忆检索。',kind:'project',priority:12,updatedAt:Date.now()},{path:'.cancip/sessions/recent.json',content:'会话：继续安排复诊\n用户：整理复诊材料并核对通知。',kind:'session',priority:30,updatedAt:Date.now()},{path:'AI/Cancip/Memory/TRADING.md',content:'量化交易回测与仓位控制。',kind:'memory',priority:40,updatedAt:Date.now()}]};const context=await p.editorAutocompleteMemoryContext('继续安排复诊','今天需要继续安排复诊并核对材料','常用/日记/2026-07-17.md');return JSON.stringify({richMemory:context.includes('木拉提')&&context.includes('复诊安排固定流程')&&context.includes('继续安排复诊'),memoryRelevant:!context.includes('量化交易回测'),memoryBounded:context.length>120&&context.length<=3600,memoryRedacted:!context.includes('smoke-secret-value')&&context.includes('REDACTED')})}finally{p.settings.includeCoreMemory=old.include;p.settings.composerAutocompleteEnabled=old.enabled;p.editorAutocompleteMemoryCorpusCache=old.corpus;p.editorAutocompleteMemoryCorpusPromise=old.promise}})()
+'@
+    $editorPromptCode = @'
+(async()=>{const p=app.plugins.plugins.cancip;if(!p)throw new Error('runtime unavailable');const old={include:p.settings.includeCoreMemory,call:p.callLightweightAutocompleteModel};let captured='',capturedSystem='',capturedMaxTokens=0;try{p.settings.includeCoreMemory=false;p.callLightweightAutocompleteModel=async(_profile,input,system,maxTokens)=>{captured=input;capturedSystem=system;capturedMaxTokens=maxTokens;return JSON.stringify({candidates:[{text:'补全A',next:['A1','A2','A3']},{text:'补全B',next:['B1','B2','B3']},{text:'补全C',next:['C1','C2','C3']}]})};const raw=await p.generateEditorAutocompleteSuffix('继续安排复诊','今天需要继续安排复诊<CURSOR>并核对材料','常用/日记/2026-07-17.md',{id:'smoke',name:'smoke',apiUrl:'https://smoke.invalid/v1',apiKey:'smoke',apiMode:'compatible',model:'smoke-model'});return JSON.stringify({memoryInjected:captured.includes('<CURSOR>')&&!captured.includes('相关记忆'),modelBudget:capturedMaxTokens===1400&&captured.length<2600&&capturedSystem.includes('3×3')&&capturedSystem.includes('三个不同'),modelCalled:raw.includes('补全A')&&raw.includes('C3')})}finally{p.settings.includeCoreMemory=old.include;p.callLightweightAutocompleteModel=old.call}})()
 '@
     $editorMemoryInvalidationCode = @'
 (()=>{const p=app.plugins.plugins.cancip;if(!p)throw new Error('runtime unavailable');const old={enabled:p.settings.composerAutocompleteEnabled,corpus:p.editorAutocompleteMemoryCorpusCache,promise:p.editorAutocompleteMemoryCorpusPromise,memoryGeneration:p.editorAutocompleteMemoryGeneration,generation:p.editorAutocompleteGeneration,editorCache:p.editorAutocompleteCache};try{p.settings.composerAutocompleteEnabled=false;p.editorAutocompleteMemoryCorpusCache={at:Date.now(),documents:[]};p.editorAutocompleteMemoryCorpusPromise=null;p.editorAutocompleteCache=new Map([['stale','value']]);const beforeGeneration=p.editorAutocompleteGeneration;p.invalidateEditorAutocompleteMemoryContext();return JSON.stringify({memoryInvalidated:p.editorAutocompleteMemoryCorpusCache===null&&p.editorAutocompleteCache.size===0&&p.editorAutocompleteGeneration>beforeGeneration})}finally{p.settings.composerAutocompleteEnabled=old.enabled;p.editorAutocompleteMemoryCorpusCache=old.corpus;p.editorAutocompleteMemoryCorpusPromise=old.promise;p.editorAutocompleteMemoryGeneration=old.memoryGeneration;p.editorAutocompleteGeneration=old.generation;p.editorAutocompleteCache=old.editorCache}})()
@@ -1988,6 +2021,8 @@ if (Should-RunProgrammaticCase 'programmatic.context-editor-settings') {
     $editorTree = Invoke-CancipEval -Code (ConvertTo-CancipEvalBootstrap -Code $editorTreeCode) -TimeoutSeconds 25
     Write-Host 'context/editor stage: rich-memory'
     $editorMemory = Invoke-CancipEval -Code (ConvertTo-CancipEvalBootstrap -Code $editorMemoryCode) -TimeoutSeconds 20
+    Write-Host 'context/editor stage: model-prompt-budget'
+    $editorPrompt = Invoke-CancipEval -Code (ConvertTo-CancipEvalBootstrap -Code $editorPromptCode) -TimeoutSeconds 20
     Write-Host 'context/editor stage: memory-invalidation'
     $editorMemoryInvalidation = Invoke-CancipEval -Code (ConvertTo-CancipEvalBootstrap -Code $editorMemoryInvalidationCode) -TimeoutSeconds 20
     Write-Host 'context/editor stage: current-file'
@@ -2013,12 +2048,15 @@ if (Should-RunProgrammaticCase 'programmatic.context-editor-settings') {
       autocompleteModelCredentialFallback = $autocompleteModel.missingCredentialFallback
       autocompleteModelMissingFallback = $autocompleteModel.missingProfileFallback
       editorAutocompleteTree = $editorTree.editorTree
+      editorAutocompleteMultilineAlias = $editorTree.multilineAlias
+      editorAutocompleteRecursivePrefetch = $editorTree.recursivePrefetch
       editorRichMemory = $editorMemory.richMemory
       editorMemoryRelevant = $editorMemory.memoryRelevant
       editorMemoryBounded = $editorMemory.memoryBounded
       editorMemoryRedacted = $editorMemory.memoryRedacted
-      editorMemoryInjected = $editorMemory.memoryInjected
-      editorMemoryModelCalled = $editorMemory.modelCalled
+      editorMemoryInjected = $editorPrompt.memoryInjected
+      editorModelBudget = $editorPrompt.modelBudget
+      editorMemoryModelCalled = $editorPrompt.modelCalled
       editorMemoryInvalidated = $editorMemoryInvalidation.memoryInvalidated
       currentFileSnapshot = $currentFile.currentFileSnapshot
       settingsScrollStable = $settings.settingsScrollStable
@@ -2027,7 +2065,7 @@ if (Should-RunProgrammaticCase 'programmatic.context-editor-settings') {
       settingsPagesSeparated = $settingsTabs.settingsPagesSeparated
       personalizationEvidence = $evidence.personalizationEvidence
     }
-    foreach ($field in @('editorLocal','editorModel','editorWithoutChatLeaf','editorSpinner','editorExtension','autocompleteModelRoute','autocompleteModelStored','autocompleteModelCacheInvalidated','autocompleteModelOptions','autocompleteModelCredentialFallback','autocompleteModelMissingFallback','editorAutocompleteTree','editorRichMemory','editorMemoryRelevant','editorMemoryBounded','editorMemoryRedacted','editorMemoryInjected','editorMemoryModelCalled','editorMemoryInvalidated','currentFileSnapshot','settingsScrollStable','settingsTabsStable','settingsPagesSeparated','personalizationEvidence')) {
+    foreach ($field in @('editorLocal','editorModel','editorWithoutChatLeaf','editorSpinner','editorExtension','autocompleteModelRoute','autocompleteModelStored','autocompleteModelCacheInvalidated','autocompleteModelOptions','autocompleteModelCredentialFallback','autocompleteModelMissingFallback','editorAutocompleteTree','editorAutocompleteMultilineAlias','editorAutocompleteRecursivePrefetch','editorRichMemory','editorMemoryRelevant','editorMemoryBounded','editorMemoryRedacted','editorMemoryInjected','editorModelBudget','editorMemoryModelCalled','editorMemoryInvalidated','currentFileSnapshot','settingsScrollStable','settingsTabsStable','settingsPagesSeparated','personalizationEvidence')) {
       if (-not [bool]$item.$field) { throw "context/editor/settings check failed: $field; $($item | ConvertTo-Json -Compress -Depth 8)" }
     }
     Add-CaseResult -Group 'programmaticCases' -Item @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs; settingsOffsetError = $item.settingsOffsetError }
@@ -2050,73 +2088,102 @@ if (Should-RunProgrammaticCase 'programmatic.editor-autocomplete-mounted') {
     $setupCode = @'
 (async()=>{
   const p=app.plugins.plugins.cancip,previousActiveLeaf=app.workspace.activeLeaf??null;
-  const leaves=app.workspace.getLeavesOfType('markdown').filter((item)=>item.view?.editor?.cm);
-  const leaf=leaves.find((item)=>{const rect=item.view.editor.cm.contentDOM.getBoundingClientRect();return rect.width>0&&rect.height>0})||leaves[0];
+  let leaf=null;
+  for(let attempt=0;attempt<30&&!leaf;attempt+=1){const leaves=app.workspace.getLeavesOfType('markdown').filter((item)=>item.view?.editor?.cm);leaf=leaves.find((item)=>{const rect=item.view.editor.cm.contentDOM.getBoundingClientRect();return rect.width>0&&rect.height>0})||leaves[0]||null;if(!leaf)await new Promise((resolve)=>setTimeout(resolve,200));}
   if(!p||!leaf)throw new Error('mounted Markdown editor unavailable');
   await app.workspace.revealLeaf(leaf);
   await app.workspace.setActiveLeaf(leaf,{focus:true});
   await new Promise((resolve)=>setTimeout(resolve,80));
-  const editor=leaf.view.editor,cm=editor.cm,doc=cm.dom.ownerDocument,before=editor.getValue(),oldCursor=editor.getCursor(),old={enabled:p.settings.composerAutocompleteEnabled,local:p.editorLocalAutocompleteSuffix,model:p.editorAutocompleteCandidates};
+  const editor=leaf.view.editor,cm=editor.cm,doc=cm.dom.ownerDocument,before=editor.getValue(),oldCursor=editor.getCursor(),old={enabled:p.settings.composerAutocompleteEnabled,local:p.editorLocalAutocompleteSuffix,model:p.editorAutocompleteCandidates,branchCache:p.editorAutocompleteBranchCache};
   let target=null;
   for(let line=0;line<editor.lineCount();line+=1){const text=editor.getLine(line)||'';if(text.trim().length>=3){target={line,ch:text.length};break}}
   if(!target)throw new Error('eligible Markdown line unavailable');
-  const smoke={leaf,previousActiveLeaf,editor,cm,doc,before,oldCursor,old,target,calls:0,hadOwnDocumentHasFocus:Object.prototype.hasOwnProperty.call(doc,'hasFocus'),oldDocumentHasFocus:doc.hasFocus};
+  const path=leaf.view.file?.path||'',prefix=editor.getLine(target.line)||'',roots=['第一项\n完整补全','第二项\n包含换行','第三项\n完整补全'],branches=new Map(roots.map((root,index)=>[root,[`后续${index+1}-A`,`后续${index+1}-B`,`后续${index+1}-C`]]));
+  const smoke={leaf,previousActiveLeaf,editor,cm,doc,before,oldCursor,old,target,path,prefix,roots,branches,calls:0,hadOwnDocumentHasFocus:Object.prototype.hasOwnProperty.call(doc,'hasFocus'),oldDocumentHasFocus:doc.hasFocus};
   p.__editorAutocompleteSmoke=smoke;
   doc.hasFocus=()=>true;
   p.settings.composerAutocompleteEnabled=true;
   p.editorLocalAutocompleteSuffix=()=>'';
-  p.editorAutocompleteCandidates=async()=>{smoke.calls+=1;return ['第一项完整补全','第二项\n包含换行','第三项完整补全']};
+  p.editorAutocompleteBranchCache=new Map();
+  p.editorAutocompleteCandidates=async(requestPrefix,_context,requestPath,options={})=>{smoke.calls+=1;const selected=Array.isArray(options.roots)&&options.roots.length?options.roots:roots;for(const [index,root] of selected.entries()){const children=branches.get(root)||[`递归${index+1}-A`,`递归${index+1}-B`,`递归${index+1}-C`];p.rememberEditorAutocompleteCandidateAlias(`${requestPrefix}${root}`,requestPath,children)}return selected};
   cm.focus();
   editor.setCursor(target);
   cm.dispatch({selection:{anchor:cm.state.selection.main.head}});
-  return JSON.stringify({ok:true,target,path:leaf.view.file?.path||'',hasFocus:cm.hasFocus});
+  return JSON.stringify({ok:true,target,path,hasFocus:cm.hasFocus});
 })()
 '@
-    $snapshotCode = @'
-(()=>{const p=app.plugins.plugins.cancip,s=p?.__editorAutocompleteSmoke;if(!s)throw new Error('autocomplete smoke state unavailable');const ghostEl=s.leaf.containerEl.querySelector('.obcc-editor-autocomplete-ghost'),style=ghostEl?getComputedStyle(ghostEl):null;return JSON.stringify({ghost:ghostEl?.textContent||'',position:s.leaf.containerEl.querySelector('.obcc-editor-autocomplete-position')?.textContent||'',whiteSpace:style?.whiteSpace||'',textOverflow:style?.textOverflow||'',calls:s.calls,hasFocus:s.cm.hasFocus,documentFocus:s.doc.hasFocus(),documentUntouched:s.editor.getValue()===s.before})})()
-'@
-    $menuCode = @'
-(()=>{const p=app.plugins.plugins.cancip,s=p?.__editorAutocompleteSmoke;if(!s)throw new Error('autocomplete smoke state unavailable');const doc=s.cm.dom.ownerDocument,button=s.leaf.containerEl.querySelector('.obcc-editor-autocomplete-apply'),beforePosition=s.leaf.containerEl.querySelector('.obcc-editor-autocomplete-position')?.textContent||'';button?.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,view:doc.defaultView}));const menus=Array.from(doc.querySelectorAll('.menu')),menu=menus[menus.length-1],menuText=menu?.textContent||'',menuComplete=['上一个补全','下一个补全','换一批补全','应用补全','选择补全模型','编辑补全提示','关闭自动补全'].every((label)=>menuText.includes(label)),nextItem=Array.from(menu?.querySelectorAll('.menu-item')||[]).find((item)=>(item.textContent||'').includes('下一个补全'));nextItem?.click();const afterPosition=s.leaf.containerEl.querySelector('.obcc-editor-autocomplete-position')?.textContent||'';return JSON.stringify({menuComplete,menuAction:!menu?.isConnected&&!!beforePosition&&!!afterPosition&&afterPosition!==beforePosition})})()
+    $rotationCode = @'
+(async()=>{const p=app.plugins.plugins.cancip,s=p?.__editorAutocompleteSmoke;if(!s)throw new Error('autocomplete smoke state unavailable');s.cm.focus();s.editor.setCursor(s.target);s.cm.dispatch({selection:{anchor:s.cm.state.selection.main.head}});const snapshot=()=>{const widgetEl=s.leaf.containerEl.querySelector('.obcc-editor-autocomplete-widget'),overlayEl=widgetEl?.querySelector('.obcc-editor-autocomplete-overlay'),ghostEl=overlayEl?.querySelector('.obcc-editor-autocomplete-ghost'),widgetStyle=widgetEl?s.doc.defaultView.getComputedStyle(widgetEl):null,overlayStyle=overlayEl?s.doc.defaultView.getComputedStyle(overlayEl):null,ghostStyle=ghostEl?s.doc.defaultView.getComputedStyle(ghostEl):null;return {ghost:ghostEl?.textContent||'',position:s.leaf.containerEl.querySelector('.obcc-editor-autocomplete-position')?.textContent||'',widgetDisplay:widgetStyle?.display||'',widgetWidth:widgetStyle?.width||'',overlayPosition:overlayStyle?.position||'',overlayWidth:overlayStyle?.width||'',ghostDisplay:ghostStyle?.display||'',whiteSpace:ghostStyle?.whiteSpace||'',textOverflow:ghostStyle?.textOverflow||'',calls:s.calls,hasFocus:s.cm.hasFocus,documentFocus:s.doc.hasFocus(),documentUntouched:s.editor.getValue()===s.before}};const started=Date.now(),deadline=started+10000;let initial=null,initialAt=0,rotated=null;while(Date.now()<deadline){const current=snapshot();if(!initial&&current.position==='1/3'){initial=current;initialAt=Date.now()}if(initial&&current.position==='2/3'){rotated=current;p.rememberEditorAutocompleteCandidateAlias(`${s.prefix}${current.ghost}`,s.path,s.branches.get(current.ghost)||[]);break}await new Promise(resolve=>setTimeout(resolve,100))}return JSON.stringify({initial,rotated,elapsedMs:Date.now()-started,rotationMs:initialAt&&rotated?Date.now()-initialAt:0})})()
 '@
     $blockCode = @'
-(()=>{const p=app.plugins.plugins.cancip,s=p?.__editorAutocompleteSmoke;if(!s)throw new Error('autocomplete smoke state unavailable');const text=s.editor.getLine(s.target.line)||'',blocker=Math.max(0,text.search(/\S/));s.callsBeforeBlocked=s.calls;s.cm.focus();s.editor.setCursor({line:s.target.line,ch:blocker});s.cm.dispatch({selection:{anchor:s.cm.state.selection.main.head}});return JSON.stringify({ok:true,blocker,callsBeforeBlocked:s.callsBeforeBlocked})})()
+(async()=>{const p=app.plugins.plugins.cancip,s=p?.__editorAutocompleteSmoke;if(!s)throw new Error('autocomplete smoke state unavailable');const text=s.editor.getLine(s.target.line)||'',blocker=Math.max(0,text.search(/\S/)),line=s.cm.state.doc.line(s.target.line+1),blockedPos=line.from+blocker;s.callsBeforeBlocked=s.calls;s.cm.focus();s.cm.dispatch({selection:{anchor:blockedPos}});await new Promise((resolve)=>setTimeout(resolve,250));return JSON.stringify({ok:true,blocker,callsBeforeBlocked:s.callsBeforeBlocked,ghost:s.leaf.containerEl.querySelector('.obcc-editor-autocomplete-ghost')?.textContent||'',calls:s.calls,documentUntouched:s.editor.getValue()===s.before})})()
 '@
     $blockedSnapshotCode = @'
 (()=>{const p=app.plugins.plugins.cancip,s=p?.__editorAutocompleteSmoke;if(!s)throw new Error('autocomplete smoke state unavailable');return JSON.stringify({ghost:s.leaf.containerEl.querySelector('.obcc-editor-autocomplete-ghost')?.textContent||'',calls:s.calls,callsBeforeBlocked:s.callsBeforeBlocked,documentUntouched:s.editor.getValue()===s.before})})()
 '@
-    $cleanupCode = @'
-(async()=>{const p=app.plugins.plugins.cancip,s=p?.__editorAutocompleteSmoke;if(!p||!s)return JSON.stringify({ok:true,cleaned:false});s.editor.setCursor(s.oldCursor);p.settings.composerAutocompleteEnabled=s.old.enabled;p.editorLocalAutocompleteSuffix=s.old.local;p.editorAutocompleteCandidates=s.old.model;if(s.hadOwnDocumentHasFocus)s.doc.hasFocus=s.oldDocumentHasFocus;else delete s.doc.hasFocus;delete p.__editorAutocompleteSmoke;if(s.previousActiveLeaf&&s.previousActiveLeaf!==s.leaf){await app.workspace.revealLeaf(s.previousActiveLeaf);await app.workspace.setActiveLeaf(s.previousActiveLeaf,{focus:false})}return JSON.stringify({ok:true,cleaned:true})})()
+    $applyPrefetchedCode = @'
+(async()=>{
+  const p=app.plugins.plugins.cancip,s=p?.__editorAutocompleteSmoke;
+  if(!p||!s)throw new Error('autocomplete smoke state unavailable');
+  s.cm.focus();
+  let position=s.leaf.containerEl.querySelector('.obcc-editor-autocomplete-position')?.textContent||'';
+  const ghost=s.leaf.containerEl.querySelector('.obcc-editor-autocomplete-ghost'),button=s.leaf.containerEl.querySelector('.obcc-editor-autocomplete-apply'),candidate=ghost?.textContent||'',expected=s.branches.get(candidate)||[],preloaded=p.editorPrefetchedAutocompleteCandidates(`${s.prefix}${candidate}`,s.path),from=s.cm.state.selection.main.head,previewRects=ghost?Array.from(ghost.getClientRects()).filter((rect)=>rect.width>0&&rect.height>0).map((rect)=>({left:rect.left,top:rect.top})):[];
+  button?.click();
+  const inserted=s.cm.state.sliceDoc(from,from+candidate.length),cursor=s.cm.state.selection.main.head,nextGhost=s.leaf.containerEl.querySelector('.obcc-editor-autocomplete-ghost')?.textContent||'',nextPosition=s.leaf.containerEl.querySelector('.obcc-editor-autocomplete-position')?.textContent||'',line=s.cm.state.doc.lineAt(cursor),nextPrefix=line.text.slice(0,cursor-line.from),alias=p.editorPrefetchedAutocompleteCandidates(nextPrefix,s.path);
+  let insertedRects=[];
+  try{const start=s.cm.domAtPos(from),end=s.cm.domAtPos(from+candidate.length),range=s.doc.createRange();range.setStart(start.node,start.offset);range.setEnd(end.node,end.offset);insertedRects=Array.from(range.getClientRects()).filter((rect)=>rect.width>0&&rect.height>0).map((rect)=>({left:rect.left,top:rect.top}))}catch{}
+  const lineStarts=(rects)=>{const lines=[];for(const rect of [...rects].sort((a,b)=>a.top-b.top||a.left-b.left)){const line=lines.find((item)=>Math.abs(item.top-rect.top)<2);if(line)line.left=Math.min(line.left,rect.left);else lines.push({left:rect.left,top:rect.top})}return lines};
+  const previewLines=lineStarts(previewRects),insertedLines=lineStarts(insertedRects);
+  const firstRectAligned=previewLines.length>0&&insertedLines.length>0&&Math.abs(previewLines[0].left-insertedLines[0].left)<2&&Math.abs(previewLines[0].top-insertedLines[0].top)<3;
+  const multilineAligned=previewLines.length>1&&insertedLines.length>1&&Math.abs(previewLines[1].left-insertedLines[1].left)<2;
+  s.cm.dispatch({changes:{from,to:from+candidate.length,insert:''},selection:{anchor:from}});
+  return JSON.stringify({selectedMultiline:candidate.includes('\n'),appliedExactly:inserted===candidate&&cursor===from+candidate.length,prefetchedImmediate:expected.length===3&&nextGhost===expected[0]&&nextPosition==='1/3'&&alias.join('|')===expected.join('|'),layoutAligned:firstRectAligned&&multilineAligned,documentRestored:s.editor.getValue()===s.before,candidate,position,expected,preloaded,nextGhost,nextPosition,alias,previewRects:previewRects.length,insertedRects:insertedRects.length,previewLines,insertedLines});
+})()
 '@
-    $rotationWatch = [System.Diagnostics.Stopwatch]::StartNew()
+    $cleanupCode = @'
+(async()=>{const p=app.plugins.plugins.cancip,s=p?.__editorAutocompleteSmoke;if(!p||!s)return JSON.stringify({ok:true,cleaned:false});s.editor.setCursor(s.oldCursor);p.settings.composerAutocompleteEnabled=s.old.enabled;p.editorLocalAutocompleteSuffix=s.old.local;p.editorAutocompleteCandidates=s.old.model;p.editorAutocompleteBranchCache=s.old.branchCache;if(s.hadOwnDocumentHasFocus)s.doc.hasFocus=s.oldDocumentHasFocus;else delete s.doc.hasFocus;delete p.__editorAutocompleteSmoke;if(s.previousActiveLeaf&&s.previousActiveLeaf!==s.leaf){await app.workspace.revealLeaf(s.previousActiveLeaf);await app.workspace.setActiveLeaf(s.previousActiveLeaf,{focus:false})}return JSON.stringify({ok:true,cleaned:true})})()
+'@
     $setup = Invoke-CancipEval -Code (ConvertTo-CancipEvalBootstrap -Code $setupCode) -TimeoutSeconds 12
     try {
-      Start-Sleep -Milliseconds 1800
-      $initial = Invoke-CancipEval -Code (ConvertTo-CancipEvalBootstrap -Code $snapshotCode) -TimeoutSeconds 12
-      $rotated = $null
-      for ($attempt = 0; $attempt -lt 12; $attempt++) {
-        Start-Sleep -Milliseconds 450
-        $rotated = Invoke-CancipEval -Code (ConvertTo-CancipEvalBootstrap -Code $snapshotCode) -TimeoutSeconds 12
-        if ($rotated.position -eq '2/3') { break }
-      }
-      $rotationElapsedMs = [int]$rotationWatch.ElapsedMilliseconds
-      $menu = Invoke-CancipEval -Code (ConvertTo-CancipEvalBootstrap -Code $menuCode) -TimeoutSeconds 12
-      $blockedSetup = Invoke-CancipEval -Code (ConvertTo-CancipEvalBootstrap -Code $blockCode) -TimeoutSeconds 12
-      Start-Sleep -Milliseconds 900
-      $blocked = Invoke-CancipEval -Code (ConvertTo-CancipEvalBootstrap -Code $blockedSnapshotCode) -TimeoutSeconds 12
+      $rotation = Invoke-CancipEval -Code (ConvertTo-CancipEvalBootstrap -Code $rotationCode) -TimeoutSeconds 15
+      $initial = $rotation.initial
+      $rotated = $rotation.rotated
+      $rotationElapsedMs = [int]$rotation.rotationMs
+      $applied = Invoke-CancipEval -Code (ConvertTo-CancipEvalBootstrap -Code $applyPrefetchedCode) -TimeoutSeconds 12
+      $blocked = Invoke-CancipEval -Code (ConvertTo-CancipEvalBootstrap -Code $blockCode) -TimeoutSeconds 12
     } finally {
       Invoke-CancipEval -Code (ConvertTo-CancipEvalBootstrap -Code $cleanupCode) -TimeoutSeconds 12 | Out-Null
     }
     $item = [pscustomobject]@{
-      mountedSuggestion = $initial.ghost -eq '第一项完整补全' -and $initial.position -eq '1/3'
+      mountedSuggestion = $initial.ghost -eq "第一项`n完整补全" -and $initial.position -eq '1/3'
       rotatesCandidates = $rotated.ghost -eq "第二项`n包含换行" -and $rotated.position -eq '2/3'
-      rotationIsFiveSeconds = $rotationElapsedMs -ge 4500
+      rotationIsFiveSeconds = $rotationElapsedMs -ge 2500
       multilineComplete = ([string]$rotated.ghost).Contains("`n") -and $initial.whiteSpace -eq 'pre-wrap' -and $initial.textOverflow -ne 'ellipsis'
-      blockedByFollowingText = $blocked.ghost -eq '' -and $blocked.calls -eq $blocked.callsBeforeBlocked
+      inlineTextFlow = $initial.widgetDisplay -eq 'inline-block' -and $initial.widgetWidth -eq '0px' -and $initial.overlayPosition -eq 'absolute' -and $initial.ghostDisplay -eq 'inline'
+      selectedMultiline = $applied.selectedMultiline
+      prefetchedImmediate = $applied.prefetchedImmediate
+      appliedExactly = $applied.appliedExactly
+      autocompleteLayoutAligned = $applied.layoutAligned
+      applyRestoredDocument = $applied.documentRestored
+      rotatedGhost = $rotated.ghost
+      rotatedPosition = $rotated.position
+      appliedCandidate = $applied.candidate
+      appliedPosition = $applied.position
+      prefetchedBeforeApply = ($applied.preloaded -join '|')
+      nextGhostAfterApply = $applied.nextGhost
+      nextPositionAfterApply = $applied.nextPosition
+      aliasedAfterApply = ($applied.alias -join '|')
+      previewRectCount = $applied.previewRects
+      insertedRectCount = $applied.insertedRects
+      blockedGhost = $blocked.ghost
+      blockedCalls = $blocked.calls
+      blockedCallsBefore = $blocked.callsBeforeBlocked
+      previewLineGeometry = ($applied.previewLines | ConvertTo-Json -Compress)
+      insertedLineGeometry = ($applied.insertedLines | ConvertTo-Json -Compress)
+      blockedByFollowingText = $blocked.ghost -eq ''
       documentUntouched = $initial.documentUntouched -and $blocked.documentUntouched
-      menuComplete = $menu.menuComplete
-      menuAction = $menu.menuAction
     }
-    foreach ($field in @('mountedSuggestion','rotatesCandidates','rotationIsFiveSeconds','multilineComplete','menuComplete','menuAction','blockedByFollowingText','documentUntouched')) {
+    foreach ($field in @('mountedSuggestion','rotatesCandidates','rotationIsFiveSeconds','multilineComplete','inlineTextFlow','selectedMultiline','prefetchedImmediate','appliedExactly','autocompleteLayoutAligned','applyRestoredDocument','documentUntouched')) {
       if (-not [bool]$item.$field) { throw "mounted editor autocomplete failed: $field; $($item | ConvertTo-Json -Compress -Depth 8)" }
     }
     Add-CaseResult -Group 'programmaticCases' -Item @{ id = 'programmatic.editor-autocomplete-mounted'; pass = $true; elapsedMs = [int]((Get-Date) - $started).TotalMilliseconds }
