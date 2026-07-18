@@ -59,6 +59,11 @@ Cancip is a lightweight prototype for managing an Obsidian vault from a mobile-f
 - New-file curation runs in an isolated session with a stable minimal prompt prefix. A programmatic benefit gate classifies each file as curate, skip, or protected before any model call: only concrete high-value defects become candidates; clean, cosmetic-only, or Inbox-only cases are consumed silently; templates, frequently referenced notes, plugin syntax, and generated files are protected from automatic rename/restructure. Each candidate carries a defect-derived action allowlist so one formatting issue cannot authorize unrelated tags, links, summaries, or renaming.
 - TTS is provider-routed by language. English defaults to Web Speech / system TTS and does not need a local model package. Chinese can auto-download and use the current compact PrimeTTS Chinese/English ONNX package. Other languages use system/Web/custom URL unless a compatible local PrimeTTS package is installed under `tts/<package>/` with a manifest.
 
+## 2.14.19
+
+- 自动补全默认每批 2 个候选；设置为 1 时只显示一个并自然停止轮换。预加载在当前批次显示后立即后台请求，和轮换并行，轮换只切换已返回候选，不会额外触发模型请求。
+- 记录真正应用的笔记补全选择，不记录单纯轮换：保存候选位置、Tab/按钮/菜单入口、是否手动切换、是否自动轮换后接受、下一层是否已预加载和脱敏短前缀。后台生成本地低置信度偏好摘要，后续补全仅在上下文相关时参考，不增加模型调用。
+
 ## 2.14.18
 
 - 修复笔记补全后台分支超时后继续逐项补发、再次重试造成的长期请求和状态栏持续旋转。现在每层严格只批量请求一次：首层 3 个一次，显示后对应 9 个一次；响应不完整或超时也不会在同一层自动追加模型请求。
