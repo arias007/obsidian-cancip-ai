@@ -629,6 +629,68 @@ if (-not $Case -or 'programmatic.review-count-config-invariance'.Contains($Case)
   }
 }
 
+if (-not $Case -or 'programmatic.review-count-canonical-state'.Contains($Case)) {
+  try {
+    $code = @'
+(async()=>{
+  const started=Date.now(),p=app.plugins.plugins.cancip,adapter=app.vault.adapter;
+  if(!p||typeof p.ensureReviewGateCanonicalState!=='function')throw new Error('missing canonical review state API');
+  const normalize=(value)=>String(value||'').normalize('NFC').replace(/\\/g,'/').replace(/^\/+|\/+$/g,'').toLocaleLowerCase('en-US');
+  const collect=async()=>{
+    p.invalidateReviewGateSnapshot?.();
+    const snapshot=await p.reviewGateSnapshot(true);
+    const paths=[...new Set([...snapshot.byPath.values()].flatMap((entry)=>[...entry.pendingPaths].map(normalize)))].sort();
+    const packageCount=await p.pendingReviewGateCountForPackages(snapshot.packages);
+    const attentionCount=await p.pendingReviewGateAttentionCount();
+    return {snapshot,paths,packageCount,attentionCount};
+  };
+  await p.ensureReviewGateCanonicalState();
+  const state=await p.readReviewGateCanonicalState();
+  if(!state)throw new Error('canonical review state was not persisted');
+  const expected=[...new Set((state.pendingPaths||[]).map(normalize))].sort();
+  const baseline=await collect();
+  const originalRead=adapter.read;
+  let blockedReads=0;
+  try{
+    adapter.read=async function(path,...args){
+      if(String(path||'').replace(/\\/g,'/').endsWith('/review-corrections/pending.jsonl')){
+        blockedReads+=1;
+        throw new Error('simulated stale mobile decision log');
+      }
+      return await originalRead.call(this,path,...args);
+    };
+    const simulatedMobile=await collect();
+    return JSON.stringify({
+      id:'programmatic.review-count-canonical-state',elapsedMs:Date.now()-started,
+      statePath:'.cancip/review-state.json',packages:state.packages.length,
+      expectedPending:expected.length,baselinePending:baseline.snapshot.pendingCount,
+      simulatedMobilePending:simulatedMobile.snapshot.pendingCount,
+      packageCount:simulatedMobile.packageCount,attentionCount:simulatedMobile.attentionCount,
+      blockedReads,
+      baselineSame:baseline.paths.length===expected.length&&baseline.paths.every((path,index)=>path===expected[index]),
+      mobileSame:simulatedMobile.paths.length===expected.length&&simulatedMobile.paths.every((path,index)=>path===expected[index])
+    });
+  }finally{
+    adapter.read=originalRead;
+    p.invalidateReviewGateSnapshot?.();
+  }
+})()
+'@
+    $item = Invoke-CancipEval -Code $code -TimeoutSeconds 60
+    if ([int]$item.baselinePending -ne [int]$item.expectedPending -or [int]$item.simulatedMobilePending -ne [int]$item.expectedPending) {
+      throw "canonical review count diverged: expected $($item.expectedPending), baseline $($item.baselinePending), simulated mobile $($item.simulatedMobilePending)"
+    }
+    if ([int]$item.packageCount -ne [int]$item.expectedPending -or [int]$item.attentionCount -ne [int]$item.expectedPending) {
+      throw "review surfaces do not share the canonical count: package $($item.packageCount), attention $($item.attentionCount), expected $($item.expectedPending)"
+    }
+    if (-not [bool]$item.baselineSame -or -not [bool]$item.mobileSame) { throw 'canonical pending paths diverged across simulated devices' }
+    if ([int]$item.blockedReads -ne 0) { throw "live review count still read $($item.blockedReads) package decision logs" }
+    Add-CaseResult 'programmaticCases' @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs; packages = $item.packages; pending = $item.expectedPending; statePath = $item.statePath }
+  } catch {
+    Add-CaseResult 'programmaticCases' @{ id = 'programmatic.review-count-canonical-state'; pass = $false; error = $_.Exception.Message }
+  }
+}
+
 if (-not $Case -or 'programmatic.community-review-regressions'.Contains($Case)) {
   try {
     $code = @'
@@ -4496,6 +4558,7 @@ if ($Write -and (-not $Case -or 'programmatic.ai-vault-review-registration'.Cont
       try{const file=app.vault.getFileByPath(cleanupPath);if(file)await app.vault.delete(file,true);else if(await adapter.exists(cleanupPath))await adapter.remove(cleanupPath);}catch{}
     }
     try{if(await adapter.exists(root))await adapter.rmdir(root,true);}catch{}
+    try{await p.rebuildReviewGateCanonicalState?.();}catch{}
   }
 })().catch((error)=>JSON.stringify({id:'programmatic.ai-vault-review-registration',evalError:error instanceof Error?error.message:String(error),stack:error instanceof Error?error.stack:''}))
 '@
@@ -4587,6 +4650,7 @@ if ($Write -and (-not $Case -or 'programmatic.ai-vault-command-review'.Contains(
   } finally {
     if(reviewPath){try{const folder=reviewPath.replace(/\/manifest\.json$/,'');if(await adapter.exists(folder))await adapter.rmdir(folder,true);}catch{}}
     try{const file=app.vault.getFileByPath(path);if(file)await app.vault.delete(file,true);else if(await adapter.exists(path))await adapter.remove(path);if(await adapter.exists(root))await adapter.rmdir(root,true);}catch{}
+    try{await p.rebuildReviewGateCanonicalState?.();}catch{}
   }
 })().catch((error)=>JSON.stringify({id:'programmatic.ai-vault-command-review',evalError:error instanceof Error?error.message:String(error),stack:error instanceof Error?error.stack:''}))
 '@

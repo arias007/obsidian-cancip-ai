@@ -209,6 +209,18 @@ type ReviewGatePackageIndex = {
   packages: string[];
 };
 
+type ReviewGateCanonicalPackageState = {
+  manifestPath: string;
+  pendingPaths: string[];
+};
+
+type ReviewGateCanonicalState = {
+  schemaVersion: 1;
+  updatedAt: string;
+  packages: ReviewGateCanonicalPackageState[];
+  pendingPaths: string[];
+};
+
 type ReviewGateSourcePane = {
   sourceBody: HTMLElement;
   renderBody: HTMLElement;
@@ -2841,6 +2853,7 @@ const MODEL_EXCHANGE_FRAGMENT_MAX_CHARS = 60000;
 const REVIEW_GATE_DIR = `${CANCIP_AI_DIR}/Review`;
 const REVIEW_GATE_HIDDEN_DIR = `${CANCIP_CONFIG_DIR}/review-gates`;
 const REVIEW_GATE_PACKAGE_INDEX_PATH = `${CANCIP_CONFIG_DIR}/review-index.json`;
+const REVIEW_GATE_CANONICAL_STATE_PATH = `${CANCIP_CONFIG_DIR}/review-state.json`;
 const REVIEW_GATE_MAX_FILES = 80;
 const REVIEW_GATE_MAX_FILE_CHARS = 120000;
 const CONTEXT_STEP_TIMEOUT_MS = 3500;
@@ -7315,6 +7328,7 @@ export default class CancipPlugin extends Plugin {
   private reviewGateSnapshotRevision = 0;
   private reviewGateSnapshotTtlMs = 10000;
   private reviewGatePackageIndexWriteQueue: Promise<void> = Promise.resolve();
+  private reviewGateCanonicalStateWriteQueue: Promise<void> = Promise.resolve();
   private statusBarVisibilityObserver: MutationObserver | null = null;
   private statusBarVisibilityTimer: number | null = null;
   private statusBarVisibilityApplying = false;
@@ -8324,6 +8338,9 @@ export default class CancipPlugin extends Plugin {
     await run("resumeInterruptedSessions", () => this.resumeInterruptedSessionsOnStartup());
     await run("reconcileReviewGatePackageIndex", async () => {
       await this.reconcileReviewGatePackageIndex();
+    });
+    await run("ensureReviewGateCanonicalState", async () => {
+      await this.ensureReviewGateCanonicalState();
     });
     this.scheduleAutomations();
     this.scheduleCancipStatePolling();
@@ -15321,6 +15338,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       maxFileChars: clampInt(args.maxFileChars, REVIEW_GATE_MAX_FILE_CHARS, 1000, 1000000)
     });
     await this.mergeReviewGatePackageIndex([result.indexPath], false);
+    await this.registerReviewGatePackageState(result.indexPath);
     this.invalidateReviewGateSnapshot();
     return result;
   }
@@ -15348,7 +15366,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
   }
 
   private normalizeReviewGatePackageManifestPath(path: string): string {
-    const normalized = normalizePath(String(path ?? "").replace(/\\/g, "/").replace(/^\/+|\/+$/g, ""));
+    const normalized = normalizeReviewGateLogicalPath(String(path ?? "").replace(/^\/+|\/+$/g, ""));
     const prefix = `${REVIEW_GATE_HIDDEN_DIR}/`;
     if (!normalized.startsWith(prefix)) return "";
     const parts = normalized.slice(prefix.length).split("/").filter(Boolean);
@@ -15357,7 +15375,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
   }
 
   private sortReviewGatePackagePaths(paths: string[]): string[] {
-    return uniqueStrings(paths
+    return uniqueReviewGatePaths(paths
       .map((path) => this.normalizeReviewGatePackageManifestPath(path))
       .filter(Boolean))
       .sort((a, b) => reviewGateDisplayName(b).localeCompare(reviewGateDisplayName(a)) || b.localeCompare(a));
@@ -15421,6 +15439,170 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     const packages = await this.reviewGatePackagePaths(true);
     this.invalidateReviewGateSnapshot();
     return packages;
+  }
+
+  private normalizeReviewGateCanonicalState(raw: unknown): ReviewGateCanonicalState | null {
+    if (!isRecord(raw) || raw.schemaVersion !== 1 || !Array.isArray(raw.packages)) return null;
+    const byManifest = new Map<string, ReviewGateCanonicalPackageState>();
+    for (const rawPackage of raw.packages) {
+      if (!isRecord(rawPackage) || typeof rawPackage.manifestPath !== "string" || !Array.isArray(rawPackage.pendingPaths)) continue;
+      const manifestPath = this.normalizeReviewGatePackageManifestPath(rawPackage.manifestPath);
+      if (!manifestPath) continue;
+      byManifest.set(reviewGateLogicalPathKey(manifestPath), {
+        manifestPath,
+        pendingPaths: uniqueReviewGatePaths(rawPackage.pendingPaths.filter((value): value is string => typeof value === "string"))
+      });
+    }
+    const packages = this.sortReviewGatePackagePaths([...byManifest.values()].map((entry) => entry.manifestPath))
+      .map((manifestPath) => byManifest.get(reviewGateLogicalPathKey(manifestPath)))
+      .filter((entry): entry is ReviewGateCanonicalPackageState => Boolean(entry));
+    return {
+      schemaVersion: 1,
+      updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : "",
+      packages,
+      pendingPaths: uniqueReviewGatePaths(packages
+        .filter((entry) => !isReviewGateAttentionExcluded(entry.manifestPath))
+        .flatMap((entry) => entry.pendingPaths))
+    };
+  }
+
+  async readReviewGateCanonicalState(): Promise<ReviewGateCanonicalState | null> {
+    const adapter = this.app.vault.adapter;
+    if (!(await adapter.exists(REVIEW_GATE_CANONICAL_STATE_PATH))) return null;
+    try {
+      return this.normalizeReviewGateCanonicalState(JSON.parse(await adapter.read(REVIEW_GATE_CANONICAL_STATE_PATH)) as unknown);
+    } catch {
+      return null;
+    }
+  }
+
+  private async writeReviewGateCanonicalState(state: ReviewGateCanonicalState): Promise<ReviewGateCanonicalState> {
+    const normalized = this.normalizeReviewGateCanonicalState(state);
+    if (!normalized) throw new Error("Invalid Review Gate canonical state");
+    normalized.updatedAt = state.updatedAt || new Date().toISOString();
+    await ensureFolder(this.app.vault.adapter, CANCIP_CONFIG_DIR);
+    await this.app.vault.adapter.write(REVIEW_GATE_CANONICAL_STATE_PATH, `${JSON.stringify(normalized, null, 2)}\n`);
+    return normalized;
+  }
+
+  private async pendingReviewGateItemPathsFromAuditLog(data: ReviewGatePackageData): Promise<string[]> {
+    const rawDecisions = await readTextIfExists(this.app.vault.adapter, `${data.folder}/review-corrections/pending.jsonl`, "");
+    const decided = new Set<string>();
+    for (const line of rawDecisions.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        const parsed = JSON.parse(trimmed) as unknown;
+        if (!isRecord(parsed) || typeof parsed.path !== "string" || typeof parsed.decision !== "string") continue;
+        if (isTerminalReviewGateDecision(parsed.decision)) decided.add(reviewGateLogicalPathKey(parsed.path));
+      } catch {
+        // Ignore malformed audit records while rebuilding the canonical state.
+      }
+    }
+    return uniqueReviewGatePaths(data.items
+      .filter((item) => isReviewGateItemChanged(item) && !decided.has(reviewGateLogicalPathKey(item.path)))
+      .map((item) => item.path));
+  }
+
+  private async deriveReviewGateCanonicalState(packagePaths: string[]): Promise<ReviewGateCanonicalState> {
+    const packages: ReviewGateCanonicalPackageState[] = [];
+    for (const manifestPath of this.sortReviewGatePackagePaths(packagePaths)) {
+      try {
+        const data = await this.readReviewGatePackage(manifestPath);
+        packages.push({
+          manifestPath: data.path,
+          pendingPaths: await this.pendingReviewGateItemPathsFromAuditLog(data)
+        });
+      } catch {
+        // A half-synced package is omitted until a complete canonical state is published.
+      }
+    }
+    const state = this.normalizeReviewGateCanonicalState({
+      schemaVersion: 1,
+      updatedAt: new Date().toISOString(),
+      packages,
+      pendingPaths: []
+    });
+    if (!state) throw new Error("Review Gate canonical state build failed");
+    return state;
+  }
+
+  async ensureReviewGateCanonicalState(forceRebuild = false): Promise<ReviewGateCanonicalState> {
+    let result: ReviewGateCanonicalState | null = null;
+    const operation = this.reviewGateCanonicalStateWriteQueue.then(async () => {
+      const existing = await this.readReviewGateCanonicalState();
+      if (existing && !forceRebuild) {
+        result = existing;
+        return;
+      }
+      const derived = await this.deriveReviewGateCanonicalState(await this.reviewGatePackagePaths());
+      result = await this.writeReviewGateCanonicalState(derived);
+    });
+    this.reviewGateCanonicalStateWriteQueue = operation.catch(() => undefined);
+    await operation;
+    if (!result) throw new Error("Review Gate canonical state unavailable");
+    return result;
+  }
+
+  async rebuildReviewGateCanonicalState(): Promise<ReviewGateCanonicalState> {
+    const state = await this.ensureReviewGateCanonicalState(true);
+    this.invalidateReviewGateSnapshot();
+    return state;
+  }
+
+  private async mutateReviewGateCanonicalState(
+    mutate: (state: ReviewGateCanonicalState) => ReviewGateCanonicalState | void
+  ): Promise<ReviewGateCanonicalState> {
+    let result: ReviewGateCanonicalState | null = null;
+    const operation = this.reviewGateCanonicalStateWriteQueue.then(async () => {
+      const current = await this.readReviewGateCanonicalState()
+        ?? await this.deriveReviewGateCanonicalState(await this.reviewGatePackagePaths());
+      const next = mutate({
+        ...current,
+        packages: current.packages.map((entry) => ({ ...entry, pendingPaths: [...entry.pendingPaths] })),
+        pendingPaths: [...current.pendingPaths]
+      }) ?? current;
+      next.updatedAt = new Date().toISOString();
+      result = await this.writeReviewGateCanonicalState(next);
+    });
+    this.reviewGateCanonicalStateWriteQueue = operation.catch(() => undefined);
+    await operation;
+    if (!result) throw new Error("Review Gate canonical state update failed");
+    this.invalidateReviewGateSnapshot();
+    return result;
+  }
+
+  async registerReviewGatePackageState(manifestPath: string): Promise<void> {
+    const data = await this.readReviewGatePackage(manifestPath);
+    const pendingPaths = await this.pendingReviewGateItemPathsFromAuditLog(data);
+    await this.mutateReviewGateCanonicalState((state) => {
+      const key = reviewGateLogicalPathKey(data.path);
+      state.packages = [
+        { manifestPath: data.path, pendingPaths },
+        ...state.packages.filter((entry) => reviewGateLogicalPathKey(entry.manifestPath) !== key)
+      ];
+      return state;
+    });
+  }
+
+  async markReviewGateItemsDecided(manifestPath: string, itemPaths: string[]): Promise<void> {
+    await this.markReviewGateItemsDecidedBatch([{ manifestPath, itemPaths }]);
+  }
+
+  async markReviewGateItemsDecidedBatch(updates: Array<{ manifestPath: string; itemPaths: string[] }>): Promise<void> {
+    const normalizedUpdates = updates.map((update) => ({
+      manifestKey: reviewGateLogicalPathKey(this.normalizeReviewGatePackageManifestPath(update.manifestPath)),
+      itemKeys: new Set(update.itemPaths.map(reviewGateLogicalPathKey).filter(Boolean))
+    })).filter((update) => update.manifestKey && update.itemKeys.size);
+    if (!normalizedUpdates.length) return;
+    await this.mutateReviewGateCanonicalState((state) => {
+      for (const update of normalizedUpdates) {
+        const entry = state.packages.find((candidate) => reviewGateLogicalPathKey(candidate.manifestPath) === update.manifestKey);
+        if (!entry) continue;
+        entry.pendingPaths = entry.pendingPaths.filter((itemPath) => !update.itemKeys.has(reviewGateLogicalPathKey(itemPath)));
+      }
+      return state;
+    });
   }
 
   private async readReviewGatePackage(path: string): Promise<ReviewGatePackageData> {
@@ -15488,27 +15670,10 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
   }
 
   async pendingReviewGateItemPathsFromData(data: ReviewGatePackageData): Promise<string[]> {
-    const rawDecisions = await readTextIfExists(this.app.vault.adapter, `${data.folder}/review-corrections/pending.jsonl`, "");
-    const decided = new Set<string>();
-    for (const line of rawDecisions.split(/\r?\n/)) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      try {
-        const parsed = JSON.parse(trimmed) as unknown;
-        if (!isRecord(parsed) || typeof parsed.path !== "string" || typeof parsed.decision !== "string") continue;
-        if (isTerminalReviewGateDecision(parsed.decision)) {
-          decided.add(normalizePath(parsed.path));
-        }
-      } catch {
-        // Ignore malformed review records.
-      }
-    }
-    return uniqueStrings(data.items
-      .filter((item) =>
-        isReviewGateItemChanged(item)
-        && !decided.has(normalizePath(item.path))
-      )
-      .map((item) => normalizePath(item.path)));
+    const state = await this.readReviewGateCanonicalState();
+    if (!state) return await this.pendingReviewGateItemPathsFromAuditLog(data);
+    const entry = state.packages.find((candidate) => reviewGateLogicalPathKey(candidate.manifestPath) === reviewGateLogicalPathKey(data.path));
+    return entry ? [...entry.pendingPaths] : [];
   }
 
   async reviewGateSnapshot(force = false): Promise<ReviewGateSnapshot> {
@@ -15521,27 +15686,27 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       return await this.reviewGateSnapshotPromise;
     }
     const operation = (async () => {
-      const packages = (await this.reviewGatePackagePaths())
-        .filter((path) => !isReviewGateAttentionExcluded(path))
-        .sort((a, b) => reviewGateDisplayName(b).localeCompare(reviewGateDisplayName(a)));
+      const state = await this.ensureReviewGateCanonicalState();
+      const packages = state.packages
+        .map((entry) => entry.manifestPath)
+        .filter((path) => !isReviewGateAttentionExcluded(path));
+      const pendingByPackage = new Map(state.packages.map((entry) => [reviewGateLogicalPathKey(entry.manifestPath), entry.pendingPaths]));
       const byPath = new Map<string, ReviewGateSnapshotEntry>();
-      const pending = new Set<string>();
       const keptPackages: string[] = [];
       for (const path of packages) {
         try {
           const data = await this.readReviewGatePackage(path);
-          const pendingPaths = new Set(await this.pendingReviewGateItemPathsFromData(data));
-          for (const pendingPath of pendingPaths) pending.add(pendingPath);
+          const pendingPaths = new Set(pendingByPackage.get(reviewGateLogicalPathKey(path)) ?? []);
           const entry: ReviewGateSnapshotEntry = { path: data.path, folder: data.folder, data, pendingPaths };
           keptPackages.push(data.path);
-          byPath.set(normalizePath(data.path), entry);
-          byPath.set(normalizePath(data.folder), entry);
-          for (const item of data.items) byPath.set(normalizePath(item.path), entry);
+          byPath.set(reviewGateLogicalPathKey(data.path), entry);
+          byPath.set(reviewGateLogicalPathKey(data.folder), entry);
+          for (const item of data.items) byPath.set(reviewGateLogicalPathKey(item.path), entry);
         } catch (error) {
           console.warn("Cancip review snapshot package skipped", path, error);
         }
       }
-      return { loadedAt: Date.now(), packages: keptPackages, byPath, pendingCount: pending.size };
+      return { loadedAt: Date.now(), packages: keptPackages, byPath, pendingCount: state.pendingPaths.length };
     })();
     this.reviewGateSnapshotPromise = operation;
     this.reviewGateSnapshotPromiseRevision = revision;
@@ -15559,13 +15724,13 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
   }
 
   async cachedReviewGatePackage(path: string): Promise<ReviewGatePackageData | null> {
-    const normalized = normalizePath(path);
+    const normalized = reviewGateLogicalPathKey(path);
     const snapshot = await this.reviewGateSnapshot();
     return snapshot.byPath.get(normalized)?.data ?? null;
   }
 
   async cachedPendingReviewGateItemPaths(path: string): Promise<string[]> {
-    const normalized = normalizePath(path);
+    const normalized = reviewGateLogicalPathKey(path);
     const snapshot = await this.reviewGateSnapshot();
     const entry = snapshot.byPath.get(normalized);
     return entry ? [...entry.pendingPaths] : [];
@@ -15583,7 +15748,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     const cappedLimit = clampInt(limit, 12, 1, 500);
     const snapshot = await this.reviewGateSnapshot();
     return snapshot.packages
-      .filter((path) => (snapshot.byPath.get(normalizePath(path))?.pendingPaths.size ?? 0) > 0)
+      .filter((path) => (snapshot.byPath.get(reviewGateLogicalPathKey(path))?.pendingPaths.size ?? 0) > 0)
       .slice(0, cappedLimit);
   }
 
@@ -19812,6 +19977,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
   }
 
   syncOpenReviewGateDecision(reviewPath: string): void {
+    this.invalidateReviewGateSnapshot();
     for (const leaf of this.chatLeaves()) {
       if (leaf.view instanceof CancipView) {
         void leaf.view.syncToolRunsForReviewPath(reviewPath);
@@ -19980,6 +20146,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       LOCAL_VERSION_DIR,
       LOCAL_VERSION_INDEX_PATH,
       REVIEW_GATE_PACKAGE_INDEX_PATH,
+      REVIEW_GATE_CANONICAL_STATE_PATH,
       REVIEW_GATE_HIDDEN_DIR,
       DEFAULT_MEMORY_FOLDER,
       this.settings.memoryFolder || DEFAULT_MEMORY_FOLDER,
@@ -20226,10 +20393,12 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
   }
 
   async pendingReviewGateCountForPackages(packages: string[]): Promise<number> {
+    const snapshot = await this.reviewGateSnapshot();
     const paths = new Set<string>();
     for (const reviewPath of packages) {
       if (isReviewGateAttentionExcluded(reviewPath)) continue;
-      for (const path of await this.pendingReviewGateItemPaths(reviewPath)) paths.add(path);
+      const entry = snapshot.byPath.get(reviewGateLogicalPathKey(reviewPath));
+      for (const path of entry?.pendingPaths ?? []) paths.add(reviewGateLogicalPathKey(path));
     }
     return paths.size;
   }
@@ -20243,37 +20412,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
   }
 
   async pendingReviewGateItemPaths(reviewPath: string): Promise<string[]> {
-    try {
-      const adapter = this.app.vault.adapter;
-      const folder = reviewGatePackageFolder(reviewPath);
-      const rawManifest = await adapter.read(`${folder}/manifest.json`);
-      const manifest = JSON.parse(rawManifest) as unknown;
-      const items = filterStoredReviewGateItems(normalizeReviewGateItems(isRecord(manifest) ? manifest.items : []));
-      if (!items.length) return [];
-      const rawDecisions = await readTextIfExists(adapter, `${folder}/review-corrections/pending.jsonl`, "");
-      const decided = new Set<string>();
-      for (const line of rawDecisions.split(/\r?\n/)) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        try {
-          const parsed = JSON.parse(trimmed) as unknown;
-          if (!isRecord(parsed) || typeof parsed.path !== "string" || typeof parsed.decision !== "string") continue;
-          if (isTerminalReviewGateDecision(parsed.decision)) {
-            decided.add(normalizePath(parsed.path));
-          }
-        } catch {
-          // Ignore malformed review records.
-        }
-      }
-      return uniqueStrings(items
-        .filter((item) =>
-          isReviewGateItemChanged(item)
-          && !decided.has(normalizePath(item.path))
-        )
-        .map((item) => normalizePath(item.path)));
-    } catch {
-      return [];
-    }
+    return await this.cachedPendingReviewGateItemPaths(reviewPath);
   }
 
   async firstPendingReviewGate(limit = 50): Promise<string> {
@@ -20507,6 +20646,11 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
 
   private async reviewGateVaultStateFingerprint(): Promise<string> {
     const adapter = this.app.vault.adapter;
+    const canonicalStateStat = await adapter.stat(REVIEW_GATE_CANONICAL_STATE_PATH).catch(() => null);
+    if (canonicalStateStat?.type === "file") {
+      const rawState = await readTextIfExists(adapter, REVIEW_GATE_CANONICAL_STATE_PATH, "");
+      return stableTextHash(`state:${canonicalStateStat.size}:${stableTextHash(rawState)}`);
+    }
     const packages = await this.reviewGatePackagePaths();
     const indexStat = await adapter.stat(REVIEW_GATE_PACKAGE_INDEX_PATH).catch(() => null);
     const rows = [
@@ -22637,7 +22781,7 @@ class CancipReviewLeafView extends ItemView {
     this.plugin.invalidateReviewGateSnapshot();
     const snapshot = await this.plugin.prewarmReviewGateData(true);
     const packages = snapshot.packages.filter((path) => (
-      snapshot.byPath.get(normalizePath(path))?.pendingPaths.size ?? 0
+      snapshot.byPath.get(reviewGateLogicalPathKey(path))?.pendingPaths.size ?? 0
     ) > 0);
     if (!packages.length) {
       parent.createDiv({ cls: "obcc-review-native-empty", text: this.t("reviewGatePanelEmpty") });
@@ -22647,13 +22791,14 @@ class CancipReviewLeafView extends ItemView {
     const seenPaths = new Set<string>();
     for (const packagePath of packages) {
       try {
-        const entry = snapshot.byPath.get(normalizePath(packagePath));
+        const entry = snapshot.byPath.get(reviewGateLogicalPathKey(packagePath));
         if (!entry) continue;
         const data = entry.data;
         const pendingPaths = entry.pendingPaths;
+        const pendingKeys = new Set([...pendingPaths].map(reviewGateLogicalPathKey));
         const items = data.items.filter((item) => {
-          const key = normalizePath(item.path);
-          if (!pendingPaths.has(key)) return false;
+          const key = reviewGateLogicalPathKey(item.path);
+          if (!pendingKeys.has(key)) return false;
           if (seenPaths.has(key)) return false;
           seenPaths.add(key);
           return true;
@@ -22715,22 +22860,8 @@ class CancipReviewLeafView extends ItemView {
   private async pendingReviewGateItems(data: ReviewGatePackageData): Promise<ReviewGateManifestItem[]> {
     const changedItems = data.items.filter(isReviewGateItemChanged);
     if (!changedItems.length) return [];
-    const rawDecisions = await readTextIfExists(this.app.vault.adapter, `${data.folder}/review-corrections/pending.jsonl`, "");
-    const decided = new Set<string>();
-    for (const line of rawDecisions.split(/\r?\n/)) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      try {
-        const parsed = JSON.parse(trimmed) as unknown;
-        if (!isRecord(parsed) || typeof parsed.path !== "string" || typeof parsed.decision !== "string") continue;
-        if (isTerminalReviewGateDecision(parsed.decision)) {
-          decided.add(normalizePath(parsed.path));
-        }
-      } catch {
-        // Ignore malformed review records.
-      }
-    }
-    return changedItems.filter((item) => !decided.has(normalizePath(item.path)));
+    const pending = new Set((await this.plugin.cachedPendingReviewGateItemPaths(data.path)).map(reviewGateLogicalPathKey));
+    return changedItems.filter((item) => pending.has(reviewGateLogicalPathKey(item.path)));
   }
 
   private async renderReviewGateWorkspace(parent: HTMLElement, data: ReviewGatePackageData): Promise<void> {
@@ -23107,6 +23238,7 @@ class CancipReviewLeafView extends ItemView {
         structure: item.structure ?? []
       };
       await this.app.vault.adapter.write(path, `${existing}${JSON.stringify(payload)}\n`);
+      await this.plugin.markReviewGateItemsDecided(`${folder}/manifest.json`, [item.path]);
       await this.plugin.handlePersonalizationReviewDecision(item, decision);
       this.plugin.syncOpenReviewGateDecision(`${folder}/manifest.json`);
       this.plugin.refreshStatusBarAttention();
@@ -27800,6 +27932,7 @@ class CancipView extends ItemView {
         structure: item.structure ?? []
       };
       await this.app.vault.adapter.write(path, `${existing}${JSON.stringify(payload)}\n`);
+      await this.plugin.markReviewGateItemsDecided(`${folder}/manifest.json`, [item.path]);
       await this.plugin.handlePersonalizationReviewDecision(item, decision);
       this.plugin.syncOpenReviewGateDecision(`${folder}/manifest.json`);
       textarea.value = "";
@@ -37291,6 +37424,7 @@ class CancipView extends ItemView {
         runId: run.id
       }));
       await this.app.vault.adapter.write(path, `${existing}${lines.join("\n")}\n`);
+      await this.plugin.markReviewGateItemsDecided(data.path, data.items.map((item) => item.path));
     } catch (error) {
       console.warn("Cancip pre-execution review supersede failed", error);
     }
@@ -37769,6 +37903,7 @@ class CancipView extends ItemView {
     } catch {
       return;
     }
+    const stateUpdates: Array<{ manifestPath: string; itemPaths: string[] }> = [];
     for (const reviewPath of packages) {
       if (isReviewGateAttentionExcluded(reviewPath)) continue;
       try {
@@ -37801,11 +37936,13 @@ class CancipView extends ItemView {
           structure: item.structure ?? []
         }));
         await adapter.write(decisionPath, `${existing}${lines.join("\n")}\n`);
-        this.plugin.syncOpenReviewGateDecision(`${folder}/manifest.json`);
+        stateUpdates.push({ manifestPath: `${folder}/manifest.json`, itemPaths: superseded.map((item) => item.path) });
       } catch {
         // Stale or half-synced review packages must not block the latest review package.
       }
     }
+    await this.plugin.markReviewGateItemsDecidedBatch(stateUpdates);
+    for (const update of stateUpdates) this.plugin.syncOpenReviewGateDecision(update.manifestPath);
     this.plugin.refreshStatusBarAttention();
     this.refreshHeaderAuditBadge();
   }
@@ -47556,6 +47693,27 @@ function contextChipKey(kind: string, path: string): string {
   return `${kind}:${path}`;
 }
 
+function normalizeReviewGateLogicalPath(path: string): string {
+  return normalizePath(String(path ?? "").normalize("NFC").replace(/\\/g, "/")).normalize("NFC");
+}
+
+function reviewGateLogicalPathKey(path: string): string {
+  return normalizeReviewGateLogicalPath(path).toLocaleLowerCase("en-US");
+}
+
+function uniqueReviewGatePaths(paths: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const path of paths) {
+    const normalized = normalizeReviewGateLogicalPath(path);
+    const key = reviewGateLogicalPathKey(normalized);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    result.push(normalized);
+  }
+  return result;
+}
+
 function reviewGateDisplayName(path: string): string {
   const normalized = path.replace(/\\/g, "/");
   const parts = normalized.split("/").filter(Boolean);
@@ -47580,6 +47738,7 @@ function isReviewGateRelatedPath(path: string): boolean {
   const normalized = normalizePath(String(path ?? "").replace(/\\/g, "/"));
   if (!normalized) return false;
   return normalized === REVIEW_GATE_PACKAGE_INDEX_PATH
+    || normalized === REVIEW_GATE_CANONICAL_STATE_PATH
     || normalized === REVIEW_GATE_HIDDEN_DIR
     || normalized.startsWith(`${REVIEW_GATE_HIDDEN_DIR}/`);
 }
