@@ -611,6 +611,10 @@ body .view-content.obcc-review-leaf {
 }
 
 .obcc-empty {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   margin: auto 0;
   padding: 14px;
   border: 1px solid var(--background-modifier-border);
@@ -638,14 +642,23 @@ body .view-content.obcc-review-leaf {
 .obcc-welcome-choices {
   display: flex;
   flex-wrap: wrap;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   gap: 6px;
   margin-top: 10px;
+  overflow: hidden;
 }
 
 .obcc-welcome-choice {
   display: inline-flex;
+  flex: 1 1 100%;
   align-items: center;
+  box-sizing: border-box;
+  width: 100%;
   max-width: 100%;
+  min-width: 0;
   min-height: 28px;
   margin: 0;
   padding: 4px 8px;
@@ -677,8 +690,12 @@ body .view-content.obcc-review-leaf {
 }
 
 .obcc-welcome-choice-text {
+  flex: 1 1 auto;
   min-width: 0;
+  max-width: 100%;
   overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
 }
 
 .obcc-empty p,
@@ -2457,13 +2474,162 @@ details.obcc-process-step-details:not([open]) > :not(summary),
 
 .obcc-overlay-layer > .obcc-mention-popover,
 .obcc-overlay-layer > .obcc-history-popover,
-.obcc-overlay-layer > .obcc-command-popover {
+.obcc-overlay-layer > .obcc-command-popover,
+.obcc-overlay-layer > .obcc-search-popover {
   position: fixed;
   right: var(--obcc-overlay-right);
   bottom: calc(var(--obcc-footer-height) + max(6px, env(safe-area-inset-bottom)));
   left: var(--obcc-overlay-left);
   max-width: calc(100vw - var(--obcc-overlay-left) - var(--obcc-overlay-right));
   pointer-events: auto;
+}
+
+.obcc-search-popover {
+  position: fixed;
+  top: var(--obcc-search-top, 8px);
+  right: var(--obcc-search-right, 8px);
+  z-index: 2147483002;
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  gap: 8px;
+  width: min(380px, calc(100vw - 16px));
+  max-height: min(72vh, 620px);
+  padding: 10px;
+  overflow: hidden;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 10px;
+  background: var(--background-primary);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.18);
+}
+
+.obcc-search-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text-normal);
+}
+
+.obcc-search-input {
+  width: 100%;
+  min-width: 0;
+  min-height: 34px;
+  padding: 6px 9px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  color: var(--text-normal);
+  background: var(--background-secondary);
+}
+
+.obcc-search-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  min-width: 0;
+}
+
+.obcc-search-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  white-space: nowrap;
+}
+
+.obcc-search-status {
+  min-height: 16px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.obcc-search-results {
+  display: grid;
+  align-content: start;
+  gap: 2px;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.obcc-search-result {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+  padding: 7px 6px;
+  border: 0;
+  border-radius: 5px;
+  color: var(--text-normal);
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.obcc-search-result:hover,
+.obcc-search-result:focus-visible {
+  background: var(--background-modifier-hover);
+  outline: none;
+}
+
+.obcc-search-result-icon {
+  display: inline-flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 2px;
+  color: var(--text-muted);
+}
+
+.obcc-search-result-icon svg {
+  width: 15px;
+  height: 15px;
+}
+
+.obcc-search-result-copy {
+  min-width: 0;
+}
+
+.obcc-search-result-title,
+.obcc-search-result-path,
+.obcc-search-result-excerpt {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
+}
+
+.obcc-search-result-title {
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.obcc-search-result-path {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  line-height: 1.3;
+}
+
+.obcc-search-result-excerpt {
+  margin-top: 2px;
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+  line-height: 1.35;
+  white-space: pre-line;
+}
+
+.obcc-search-empty {
+  padding: 14px 6px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  text-align: center;
 }
 
 .obcc-mention-popover {
@@ -3892,7 +4058,10 @@ details.obcc-process-step-details:not([open]) > :not(summary),
   border: 0;
   background: transparent;
   color: var(--text-normal);
+  box-sizing: border-box;
+  font-family: inherit;
   font-size: 14px;
+  letter-spacing: 0;
   resize: none;
   outline: none;
   line-height: 1.25;
@@ -3902,20 +4071,23 @@ details.obcc-process-step-details:not([open]) > :not(summary),
 
 .obcc-autocomplete-ghost {
   position: absolute;
-  z-index: 1;
+  z-index: 3;
   inset: 0;
   min-height: 28px;
   padding-block: 3px 2px;
   padding-inline: 6px 38px;
   overflow: hidden;
   color: transparent;
+  box-sizing: border-box;
+  font-family: inherit;
   font-size: 14px;
+  letter-spacing: 0;
   line-height: 1.25;
   opacity: 0;
   pointer-events: none;
   white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  word-break: break-word;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .obcc-autocomplete-ghost.has-suggestion {
@@ -3937,9 +4109,13 @@ details.obcc-process-step-details:not([open]) > :not(summary),
   color: var(--text-faint);
 }
 
+.obcc-autocomplete-trailing {
+  visibility: hidden;
+}
+
 .obcc-autocomplete-apply {
   position: absolute;
-  z-index: 3;
+  z-index: 4;
   top: 2px;
   right: auto;
   left: auto;
@@ -3972,6 +4148,10 @@ details.obcc-process-step-details:not([open]) > :not(summary),
 .obcc-autocomplete-apply > svg {
   width: 15px;
   height: 15px;
+}
+
+.obcc-autocomplete-apply.is-loading > svg {
+  animation: obcc-spin 0.9s linear infinite;
 }
 
 .obcc-editor-autocomplete-widget {
@@ -4095,13 +4275,18 @@ details.obcc-process-step-details:not([open]) > :not(summary),
   gap: 5px;
   min-width: 0;
   max-width: calc(100% - 8px);
+  max-height: min(216px, 32vh);
   padding: 4px;
   border: 1px solid var(--background-modifier-border);
   border-radius: 7px;
   background: var(--background-primary);
   box-shadow: var(--shadow-s);
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
+  flex-wrap: wrap;
+  align-items: stretch;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
   scrollbar-width: none;
 }
 
@@ -4115,10 +4300,11 @@ details.obcc-process-step-details:not([open]) > :not(summary),
 
 .obcc-composer-suggestion {
   display: inline-flex;
-  flex: 0 0 auto;
+  flex: 1 1 180px;
   align-items: center;
   min-width: 0;
-  max-width: min(78%, 360px);
+  width: auto;
+  max-width: 100%;
   min-height: 28px;
   margin: 0;
   padding: 4px 7px;
@@ -4130,6 +4316,9 @@ details.obcc-process-step-details:not([open]) > :not(summary),
   font-size: 12px;
   line-height: 1.3;
   text-align: start;
+  white-space: normal;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .obcc-composer-suggestion:hover,
@@ -4151,9 +4340,10 @@ details.obcc-process-step-details:not([open]) > :not(summary),
 
 .obcc-composer-suggestion-text {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
 }
 
 .obcc-root.has-composer-suggestions .obcc-messages {
@@ -5784,6 +5974,44 @@ input.obcc-review-correction-input {
   padding: 4px;
 }
 
+.obcc-review-internal-explanation {
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.obcc-review-internal-category {
+  min-width: 0;
+  padding: 3px 0 5px;
+}
+
+.obcc-review-internal-category-title {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 4px 5px;
+  color: var(--text-normal);
+  font-size: 11.5px;
+  font-weight: 650;
+}
+
+.obcc-review-internal-category-icon,
+.obcc-review-internal-detail-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--text-accent);
+}
+
+.obcc-review-internal-category-desc {
+  margin: 0 5px 3px 22px;
+  color: var(--text-muted);
+  font-size: 10.5px;
+  line-height: 1.35;
+}
+
 .obcc-review-nav-folder {
   min-width: 0;
 }
@@ -5889,6 +6117,13 @@ input.obcc-review-correction-input {
 .obcc-tool-run-review-delta.is-structure {
   background: color-mix(in srgb, var(--text-accent) 12%, transparent);
   color: var(--text-accent);
+}
+
+.obcc-review-file-category {
+  flex: 0 0 auto;
+  color: var(--text-accent);
+  font-size: 10px;
+  white-space: nowrap;
 }
 
 .obcc-review-workspace {
@@ -6197,6 +6432,46 @@ input.obcc-review-correction-input {
   scroll-padding-bottom: max(44px, calc(env(safe-area-inset-bottom) + 28px));
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
+}
+
+.obcc-review-internal-detail {
+  align-self: start;
+  padding: 9px 10px;
+  border: 1px solid color-mix(in srgb, var(--interactive-accent) 28%, var(--background-modifier-border));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--background-secondary) 82%, transparent);
+}
+
+.obcc-review-internal-detail-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-accent);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.obcc-review-internal-detail-summary {
+  margin-top: 5px;
+  color: var(--text-normal);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.obcc-review-internal-detail-list {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.obcc-review-internal-detail-source {
+  margin-top: 6px;
+  color: var(--text-faint);
+  font-size: 10.5px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .obcc-review-detail-main.has-structure-content {
@@ -8463,6 +8738,16 @@ body.is-phone .obcc-review-leaf.has-review-detail .obcc-review-detail-rail-info,
   background: var(--background-primary);
 }
 
+body.obcc-force-statusbar-visible .view-content.obcc-document-workbench {
+  box-sizing: border-box;
+  padding-bottom: max(52px, env(safe-area-inset-bottom));
+}
+
+body.is-mobile.obcc-force-statusbar-visible .view-content.obcc-document-workbench,
+body.is-phone.obcc-force-statusbar-visible .view-content.obcc-document-workbench {
+  padding-bottom: 0;
+}
+
 .obcc-document-shell {
   display: flex;
   flex-direction: column;
@@ -8544,6 +8829,65 @@ body.is-phone .obcc-review-leaf.has-review-detail .obcc-review-detail-rail-info,
 
 .obcc-document-actions {
   flex: 0 0 auto;
+}
+
+.obcc-document-search-bar {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 4px;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: 5px 12px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+}
+
+.obcc-document-search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 28px;
+  margin: 0;
+  padding: 3px 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  color: var(--text-normal);
+  background: var(--background-primary);
+  font-size: var(--font-ui-small);
+}
+
+.obcc-document-search-input:focus {
+  border-color: var(--interactive-accent);
+  outline: none;
+  box-shadow: 0 0 0 2px var(--background-modifier-border-focus);
+}
+
+.obcc-document-search-control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  min-height: 28px;
+  padding: 4px;
+  border-radius: 4px;
+}
+
+.obcc-document-search-control > svg {
+  width: 16px;
+  height: 16px;
+}
+
+.obcc-document-search-count {
+  flex: 0 0 auto;
+  min-width: 48px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  text-align: center;
+  white-space: nowrap;
 }
 
 .obcc-document-modes {
@@ -8660,6 +9004,69 @@ body.is-phone .obcc-review-leaf.has-review-detail .obcc-review-detail-rail-info,
   display: flex;
   padding: 0;
   overflow: hidden;
+}
+
+.obcc-document-body.is-markdown {
+  display: flex;
+  padding: 0;
+  overflow: hidden;
+}
+
+.obcc-document-stage {
+  position: relative;
+  box-sizing: border-box;
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* NoteDraw uses this stable webview surface; keep the marker class layout-neutral. */
+.obcc-document-stage.mwv-embed {
+  display: block;
+  margin: 0;
+  padding: 0;
+  overflow: visible;
+  isolation: isolate;
+}
+
+.obcc-document-note-draw-edit-surface {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  box-sizing: border-box;
+  min-height: 100%;
+  padding: 16px clamp(12px, 4%, 38px) 28px;
+  overflow: auto;
+  color: var(--text-normal);
+  background: var(--background-primary);
+  overscroll-behavior: contain;
+}
+
+.view-content.obcc-document-workbench .obcc-document-body,
+.view-content.obcc-document-workbench .obcc-document-stage,
+.view-content.obcc-document-workbench .obcc-document-editor,
+.view-content.obcc-document-workbench .obcc-document-note-draw-edit-surface {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.obcc-document-stage.is-edit-md-mode > .notedraw-canvas,
+.obcc-document-stage.is-edit-md-mode > .notedraw-static-canvas {
+  pointer-events: none;
+}
+
+.obcc-document-note-draw-edit-surface [contenteditable="true"],
+.obcc-document-note-draw-edit-surface [contenteditable="plaintext-only"] {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
+}
+
+.obcc-document-stage > .obcc-document-html-preview,
+.obcc-document-stage > .obcc-document-native-preview {
+  position: relative;
+  z-index: 1;
 }
 
 .obcc-document-editor {
@@ -8790,8 +9197,63 @@ body.is-phone .obcc-review-leaf.has-review-detail .obcc-review-detail-rail-info,
 }
 
 .obcc-document-body.is-native-preview {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
   padding: 0;
   overflow: hidden;
+}
+
+.obcc-document-body.is-native-preview > .obcc-document-stage {
+  flex: 1 1 auto;
+  height: 100%;
+  min-height: 0;
+}
+
+.obcc-document-body.is-native-preview.is-html-preview {
+  display: block;
+  overflow: auto;
+}
+
+.obcc-document-body.is-native-preview.is-html-preview > .obcc-document-stage {
+  height: auto;
+  min-height: 100%;
+}
+
+.obcc-document-body.is-native-preview.is-html-preview .obcc-document-html-preview {
+  height: var(--obcc-document-html-height, 100%);
+  min-height: 100%;
+}
+
+body.is-mobile .view-content.obcc-document-workbench .obcc-document-body,
+body.is-phone .view-content.obcc-document-workbench .obcc-document-body {
+  --obcc-document-bottom-clearance: max(52px, calc(var(--obcc-mobile-statusbar-height, 48px) + max(8px, env(safe-area-inset-bottom))));
+  box-sizing: border-box;
+  padding-bottom: var(--obcc-document-bottom-clearance);
+  scroll-padding-bottom: var(--obcc-document-bottom-clearance);
+}
+
+body.is-mobile .obcc-document-search-bar,
+body.is-phone .obcc-document-search-bar {
+  padding: 4px 8px;
+}
+
+body.is-mobile .view-content.obcc-document-workbench.is-compact-header .obcc-document-body,
+body.is-phone .view-content.obcc-document-workbench.is-compact-header .obcc-document-body {
+  padding-bottom: var(--obcc-document-bottom-clearance);
+}
+
+body.is-mobile .view-content.obcc-document-workbench .obcc-document-body.is-edit,
+body.is-phone .view-content.obcc-document-workbench .obcc-document-body.is-edit,
+body.is-mobile .view-content.obcc-document-workbench .obcc-document-body.is-markdown,
+body.is-phone .view-content.obcc-document-workbench .obcc-document-body.is-markdown {
+  overflow: auto;
+}
+
+body.is-mobile .view-content.obcc-document-workbench .obcc-document-body.is-native-preview,
+body.is-phone .view-content.obcc-document-workbench .obcc-document-body.is-native-preview {
+  overflow: auto;
 }
 
 .obcc-document-image-preview,
@@ -8869,14 +9331,21 @@ body.is-phone .obcc-document-meta {
 
 body.is-mobile .obcc-document-body,
 body.is-phone .obcc-document-body {
-  padding: 12px 10px max(20px, env(safe-area-inset-bottom));
+  padding: 12px 10px var(--obcc-document-bottom-clearance);
 }
 
 body.is-mobile .obcc-document-body.is-edit,
 body.is-phone .obcc-document-body.is-edit,
+body.is-mobile .obcc-document-body.is-markdown,
+body.is-phone .obcc-document-body.is-markdown,
 body.is-mobile .obcc-document-body.is-native-preview,
 body.is-phone .obcc-document-body.is-native-preview {
-  padding: 0;
+  padding: 0 0 var(--obcc-document-bottom-clearance);
+}
+
+body.is-mobile .obcc-document-note-draw-edit-surface,
+body.is-phone .obcc-document-note-draw-edit-surface {
+  padding-bottom: var(--obcc-document-bottom-clearance);
 }
 
 body.is-mobile .obcc-document-html-preview,

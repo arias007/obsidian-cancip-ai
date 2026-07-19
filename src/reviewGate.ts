@@ -10,6 +10,16 @@ export type ReviewGateStructureChange = {
   related_files?: string[];
 };
 
+export type ReviewGateInternalCategory =
+  | "automation"
+  | "button"
+  | "command"
+  | "config"
+  | "memory"
+  | "plugin"
+  | "skill"
+  | "other";
+
 export type ReviewGateLinks = {
   added?: string[];
   removed?: string[];
@@ -24,6 +34,10 @@ export type ReviewGateManifestItem = {
   changes: string[];
   links: ReviewGateLinks;
   structure: ReviewGateStructureChange[];
+  category?: ReviewGateInternalCategory;
+  review_summary?: string;
+  review_details?: string[];
+  review_source?: string;
 };
 
 export type ReviewGateManifest = {
@@ -104,7 +118,7 @@ export async function listReviewGatePackages(adapter: DataAdapter, outputRoot: s
     const folders = listing.folders
       .map((folder) => normalizePath(folder))
       .sort((a, b) => b.localeCompare(a))
-      .slice(0, Math.max(1, Math.min(50, limit)));
+      .slice(0, Math.max(1, Math.min(500, limit)));
     const results: string[] = [];
     for (const folder of folders) {
       const manifestPath = `${folder}/manifest.json`;
@@ -169,7 +183,8 @@ async function itemsFromInput(adapter: DataAdapter, rawItems: unknown, maxFileCh
       new_text: truncateText(newText, maxFileChars),
       changes: normalizeStringArray(raw.changes),
       links: normalizeLinks(raw.links),
-      structure: normalizeStructure(raw.structure ?? raw.structure_changes, path)
+      structure: normalizeStructure(raw.structure ?? raw.structure_changes, path),
+      ...normalizeReviewMeta(raw)
     });
   }
   return items;
@@ -183,14 +198,14 @@ async function scanScopeItems(adapter: DataAdapter, paths: string[], maxFiles: n
     const safe = path ? safeVaultPath(path) : "";
     const stat = safe ? await adapter.stat(safe).catch(() => null) : null;
     if (!safe || stat?.type === "folder") {
-      const listed = await listTextFiles(adapter, safe, maxFiles - files.length, Boolean(safe && safe.startsWith(".")));
+      const listed = await listTextFiles(adapter, safe, maxFiles - files.length, false);
       for (const file of listed) {
         if (!seen.has(file)) {
           seen.add(file);
           files.push(file);
         }
       }
-    } else if (stat?.type === "file" && isReviewGateCandidate(safe, true) && !seen.has(safe)) {
+    } else if (stat?.type === "file" && isReviewGateCandidate(safe, false) && !seen.has(safe)) {
       seen.add(safe);
       files.push(safe);
     }
@@ -283,7 +298,11 @@ function makeSummary(manifest: ReviewGateManifest, prepared: PreparedReviewItem[
       changed: item.changed,
       changes: item.raw.changes,
       links: item.raw.links,
-      structure: item.structure
+      structure: item.structure,
+      ...(item.raw.category ? { category: item.raw.category } : {}),
+      ...(item.raw.review_summary ? { review_summary: item.raw.review_summary } : {}),
+      ...(item.raw.review_details?.length ? { review_details: item.raw.review_details } : {}),
+      ...(item.raw.review_source ? { review_source: item.raw.review_source } : {})
     }))
   };
 }
@@ -397,16 +416,45 @@ function isReviewGateCandidate(path: string, includeHidden: boolean): boolean {
   const normalized = normalizePath(path);
   if (!isTextPath(normalized)) return false;
   if (!includeHidden && basename(normalized).startsWith(".")) return false;
-  if (!includeHidden && normalized.startsWith(".")) return false;
+  if (!includeHidden && hasDotFolderSegment(normalized)) return false;
   if (normalized === ".cancip/config.json") return false;
   if (normalized.startsWith(".cancip/sessions/")) return false;
   if (normalized.startsWith(".cancip/versions/")) return false;
-  if (normalized.startsWith(".cancip/automations/")) return false;
   if (normalized.startsWith(".cancip/review-gates/")) return false;
   if (normalized.startsWith("AI/Cancip/Exports/")) return false;
   if (isLegacyVisibleReviewGateArtifactPath(normalized)) return false;
   if (normalized.startsWith(".trash/")) return false;
   return true;
+}
+
+function normalizeReviewMeta(raw: Record<string, unknown>): Pick<ReviewGateManifestItem, "category" | "review_summary" | "review_details" | "review_source"> {
+  const category = isReviewGateInternalCategory(raw.category) ? raw.category : undefined;
+  const reviewSummary = cleanText(raw.review_summary ?? raw.reviewSummary);
+  const reviewDetails = normalizeStringArray(raw.review_details ?? raw.reviewDetails).slice(0, 8);
+  const reviewSource = cleanText(raw.review_source ?? raw.reviewSource);
+  return {
+    ...(category ? { category } : {}),
+    ...(reviewSummary ? { review_summary: reviewSummary } : {}),
+    ...(reviewDetails.length ? { review_details: reviewDetails } : {}),
+    ...(reviewSource ? { review_source: reviewSource } : {})
+  };
+}
+
+function isReviewGateInternalCategory(value: unknown): value is ReviewGateInternalCategory {
+  return value === "automation"
+    || value === "button"
+    || value === "command"
+    || value === "config"
+    || value === "memory"
+    || value === "plugin"
+    || value === "skill"
+    || value === "other";
+}
+
+function hasDotFolderSegment(path: string): boolean {
+  const parts = normalizePath(path).split("/").filter(Boolean);
+  if (parts.length <= 1) return false;
+  return parts.slice(0, -1).some((part) => part.startsWith("."));
 }
 
 function isReviewGateExcludedFolder(path: string): boolean {
@@ -416,8 +464,6 @@ function isReviewGateExcludedFolder(path: string): boolean {
     || normalized.startsWith(".cancip/sessions/")
     || normalized === ".cancip/versions"
     || normalized.startsWith(".cancip/versions/")
-    || normalized === ".cancip/automations"
-    || normalized.startsWith(".cancip/automations/")
     || normalized === ".cancip/review-gates"
     || normalized.startsWith(".cancip/review-gates/")
     || normalized === "AI/Cancip/Exports"
