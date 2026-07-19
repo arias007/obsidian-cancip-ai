@@ -191,6 +191,19 @@ type ReviewGatePendingEntry = {
   item: ReviewGateManifestItem;
 };
 
+type ReviewConfigChange = {
+  path: string;
+  oldValue: unknown;
+  newValue: unknown;
+  kind: "added" | "removed" | "changed";
+};
+
+type ReviewConfigDiff = {
+  changes: ReviewConfigChange[];
+  parsed: boolean;
+  truncated: boolean;
+};
+
 type ReviewGateLightItem = ReviewGateManifestItem & {
   summaryLineDelta?: LineDeltaSummary;
 };
@@ -230,6 +243,8 @@ type ReviewGateCanonicalState = {
 type ReviewGateSourcePane = {
   sourceBody: HTMLElement;
   renderBody: HTMLElement;
+  ensureSource: () => void;
+  ensureRendered: () => void;
 };
 
 type ReviewDiffLine = {
@@ -3233,6 +3248,32 @@ const EN = {
   reviewGateItemSummary: "What changed",
   reviewGateItemDetails: "Why it matters",
   reviewGateItemSource: "AI source",
+  reviewGateConfigChanges: "Configuration changes",
+  reviewGateConfigChangeCount: "{count} settings will change",
+  reviewGateConfigOldValue: "Before",
+  reviewGateConfigNewValue: "After",
+  reviewGateConfigImpact: "Impact",
+  reviewGateConfigAdded: "Added",
+  reviewGateConfigRemoved: "Removed",
+  reviewGateConfigChanged: "Changed",
+  reviewGateConfigUnset: "Not set",
+  reviewGateConfigEnabled: "Enabled",
+  reviewGateConfigDisabled: "Disabled",
+  reviewGateConfigSecret: "Hidden sensitive value",
+  reviewGateConfigRaw: "View raw configuration",
+  reviewGateConfigParseFallback: "This configuration is not standard JSON, so Cancip cannot split it into individual settings. The original content remains folded below.",
+  reviewGateConfigGeneralImpact: "Changes how Cancip or Obsidian behaves for this setting.",
+  reviewGateConfigFeatureImpact: "Turns the related feature on or off.",
+  reviewGateConfigAiImpact: "Changes the model or API route used for AI requests.",
+  reviewGateConfigAutocompleteImpact: "Changes when autocomplete runs and how suggestions are generated.",
+  reviewGateConfigMemoryImpact: "Changes how memory is read, stored, or included in context.",
+  reviewGateConfigAutomationImpact: "Changes how and when automations run.",
+  reviewGateConfigWorkbenchImpact: "Changes how files open or appear in the workbench.",
+  reviewGateConfigTtsImpact: "Changes read-aloud behavior or voice output.",
+  reviewGateConfigButtonImpact: "Changes button visibility, order, or interaction behavior.",
+  reviewGateConfigAutocompleteEnabled: "Enable autocomplete",
+  reviewGateConfigItem: "Item {index}",
+  reviewGateConfigMore: "More changes are folded to keep this page readable.",
   toolRunChangedFiles: "Changed files",
   toolRunOpenFile: "Open file",
   toolRunEvidence: "Verification evidence",
@@ -4134,6 +4175,32 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     reviewGateItemSummary: "改了什么",
     reviewGateItemDetails: "为什么需要看",
     reviewGateItemSource: "AI 来源",
+    reviewGateConfigChanges: "配置变更",
+    reviewGateConfigChangeCount: "这次会改变 {count} 项设置",
+    reviewGateConfigOldValue: "原来",
+    reviewGateConfigNewValue: "改为",
+    reviewGateConfigImpact: "影响",
+    reviewGateConfigAdded: "新增",
+    reviewGateConfigRemoved: "移除",
+    reviewGateConfigChanged: "修改",
+    reviewGateConfigUnset: "未设置",
+    reviewGateConfigEnabled: "开启",
+    reviewGateConfigDisabled: "关闭",
+    reviewGateConfigSecret: "敏感内容已隐藏",
+    reviewGateConfigRaw: "查看原始配置",
+    reviewGateConfigParseFallback: "这份配置不是标准 JSON，暂时无法逐项拆分；原始内容已折叠在下方，可按需查看。",
+    reviewGateConfigGeneralImpact: "会改变 Cancip 或 Obsidian 在这项设置上的行为。",
+    reviewGateConfigFeatureImpact: "会开启或关闭相关功能。",
+    reviewGateConfigAiImpact: "会改变 AI 请求使用的模型或接口路线。",
+    reviewGateConfigAutocompleteImpact: "会改变自动补全的触发方式或候选生成效果。",
+    reviewGateConfigMemoryImpact: "会改变记忆的读取、保存或上下文引用方式。",
+    reviewGateConfigAutomationImpact: "会改变自动化任务的运行方式或检查时机。",
+    reviewGateConfigWorkbenchImpact: "会改变文件在工作台中的打开或显示方式。",
+    reviewGateConfigTtsImpact: "会改变朗读方式、音色或播放效果。",
+    reviewGateConfigButtonImpact: "会改变按钮的显示、顺序或交互方式。",
+    reviewGateConfigAutocompleteEnabled: "启用自动补全",
+    reviewGateConfigItem: "第 {index} 项",
+    reviewGateConfigMore: "还有更多配置变化已折叠，避免页面过长。",
     toolRunChangedFiles: "改动文件",
     toolRunOpenFile: "打开文件",
     toolRunEvidence: "验收证据",
@@ -15707,8 +15774,8 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     const operation = (async () => {
       const state = await this.ensureReviewGateCanonicalState();
       const packages = state.packages
-        .map((entry) => entry.manifestPath)
-        .filter((path) => !isReviewGateAttentionExcluded(path));
+        .filter((entry) => entry.pendingPaths.length > 0 && !isReviewGateAttentionExcluded(entry.manifestPath))
+        .map((entry) => entry.manifestPath);
       const pendingByPackage = new Map(state.packages.map((entry) => [reviewGateLogicalPathKey(entry.manifestPath), entry.pendingPaths]));
       const byPath = new Map<string, ReviewGateSnapshotEntry>();
       const keptPackages: string[] = [];
@@ -20445,6 +20512,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
 
   async activateReviewView(path = "", itemPath = ""): Promise<CancipReviewLeafView | null> {
     let leaf = this.app.workspace.getLeavesOfType(CANCIP_REVIEW_VIEW_TYPE)[0];
+    const created = !leaf;
     if (!leaf) {
       leaf = this.app.workspace.getLeaf("tab");
       await leaf.setViewState({ type: CANCIP_REVIEW_VIEW_TYPE, active: true });
@@ -20455,7 +20523,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     };
     workspaceWithFocus.setActiveLeaf?.(leaf, { focus: true });
     if (leaf.view instanceof CancipReviewLeafView) {
-      await leaf.view.openPackage(path, itemPath);
+      await leaf.view.openPackage(path, itemPath, !created);
       return leaf.view;
     }
     return null;
@@ -22449,6 +22517,9 @@ class CancipReviewLeafView extends ItemView {
   private packagePath = "";
   private selectedItemPath = "";
   private reviewPackageCache = new Map<string, ReviewGatePackageData>();
+  private reviewSessionEntries: ReviewGatePendingEntry[] | null = null;
+  private reviewSessionStale = false;
+  private reviewSessionLoadPromise: Promise<ReviewGatePendingEntry[]> | null = null;
   private sourceMode: "source" | "render" = "render";
   private reviewViewMode: "diff" | "source" = "diff";
   private keyboardLockHeight = 0;
@@ -22478,15 +22549,25 @@ class CancipReviewLeafView extends ItemView {
   }
 
   async refreshReviewState(): Promise<void> {
-    this.reviewPackageCache.clear();
-    await this.render();
+    this.reviewSessionStale = true;
   }
 
   async onOpen(): Promise<void> {
+    this.renderReviewSessionLoading();
+    try {
+      await this.reloadReviewSession();
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      if (!this.reviewSessionEntries) {
+        this.renderReviewSessionFailure(reason);
+        return;
+      }
+      new Notice(this.t("reviewGateLoadFailed", { reason }));
+    }
     await this.render();
   }
 
-  async openPackage(path = "", itemPath = ""): Promise<void> {
+  async openPackage(path = "", itemPath = "", refreshSession = true): Promise<void> {
     const nextPath = path.trim() ? normalizePath(path.replace(/\\/g, "/")) : "";
     if (nextPath) {
       this.packagePath = nextPath;
@@ -22495,7 +22576,63 @@ class CancipReviewLeafView extends ItemView {
     }
     this.selectedItemPath = itemPath.trim() ? normalizePath(itemPath.replace(/\\/g, "/")) : "";
     this.sourceMode = "render";
+    this.reviewViewMode = "diff";
+    if (refreshSession || this.reviewSessionStale || !this.reviewSessionEntries) {
+      this.renderReviewSessionLoading();
+      try {
+        await this.reloadReviewSession();
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        if (!this.reviewSessionEntries) {
+          this.renderReviewSessionFailure(reason);
+          return;
+        }
+        new Notice(this.t("reviewGateLoadFailed", { reason }));
+      }
+    }
     await this.render();
+  }
+
+  private renderReviewSessionLoading(): void {
+    this.unlockReviewKeyboardLayout();
+    this.keyboardLockHeight = 0;
+    const root = this.contentEl;
+    root.empty();
+    root.addClass("obcc-review-leaf");
+    root.removeClass("has-review-detail");
+    root.removeClass("has-review-nav");
+    root.setAttr("lang", this.plugin.language());
+    root.setAttr("dir", this.plugin.textDirection());
+    const shell = root.createDiv({ cls: "obcc-review-leaf-shell" });
+    const body = shell.createDiv({ cls: "obcc-review-leaf-body" });
+    body.createDiv({ cls: "obcc-review-native-empty is-loading", text: this.t("reviewGateLoadingFiles") });
+  }
+
+  private renderReviewSessionFailure(reason: string): void {
+    const body = this.contentEl.querySelector<HTMLElement>(".obcc-review-leaf-body") ?? this.contentEl;
+    body.empty();
+    body.createDiv({ cls: "obcc-review-native-empty", text: this.t("reviewGateLoadFailed", { reason }) });
+  }
+
+  private async reloadReviewSession(): Promise<ReviewGatePendingEntry[]> {
+    if (this.reviewSessionLoadPromise) return await this.reviewSessionLoadPromise;
+    const operation = (async () => {
+      this.reviewPackageCache.clear();
+      const entries = await this.collectAllPendingReviewEntries(true);
+      this.reviewSessionEntries = entries;
+      for (const entry of entries) this.reviewPackageCache.set(normalizePath(entry.packagePath), entry.data);
+      this.reviewSessionStale = false;
+      return entries;
+    })();
+    this.reviewSessionLoadPromise = operation;
+    try {
+      return await operation;
+    } catch (error) {
+      this.reviewSessionStale = true;
+      throw error;
+    } finally {
+      if (this.reviewSessionLoadPromise === operation) this.reviewSessionLoadPromise = null;
+    }
   }
 
   private t(key: I18nKey, vars?: Record<string, string | number>): string {
@@ -22771,37 +22908,41 @@ class CancipReviewLeafView extends ItemView {
 
   private async renderReviewGatePanel(parent: HTMLElement, path: string): Promise<void> {
     parent.empty();
-    let selectedPath = path;
-    if (!selectedPath) {
+    const entries = this.reviewSessionEntries;
+    if (!entries) {
+      parent.createDiv({ cls: "obcc-review-native-empty is-loading", text: this.t("reviewGateLoadingFiles") });
+      return;
+    }
+    if (!path) {
       await this.renderAllPendingReviewGates(parent);
       return;
     }
-    if (selectedPath && await this.plugin.pendingReviewGateItemCount(selectedPath) === 0) {
+    const packageKey = reviewGateLogicalPathKey(path);
+    const packageEntries = entries.filter((entry) => reviewGateLogicalPathKey(entry.packagePath) === packageKey);
+    if (!packageEntries.length) {
       this.packagePath = "";
       this.selectedItemPath = "";
       await this.renderAllPendingReviewGates(parent);
       return;
     }
-    if (selectedPath && this.selectedItemPath) {
-      const pendingKeys = new Set((await this.plugin.cachedPendingReviewGateItemPaths(selectedPath)).map(reviewGateLogicalPathKey));
-      if (!pendingKeys.has(reviewGateLogicalPathKey(this.selectedItemPath))) {
+    if (this.selectedItemPath) {
+      const selectedIndex = entries.findIndex((entry) =>
+        reviewGateLogicalPathKey(entry.packagePath) === packageKey
+        && reviewGateLogicalPathKey(entry.item.path) === reviewGateLogicalPathKey(this.selectedItemPath)
+      );
+      if (selectedIndex < 0) {
         this.packagePath = "";
         this.selectedItemPath = "";
         await this.renderAllPendingReviewGates(parent);
         return;
       }
-    }
-    if (!selectedPath) {
-      parent.createDiv({ cls: "obcc-review-native-empty", text: this.t("reviewGatePanelEmpty") });
+      const selected = entries[selectedIndex];
+      this.renderReviewDetail(parent, selected.data, selected.item, selectedIndex + 1, entries.length);
       return;
     }
-    try {
-      const data = await this.loadReviewGatePackage(selectedPath);
-      await this.renderReviewGateWorkspace(parent, data);
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
-      parent.createDiv({ cls: "obcc-review-native-empty", text: this.t("reviewGateLoadFailed", { reason }) });
-    }
+    const data = this.reviewPackageCache.get(normalizePath(path)) ?? packageEntries[0].data;
+    const navigation = parent.createDiv({ cls: "obcc-review-file-nav is-page" });
+    this.renderReviewGateNavigation(navigation, data, packageEntries.map((entry) => entry.item));
   }
 
   private async collectAllPendingReviewEntries(force = false): Promise<ReviewGatePendingEntry[]> {
@@ -22824,7 +22965,7 @@ class CancipReviewLeafView extends ItemView {
   }
 
   private async renderAllPendingReviewGates(parent: HTMLElement): Promise<void> {
-    const entries = await this.collectAllPendingReviewEntries(true);
+    const entries = this.reviewSessionEntries ?? [];
     if (!entries.length) {
       parent.createDiv({ cls: "obcc-review-native-empty", text: this.t("reviewGatePanelEmpty") });
       return;
@@ -22849,48 +22990,47 @@ class CancipReviewLeafView extends ItemView {
     this.scheduleReviewTreeLayoutSync(tree);
   }
 
-  private async loadReviewGatePackage(path: string): Promise<ReviewGatePackageData> {
-    const cacheKey = normalizePath(path);
-    const cached = this.reviewPackageCache.get(cacheKey);
-    if (cached) return cached;
-    const folder = reviewGatePackageFolder(path);
-    const manifestPath = `${folder}/manifest.json`;
-    const raw = await this.app.vault.adapter.read(manifestPath);
-    const manifest = JSON.parse(raw) as ReviewGateManifest;
-    const data = {
-      path,
-      folder,
-      title: typeof manifest.title === "string" && manifest.title.trim() ? manifest.title.trim() : reviewGateDisplayName(path),
-      generatedAt: typeof manifest.generated_at === "string" ? manifest.generated_at : "",
-      items: filterStoredReviewGateItems(normalizeReviewGateItems(manifest.items))
+  private renderReviewConfigSummary(parent: HTMLElement, item: ReviewGateManifestItem): void {
+    const diff = reviewConfigDiff(item.old_text, item.new_text);
+    const section = parent.createDiv({ cls: "obcc-review-config-summary" });
+    const head = section.createDiv({ cls: "obcc-review-config-summary-head" });
+    setIcon(head.createSpan({ cls: "obcc-review-config-summary-icon" }), "settings-2");
+    const heading = head.createDiv({ cls: "obcc-review-config-summary-heading" });
+    heading.createDiv({ cls: "obcc-review-config-summary-title", text: this.t("reviewGateConfigChanges") });
+    if (diff.parsed) {
+      heading.createDiv({ cls: "obcc-review-config-summary-count", text: this.t("reviewGateConfigChangeCount", { count: diff.changes.length }) });
+    }
+    if (!diff.parsed) {
+      section.createDiv({ cls: "obcc-review-config-fallback", text: this.t("reviewGateConfigParseFallback") });
+      return;
+    }
+    if (!diff.changes.length) {
+      section.createDiv({ cls: "obcc-review-config-fallback", text: this.t("reviewGateNoDiff") });
+      return;
+    }
+    const list = section.createDiv({ cls: "obcc-review-config-change-list" });
+    const kindKeys: Record<ReviewConfigChange["kind"], I18nKey> = {
+      added: "reviewGateConfigAdded",
+      removed: "reviewGateConfigRemoved",
+      changed: "reviewGateConfigChanged"
     };
-    this.reviewPackageCache.set(cacheKey, data);
-    return data;
-  }
-
-  private async pendingReviewGateItems(data: ReviewGatePackageData): Promise<ReviewGateManifestItem[]> {
-    const changedItems = data.items.filter(isReviewGateItemChanged);
-    if (!changedItems.length) return [];
-    const pending = new Set((await this.plugin.cachedPendingReviewGateItemPaths(data.path)).map(reviewGateLogicalPathKey));
-    return changedItems.filter((item) => pending.has(reviewGateLogicalPathKey(item.path)));
-  }
-
-  private async renderReviewGateWorkspace(parent: HTMLElement, data: ReviewGatePackageData): Promise<void> {
-    const changedItems = await this.pendingReviewGateItems(data);
-    const visibleItems = changedItems.length ? changedItems : data.items;
-    if (!changedItems.length) {
-      parent.createDiv({ cls: "obcc-review-native-empty", text: this.t("reviewGatePanelEmpty") });
-      return;
+    for (const change of diff.changes) {
+      const row = list.createDiv({ cls: `obcc-review-config-change is-${change.kind}` });
+      const path = row.createDiv({ cls: "obcc-review-config-change-head" });
+      path.createSpan({ cls: "obcc-review-config-change-path", text: reviewConfigPathLabel(change.path, (key, vars) => this.t(key, vars)) });
+      path.createSpan({ cls: "obcc-review-config-change-kind", text: this.t(kindKeys[change.kind]) });
+      const values = row.createDiv({ cls: "obcc-review-config-values" });
+      const oldValue = values.createDiv({ cls: "obcc-review-config-value is-old" });
+      oldValue.createDiv({ cls: "obcc-review-config-value-label", text: this.t("reviewGateConfigOldValue") });
+      oldValue.createDiv({ cls: "obcc-review-config-value-text", text: reviewConfigValueLabel(change.oldValue, change.path, (key, vars) => this.t(key, vars)) });
+      const newValue = values.createDiv({ cls: "obcc-review-config-value is-new" });
+      newValue.createDiv({ cls: "obcc-review-config-value-label", text: this.t("reviewGateConfigNewValue") });
+      newValue.createDiv({ cls: "obcc-review-config-value-text", text: reviewConfigValueLabel(change.newValue, change.path, (key, vars) => this.t(key, vars)) });
+      const impact = row.createDiv({ cls: "obcc-review-config-impact" });
+      impact.createSpan({ cls: "obcc-review-config-impact-label", text: `${this.t("reviewGateConfigImpact")}：` });
+      impact.createSpan({ text: this.t(reviewConfigImpactKey(change.path, change.oldValue, change.newValue)) });
     }
-    const selectedItem = this.selectedItemPath
-      ? visibleItems.find((item) => item.path === this.selectedItemPath)
-      : undefined;
-    if (selectedItem) {
-      this.renderReviewDetail(parent, data, selectedItem, visibleItems.indexOf(selectedItem) + 1, visibleItems.length);
-      return;
-    }
-    const navigation = parent.createDiv({ cls: "obcc-review-file-nav is-page" });
-    this.renderReviewGateNavigation(navigation, data, visibleItems);
+    if (diff.truncated) section.createDiv({ cls: "obcc-review-config-more", text: this.t("reviewGateConfigMore") });
   }
 
   private renderReviewDetail(parent: HTMLElement, data: ReviewGatePackageData, item: ReviewGateManifestItem, index: number, total: number): void {
@@ -22982,6 +23122,8 @@ class CancipReviewLeafView extends ItemView {
       this.plugin.obsidianConfigDir(),
       this.plugin.settings.memoryFolder
     );
+    const isConfigReview = internalCategory === "config" && hasContentChange;
+    main.toggleClass("is-config-review", isConfigReview);
     if (internalCategory) {
       const explanation = main.createDiv({ cls: `obcc-review-internal-detail is-${internalCategory}` });
       const heading = explanation.createDiv({ cls: "obcc-review-internal-detail-heading" });
@@ -23000,6 +23142,7 @@ class CancipReviewLeafView extends ItemView {
         explanation.createDiv({ cls: "obcc-review-internal-detail-source", text: `${this.t("reviewGateItemSource")}：${item.review_source}` });
       }
     }
+    if (isConfigReview) this.renderReviewConfigSummary(main, item);
     main.toggleClass("is-structure-only", hasStructureChange && !hasContentChange);
     main.toggleClass("has-structure-content", hasStructureChange && hasContentChange);
     if (hasStructureChange) {
@@ -23015,20 +23158,41 @@ class CancipReviewLeafView extends ItemView {
     let sources: HTMLElement | null = null;
     let oldPane: ReviewGateSourcePane | null = null;
     let newPane: ReviewGateSourcePane | null = null;
+    let ensureDiffSource = (): void => undefined;
+    let ensureDiffRendered = (): void => undefined;
     if (hasContentChange) {
-      changes = main.createEl("details", { cls: "obcc-review-section obcc-review-changes", attr: { open: "true" } });
-      changes.createEl("summary", { text: this.t("reviewGateContentChanges") });
+      changes = main.createEl("details", {
+        cls: `obcc-review-section obcc-review-changes${isConfigReview ? " obcc-review-config-raw" : ""}`,
+        ...(!isConfigReview ? { attr: { open: "true" } } : {})
+      });
+      changes.createEl("summary", { text: this.t(isConfigReview ? "reviewGateConfigRaw" : "reviewGateContentChanges") });
       const changesBody = changes.createDiv({ cls: "obcc-review-changes-body" });
       diffBody = changesBody.createDiv({ cls: "obcc-review-diff is-hidden" });
-      this.renderReviewDiff(diffBody, item.old_text, item.new_text);
+      let diffSourceReady = false;
+      ensureDiffSource = () => {
+        if (diffSourceReady || !diffBody) return;
+        diffSourceReady = true;
+        this.renderReviewDiff(diffBody, item.old_text, item.new_text);
+      };
       diffRender = changesBody.createDiv({ cls: "obcc-review-diff-render markdown-rendered" });
-      void this.renderReviewDiffMarkdown(diffRender, item.old_text, item.new_text);
-
-      sources = main.createDiv({ cls: "obcc-review-sources obcc-review-sources-paired" });
-      newPane = this.renderReviewSource(sources, this.t("reviewGateNew"), item.new_text, true);
-      oldPane = this.renderReviewSource(sources, this.t("reviewGateOld"), item.old_text, false);
+      let diffRendered = false;
+      ensureDiffRendered = () => {
+        if (diffRendered || !diffRender) return;
+        diffRendered = true;
+        void this.renderReviewDiffMarkdown(diffRender, item.old_text, item.new_text);
+      };
+      sources = main.createDiv({ cls: `obcc-review-sources obcc-review-sources-paired${isConfigReview ? " obcc-review-config-raw-sources" : ""}` });
+      newPane = this.renderReviewSource(sources, this.t("reviewGateNew"), item.new_text, true, true);
+      oldPane = this.renderReviewSource(sources, this.t("reviewGateOld"), item.old_text, false, true);
       this.syncReviewSourceScroll(oldPane.sourceBody, newPane.sourceBody);
       this.syncReviewSourceScroll(oldPane.renderBody, newPane.renderBody);
+      if (isConfigReview) {
+        changes.addEventListener("toggle", () => {
+          if (!changes?.open) return;
+          if (this.sourceMode === "render") ensureDiffRendered();
+          else ensureDiffSource();
+        });
+      }
     } else {
       const noText = main.createDiv({ cls: "obcc-review-section obcc-review-no-text-change" });
       noText.createDiv({ cls: "obcc-review-no-diff", text: this.t("reviewGateNoTextChanges") });
@@ -23075,6 +23239,18 @@ class CancipReviewLeafView extends ItemView {
       if (!oldPane || !newPane || !diffBody || !diffRender) return;
       this.sourceMode = mode;
       const showRender = mode === "render";
+      if (!isConfigReview || Boolean(changes?.open) || this.reviewViewMode === "source") {
+        if (this.reviewViewMode === "diff") {
+          if (showRender) ensureDiffRendered();
+          else ensureDiffSource();
+        } else if (showRender) {
+          oldPane.ensureRendered();
+          newPane.ensureRendered();
+        } else {
+          oldPane.ensureSource();
+          newPane.ensureSource();
+        }
+      }
       for (const pane of [oldPane, newPane]) {
         pane.sourceBody.toggleClass("is-hidden", showRender);
         pane.renderBody.toggleClass("is-hidden", !showRender);
@@ -23087,15 +23263,28 @@ class CancipReviewLeafView extends ItemView {
       renderToggleIcon.empty();
       setIcon(renderToggleIcon, showRender ? "code-2" : "eye");
     };
-    const setReviewView = (mode: "diff" | "source") => {
+    const setReviewView = (mode: "diff" | "source", revealRaw = false) => {
       if (!changes || !sources) return;
       this.reviewViewMode = mode;
       const showDiff = mode === "diff";
       main.toggleClass("is-diff-view", showDiff);
       main.toggleClass("is-source-view", !showDiff);
-      changes.open = true;
+      changes.open = !isConfigReview || revealRaw;
       changes.toggleClass("is-hidden", !showDiff);
       sources.toggleClass("is-hidden", showDiff);
+      if (revealRaw && this.sourceMode === "render") {
+        if (showDiff) ensureDiffRendered();
+        else {
+          oldPane?.ensureRendered();
+          newPane?.ensureRendered();
+        }
+      } else if (revealRaw) {
+        if (showDiff) ensureDiffSource();
+        else {
+          oldPane?.ensureSource();
+          newPane?.ensureSource();
+        }
+      }
       viewToggleButton.toggleClass("is-active", !showDiff);
       viewToggleButton.setAttr("aria-expanded", !showDiff ? "true" : "false");
       viewToggleButton.setAttr("title", showDiff ? `${this.t("reviewGateNew")} / ${this.t("reviewGateOld")}` : this.t("reviewGateChanges"));
@@ -23103,8 +23292,8 @@ class CancipReviewLeafView extends ItemView {
     };
     renderToggleButton.addEventListener("click", () => setMode(this.sourceMode === "render" ? "source" : "render"));
     setMode(this.sourceMode);
-    viewToggleButton.addEventListener("click", () => setReviewView(this.reviewViewMode === "diff" ? "source" : "diff"));
-    setReviewView(this.reviewViewMode);
+    viewToggleButton.addEventListener("click", () => setReviewView(this.reviewViewMode === "diff" ? "source" : "diff", true));
+    setReviewView(this.reviewViewMode, false);
 
     approveButton.addEventListener("click", () => {
       void this.saveReviewGateDecision(data.folder, item, "approved", "", data);
@@ -23181,22 +23370,36 @@ class CancipReviewLeafView extends ItemView {
     }
   }
 
-  private renderReviewSource(parent: HTMLElement, title: string, content: string, emphasize = false): ReviewGateSourcePane {
+  private renderReviewSource(parent: HTMLElement, title: string, content: string, emphasize = false, deferRender = false): ReviewGateSourcePane {
     const section = parent.createDiv({ cls: `obcc-review-source-pane${emphasize ? " is-emphasized" : ""}` });
     section.createDiv({ cls: "obcc-review-source-title", text: title });
     const source = section.createDiv({ cls: "obcc-review-source-body" });
-    const lines = content.split(/\r?\n/);
-    const rowCount = Math.max(1, lines.length);
-    for (let index = 0; index < rowCount; index += 1) {
-      const hasLine = index < lines.length;
-      const line = hasLine ? lines[index] : "";
-      const row = source.createDiv({ cls: "obcc-review-source-row" });
-      row.createSpan({ cls: "obcc-review-line-no", text: hasLine ? String(index + 1) : "" });
-      row.createEl("pre", { text: line || " " });
-    }
+    let sourceReady = false;
+    const ensureSource = () => {
+      if (sourceReady) return;
+      sourceReady = true;
+      const lines = content.split(/\r?\n/);
+      const rowCount = Math.max(1, lines.length);
+      for (let index = 0; index < rowCount; index += 1) {
+        const hasLine = index < lines.length;
+        const line = hasLine ? lines[index] : "";
+        const row = source.createDiv({ cls: "obcc-review-source-row" });
+        row.createSpan({ cls: "obcc-review-line-no", text: hasLine ? String(index + 1) : "" });
+        row.createEl("pre", { text: line || " " });
+      }
+    };
     const rendered = section.createDiv({ cls: "obcc-review-render-body is-hidden markdown-rendered" });
-    void MarkdownRenderer.render(this.app, content || " ", rendered, this.markdownSourcePath(), this);
-    return { sourceBody: source, renderBody: rendered };
+    let renderedReady = false;
+    const ensureRendered = () => {
+      if (renderedReady) return;
+      renderedReady = true;
+      void MarkdownRenderer.render(this.app, content || " ", rendered, this.markdownSourcePath(), this);
+    };
+    if (!deferRender) {
+      ensureSource();
+      ensureRendered();
+    }
+    return { sourceBody: source, renderBody: rendered, ensureSource, ensureRendered };
   }
 
   private syncReviewSourceScroll(first: HTMLElement, second: HTMLElement): void {
@@ -23225,7 +23428,7 @@ class CancipReviewLeafView extends ItemView {
   ): Promise<void> {
     const trimmed = note.trim();
     try {
-      const previousPending = data ? await this.collectAllPendingReviewEntries(false) : [];
+      const previousPending = data ? [...(this.reviewSessionEntries ?? [])] : [];
       const dir = `${folder}/review-corrections`;
       await ensureFolder(this.app.vault.adapter, dir);
       const path = `${dir}/pending.jsonl`;
@@ -23272,16 +23475,17 @@ class CancipReviewLeafView extends ItemView {
     decidedItemPath: string,
     previousPending: ReviewGatePendingEntry[]
   ): Promise<void> {
-    const remaining = await this.collectAllPendingReviewEntries(false);
+    const identity = (entry: ReviewGatePendingEntry) =>
+      `${reviewGateLogicalPathKey(entry.packagePath)}\n${reviewGateLogicalPathKey(entry.item.path)}`;
+    const decidedIdentity = `${reviewGateLogicalPathKey(decidedPackagePath)}\n${reviewGateLogicalPathKey(decidedItemPath)}`;
+    const remaining = (this.reviewSessionEntries ?? previousPending).filter((entry) => identity(entry) !== decidedIdentity);
+    this.reviewSessionEntries = remaining;
     if (!remaining.length) {
       this.packagePath = "";
       this.selectedItemPath = "";
       await this.render();
       return;
     }
-    const identity = (entry: ReviewGatePendingEntry) =>
-      `${reviewGateLogicalPathKey(entry.packagePath)}\n${reviewGateLogicalPathKey(entry.item.path)}`;
-    const decidedIdentity = `${reviewGateLogicalPathKey(decidedPackagePath)}\n${reviewGateLogicalPathKey(decidedItemPath)}`;
     const decidedIndex = previousPending.findIndex((entry) => identity(entry) === decidedIdentity);
     const orderedCandidates = decidedIndex >= 0
       ? [...previousPending.slice(decidedIndex + 1), ...previousPending.slice(0, decidedIndex)]
@@ -27909,7 +28113,7 @@ class CancipView extends ItemView {
     });
     const rendered = section.createDiv({ cls: "obcc-review-render-body is-hidden markdown-rendered" });
     void MarkdownRenderer.render(this.app, content || " ", rendered, this.markdownSourcePath(), this);
-    return { sourceBody: source, renderBody: rendered };
+    return { sourceBody: source, renderBody: rendered, ensureSource: () => undefined, ensureRendered: () => undefined };
   }
 
   private syncReviewSourceScroll(first: HTMLElement, second: HTMLElement): void {
@@ -47972,6 +48176,204 @@ function isReviewGateItemReviewable(item: ReviewGateManifestItem, obsidianConfig
   } catch {
     return false;
   }
+}
+
+const REVIEW_CONFIG_MISSING = Symbol("review-config-missing");
+
+function reviewConfigDiff(oldText: string, newText: string, limit = 40): ReviewConfigDiff {
+  const parse = (text: string): { parsed: boolean; value: unknown } => {
+    if (!text.trim()) return { parsed: true, value: REVIEW_CONFIG_MISSING };
+    try {
+      return { parsed: true, value: JSON.parse(text) as unknown };
+    } catch {
+      return { parsed: false, value: REVIEW_CONFIG_MISSING };
+    }
+  };
+  const oldConfig = parse(oldText);
+  const newConfig = parse(newText);
+  if (!oldConfig.parsed || !newConfig.parsed) return { changes: [], parsed: false, truncated: false };
+
+  const changes: ReviewConfigChange[] = [];
+  let truncated = false;
+  const equal = (first: unknown, second: unknown): boolean => {
+    if (first === second) return true;
+    if (first === REVIEW_CONFIG_MISSING || second === REVIEW_CONFIG_MISSING) return false;
+    try {
+      return JSON.stringify(canonicalJsonValue(first)) === JSON.stringify(canonicalJsonValue(second));
+    } catch {
+      return false;
+    }
+  };
+  const append = (path: string, oldValue: unknown, newValue: unknown): void => {
+    if (changes.length >= limit) {
+      truncated = true;
+      return;
+    }
+    changes.push({
+      path: path || "config",
+      oldValue,
+      newValue,
+      kind: oldValue === REVIEW_CONFIG_MISSING ? "added" : newValue === REVIEW_CONFIG_MISSING ? "removed" : "changed"
+    });
+  };
+  const walk = (oldValue: unknown, newValue: unknown, path: string): void => {
+    if (changes.length >= limit) {
+      truncated = true;
+      return;
+    }
+    if (equal(oldValue, newValue)) return;
+    const oldRecord = oldValue !== REVIEW_CONFIG_MISSING && isRecord(oldValue) ? oldValue : null;
+    const newRecord = newValue !== REVIEW_CONFIG_MISSING && isRecord(newValue) ? newValue : null;
+    if (oldRecord || newRecord) {
+      const keys = uniqueStrings([...Object.keys(oldRecord ?? {}), ...Object.keys(newRecord ?? {})]).sort((a, b) => a.localeCompare(b));
+      if (!keys.length) {
+        append(path, oldValue, newValue);
+        return;
+      }
+      for (const key of keys) {
+        walk(
+          oldRecord && Object.prototype.hasOwnProperty.call(oldRecord, key) ? oldRecord[key] : REVIEW_CONFIG_MISSING,
+          newRecord && Object.prototype.hasOwnProperty.call(newRecord, key) ? newRecord[key] : REVIEW_CONFIG_MISSING,
+          path ? `${path}.${key}` : key
+        );
+      }
+      return;
+    }
+    const oldArray = Array.isArray(oldValue) ? oldValue : null;
+    const newArray = Array.isArray(newValue) ? newValue : null;
+    const structuredArray = Boolean((oldArray ?? newArray)?.some((value) => isRecord(value) || Array.isArray(value)));
+    if ((oldArray || newArray) && structuredArray) {
+      const length = Math.max(oldArray?.length ?? 0, newArray?.length ?? 0);
+      if (!length) {
+        append(path, oldValue, newValue);
+        return;
+      }
+      for (let index = 0; index < length; index += 1) {
+        walk(
+          oldArray && index < oldArray.length ? oldArray[index] : REVIEW_CONFIG_MISSING,
+          newArray && index < newArray.length ? newArray[index] : REVIEW_CONFIG_MISSING,
+          `${path}[${index + 1}]`
+        );
+      }
+      return;
+    }
+    append(path, oldValue, newValue);
+  };
+  walk(oldConfig.value, newConfig.value, "");
+  return { changes, parsed: true, truncated };
+}
+
+function reviewConfigPathLabel(
+  path: string,
+  t: (key: I18nKey, vars?: Record<string, string | number>) => string
+): string {
+  const labels: Partial<Record<string, I18nKey>> = {
+    language: "settingsLanguage",
+    accessMode: "settingsAccessMode",
+    activeApiProfileId: "settingsApiProfile",
+    apiProfiles: "settingsApiProfile",
+    apiUrl: "settingsApiUrl",
+    apiKey: "settingsApiKey",
+    apiMode: "settingsApiMode",
+    model: "settingsModel",
+    modelOptions: "settingsModelOptions",
+    temperature: "settingsTemperature",
+    maxOutputTokens: "settingsMaxOutputTokens",
+    memoryFolder: "settingsCoreMemoryFolder",
+    includeCurrentFile: "settingsIncludeCurrentFile",
+    includeCoreMemory: "settingsIncludeCoreMemory",
+    personalizedGreetingEnabled: "settingsPersonalizedGreeting",
+    personalizationFriendlyName: "settingsPersonalizationFriendlyName",
+    personalizationWeatherLocation: "settingsPersonalizationWeatherLocation",
+    composerAutocompleteEnabled: "reviewGateConfigAutocompleteEnabled",
+    composerAutocompletePrefetchEnabled: "settingsAutocompletePrefetch",
+    composerAutocompleteNetworkTimeoutSeconds: "settingsAutocompleteNetworkTimeoutSeconds",
+    composerAutocompleteRotationSeconds: "settingsAutocompleteRotationSeconds",
+    composerAutocompleteCandidateCount: "settingsAutocompleteCandidateCount",
+    composerAutocompleteApiProfileId: "settingsAutocompleteModel",
+    documentWorkbenchDefaultMode: "settingsDocumentWorkbenchDefaultMode",
+    documentWorkbenchCompactHeader: "settingsDocumentWorkbenchCompactHeader",
+    documentWorkbenchShowMetadata: "settingsDocumentWorkbenchShowMetadata",
+    documentWorkbenchReuseSingleLeaf: "settingsDocumentWorkbenchReuseSingleLeaf",
+    documentWorkbenchExtensions: "settingsDocumentWorkbenchExtensions",
+    commandBusEnabled: "settingsCommandBusEnabled",
+    skillsEnabled: "settingsSkillsEnabled",
+    skillRoots: "settingsSkillRoots",
+    skillAutoSelect: "settingsSkillAutoSelect",
+    skillExperienceHarvestEnabled: "settingsSkillExperienceHarvest",
+    automationsEnabled: "settingsAutomationsEnabled",
+    automationCheckMinutes: "settingsAutomationCheckMinutes",
+    githubCommandsEnabled: "settingsGithubCommandsEnabled",
+    githubApiBaseUrl: "settingsGithubApiBaseUrl",
+    githubDownloadBaseUrl: "settingsGithubDownloadBaseUrl",
+    githubOwner: "settingsGithubOwner",
+    githubRepo: "settingsGithubRepo",
+    githubToken: "settingsGithubToken",
+    ntfyEnabled: "settingsNtfyEnabled",
+    ntfyServerUrl: "settingsNtfyServerUrl",
+    ntfyTopic: "settingsNtfyTopic",
+    ntfyToken: "settingsNtfyToken",
+    ntfyOnSessionComplete: "settingsNtfyOnSessionComplete",
+    ntfyOnSessionFail: "settingsNtfyOnSessionFail",
+    ttsProvider: "settingsTtsProvider",
+    ttsQualityMode: "settingsTtsQualityMode",
+    ttsVoice: "settingsTtsVoice",
+    ttsRate: "settingsTtsRate",
+    ttsPitch: "settingsTtsPitch",
+    ttsChunkChars: "settingsTtsChunkChars",
+    ttsCustomUrl: "settingsTtsCustomUrl",
+    ttsShowViewActions: "settingsTtsShowViewActions",
+    ttsAutoReadFinalAnswer: "settingsTtsAutoReadFinalAnswer",
+    obsidianNoticesEnabled: "settingsObsidianNoticesEnabled",
+    obsidianNoticeOnSessionComplete: "settingsObsidianNoticeOnSessionComplete",
+    obsidianNoticeOnUserAttention: "settingsObsidianNoticeOnUserAttention",
+    autoOpenPlanPanel: "settingsAutoOpenPlanPanel",
+    showLiveTodos: "settingsShowLiveTodos"
+  };
+  const segments: string[] = [];
+  for (const rawSegment of path.split(".")) {
+    const match = rawSegment.match(/^(.+?)(?:\[(\d+)\])?$/);
+    const key = match?.[1] ?? rawSegment;
+    const labelKey = labels[key];
+    const generic = key.replace(/[_-]+/g, " ").replace(/([a-z0-9])([A-Z])/g, "$1 $2").trim();
+    segments.push(labelKey ? t(labelKey) : generic || key);
+    if (match?.[2]) segments.push(t("reviewGateConfigItem", { index: Number(match[2]) }));
+  }
+  return segments.join(" > ");
+}
+
+function reviewConfigValueLabel(
+  value: unknown,
+  path: string,
+  t: (key: I18nKey, vars?: Record<string, string | number>) => string
+): string {
+  const leafKey = path.split(".").pop()?.replace(/\[\d+\]$/, "") ?? path;
+  if (/api.?key|github.?token|ntfy.?token|access.?token|refresh.?token|password|passwd|secret|authorization|credential|private.?key/i.test(leafKey)) {
+    return t("reviewGateConfigSecret");
+  }
+  if (value === REVIEW_CONFIG_MISSING || value === null || value === undefined) return t("reviewGateConfigUnset");
+  if (typeof value === "boolean") return t(value ? "reviewGateConfigEnabled" : "reviewGateConfigDisabled");
+  if (typeof value === "string") return trimContext(redactSensitiveText(value).replace(/\s+/g, " ").trim() || "\"\"", 180);
+  if (typeof value === "number" || typeof value === "bigint") return String(value);
+  if (Array.isArray(value)) {
+    const preview = value.slice(0, 4).map((entry) => typeof entry === "string" ? redactSensitiveText(entry) : JSON.stringify(canonicalJsonValue(entry))).join(", ");
+    return trimContext(`${value.length} × ${preview || "[]"}`, 180);
+  }
+  if (isRecord(value)) return `${Object.keys(value).length} × { ... }`;
+  return trimContext(String(value), 180);
+}
+
+function reviewConfigImpactKey(path: string, oldValue: unknown, newValue: unknown): I18nKey {
+  const lower = path.toLowerCase();
+  if (/autocomplete|completion/.test(lower)) return "reviewGateConfigAutocompleteImpact";
+  if (/memory|history|transcript|context/.test(lower)) return "reviewGateConfigMemoryImpact";
+  if (/automation/.test(lower)) return "reviewGateConfigAutomationImpact";
+  if (/workbench|document/.test(lower)) return "reviewGateConfigWorkbenchImpact";
+  if (/tts|voice|speech|readaloud/.test(lower)) return "reviewGateConfigTtsImpact";
+  if (/button|ui.*rule|pinned/.test(lower)) return "reviewGateConfigButtonImpact";
+  if (/api|model|temperature|token/.test(lower)) return "reviewGateConfigAiImpact";
+  if (typeof oldValue === "boolean" || typeof newValue === "boolean") return "reviewGateConfigFeatureImpact";
+  return "reviewGateConfigGeneralImpact";
 }
 
 function isReviewGateInternalCategory(value: unknown): value is ReviewGateInternalCategory {

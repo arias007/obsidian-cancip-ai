@@ -705,53 +705,148 @@ if (-not $Case -or 'programmatic.review-auto-advance'.Contains($Case)) {
   const b=entry('.cancip/review-gates/a/manifest.json','notes/b.md');
   const c=entry('.cancip/review-gates/b/manifest.json','notes/c.md');
   const original={
-    collect:view.collectAllPendingReviewEntries,render:view.render,renderAll:view.renderAllPendingReviewGates,
-    count:p.pendingReviewGateItemCount,refresh:view.refreshReviewState,
+    render:view.render,refresh:view.refreshReviewState,session:view.reviewSessionEntries,stale:view.reviewSessionStale,
     packagePath:view.packagePath,selectedItemPath:view.selectedItemPath,sourceMode:view.sourceMode,reviewViewMode:view.reviewViewMode
   };
-  let remaining=[],renders=0,globalFallbacks=0,sourceRefreshes=0,forceFlags=[];
-  const host=doc.createElement('div');
+  let renders=0,sourceRefreshes=0;
   try{
-    view.collectAllPendingReviewEntries=async(force)=>{forceFlags.push(Boolean(force));return remaining;};
     view.render=async()=>{renders+=1;};
-    remaining=[b,c];
+    view.reviewSessionEntries=[a,b,c];
     await view.advanceReviewAfterDecision(a.packagePath,a.item.path,[a,b,c]);
-    const samePackage=view.packagePath===b.packagePath&&view.selectedItemPath===b.item.path;
-    remaining=[c];
+    const samePackage=view.packagePath===b.packagePath&&view.selectedItemPath===b.item.path&&view.reviewSessionEntries.length===2;
     await view.advanceReviewAfterDecision(b.packagePath,b.item.path,[b,c]);
-    const crossPackage=view.packagePath===c.packagePath&&view.selectedItemPath===c.item.path;
-    remaining=[];
+    const crossPackage=view.packagePath===c.packagePath&&view.selectedItemPath===c.item.path&&view.reviewSessionEntries.length===1;
     await view.advanceReviewAfterDecision(c.packagePath,c.item.path,[c]);
-    const finished=view.packagePath===''&&view.selectedItemPath==='';
-    view.packagePath=a.packagePath;view.selectedItemPath=a.item.path;
-    p.pendingReviewGateItemCount=async()=>0;
-    view.renderAllPendingReviewGates=async()=>{globalFallbacks+=1;};
-    await view.renderReviewGatePanel(host,a.packagePath);
-    const completeFallback=globalFallbacks===1&&view.packagePath===''&&view.selectedItemPath==='';
+    const finished=view.packagePath===''&&view.selectedItemPath===''&&view.reviewSessionEntries.length===0;
     view.refreshReviewState=async()=>{sourceRefreshes+=1;};
     p.syncOpenReviewGateDecision(a.packagePath,view);
     await new Promise((resolve)=>setTimeout(resolve,20));
     return JSON.stringify({
       id:'programmatic.review-auto-advance',elapsedMs:Date.now()-started,
-      samePackage,crossPackage,finished,completeFallback,sourceRefreshSkipped:sourceRefreshes===0,
-      nonForcingAdvance:forceFlags.every((value)=>value===false),renders
+      samePackage,crossPackage,finished,sourceRefreshSkipped:sourceRefreshes===0,renders
     });
   }finally{
-    view.collectAllPendingReviewEntries=original.collect;view.render=original.render;view.renderAllPendingReviewGates=original.renderAll;
-    p.pendingReviewGateItemCount=original.count;view.refreshReviewState=original.refresh;
+    view.render=original.render;view.refreshReviewState=original.refresh;view.reviewSessionEntries=original.session;view.reviewSessionStale=original.stale;
     view.packagePath=original.packagePath;view.selectedItemPath=original.selectedItemPath;view.sourceMode=original.sourceMode;view.reviewViewMode=original.reviewViewMode;
-    host.remove();await original.render.call(view);
+    await original.render.call(view);
   }
 })()
 '@
     $item = Invoke-CancipEval -Code $code -TimeoutSeconds 60
-    foreach ($field in @('samePackage','crossPackage','finished','completeFallback','sourceRefreshSkipped','nonForcingAdvance')) {
+    foreach ($field in @('samePackage','crossPackage','finished','sourceRefreshSkipped')) {
       if (-not [bool]$item.$field) { throw "review auto-advance regression failed: $field; $($item | ConvertTo-Json -Compress -Depth 8)" }
     }
     if ([int]$item.renders -ne 3) { throw "review navigation rendered an unexpected number of times: $($item.renders)" }
     Add-CaseResult 'programmaticCases' @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs }
   } catch {
     Add-CaseResult 'programmaticCases' @{ id = 'programmatic.review-auto-advance'; pass = $false; error = $_.Exception.Message }
+  }
+}
+
+if (-not $Case -or 'programmatic.review-session-cache'.Contains($Case)) {
+  try {
+    $code = @'
+(async()=>{
+  const started=Date.now(),p=app.plugins.plugins.cancip,doc=activeDocument;
+  if(!p)throw new Error('Cancip runtime unavailable');
+  const view=await p.activateReviewView();
+  if(!view||typeof view.reloadReviewSession!=='function')throw new Error('review session cache API unavailable');
+  const item=(path)=>({path,old_text:'old',new_text:'new',changes:['write'],links:{},structure:[]});
+  const entry=(pkg,path)=>({packagePath:pkg,data:{path:pkg,folder:pkg.replace(/\/manifest\.json$/,''),title:pkg,generatedAt:'',items:[item(path)]},item:item(path)});
+  const a=entry('.cancip/review-gates/cache-a/manifest.json','notes/cache-a.md');
+  const b=entry('.cancip/review-gates/cache-b/manifest.json','notes/cache-b.md');
+  const adapter=app.vault.adapter,host=doc.createElement('div');
+  const original={
+    collect:view.collectAllPendingReviewEntries,render:view.render,session:view.reviewSessionEntries,stale:view.reviewSessionStale,
+    loadPromise:view.reviewSessionLoadPromise,packageCache:new Map(view.reviewPackageCache),packagePath:view.packagePath,selectedItemPath:view.selectedItemPath,
+    sourceMode:view.sourceMode,reviewViewMode:view.reviewViewMode,read:adapter.read
+  };
+  let collections=0,forceFlags=[],diskReads=0,renders=0;
+  try{
+    view.reviewSessionEntries=null;view.reviewSessionStale=true;view.reviewSessionLoadPromise=null;
+    view.collectAllPendingReviewEntries=async(force)=>{collections+=1;forceFlags.push(Boolean(force));await new Promise(resolve=>setTimeout(resolve,35));return [a,b];};
+    await Promise.all([view.reloadReviewSession(),view.reloadReviewSession(),view.reloadReviewSession()]);
+    const openingLoadOnce=collections===1&&forceFlags.length===1&&forceFlags[0]===true&&view.reviewSessionEntries.length===2&&!view.reviewSessionStale;
+    adapter.read=async function(...args){diskReads+=1;return await original.read.apply(this,args);};
+    view.packagePath=a.packagePath;view.selectedItemPath='';
+    await view.renderReviewGatePanel(host,a.packagePath);
+    view.packagePath='';view.selectedItemPath='';
+    await view.renderReviewGatePanel(host,'');
+    const navigationUsesMemory=diskReads===0&&collections===1;
+    const loadedReference=view.reviewSessionEntries;
+    view.render=async()=>{renders+=1;};
+    await view.refreshReviewState();
+    const backgroundOnlyMarksStale=view.reviewSessionStale===true&&view.reviewSessionEntries===loadedReference&&renders===0;
+    adapter.read=original.read;
+    await view.openPackage('', '', true);
+    const reopenRefreshesOnce=collections===2&&view.reviewSessionEntries.length===2&&!view.reviewSessionStale&&renders===1;
+    const lastGoodSession=view.reviewSessionEntries;
+    view.collectAllPendingReviewEntries=async()=>{collections+=1;throw new Error('simulated sync window');};
+    await view.openPackage('', '', true);
+    const failedRefreshKeepsSession=view.reviewSessionEntries===lastGoodSession&&view.reviewSessionEntries.length===2&&view.reviewSessionStale&&renders===2;
+    return JSON.stringify({
+      id:'programmatic.review-session-cache',elapsedMs:Date.now()-started,
+      openingLoadOnce,navigationUsesMemory,backgroundOnlyMarksStale,reopenRefreshesOnce,failedRefreshKeepsSession,collections,diskReads
+    });
+  }finally{
+    adapter.read=original.read;view.collectAllPendingReviewEntries=original.collect;view.render=original.render;
+    view.reviewSessionEntries=original.session;view.reviewSessionStale=original.stale;view.reviewSessionLoadPromise=original.loadPromise;
+    view.reviewPackageCache=original.packageCache;view.packagePath=original.packagePath;view.selectedItemPath=original.selectedItemPath;
+    view.sourceMode=original.sourceMode;view.reviewViewMode=original.reviewViewMode;host.remove();await original.render.call(view);
+  }
+})()
+'@
+    $item = Invoke-CancipEval -Code $code -TimeoutSeconds 60
+    foreach ($field in @('openingLoadOnce','navigationUsesMemory','backgroundOnlyMarksStale','reopenRefreshesOnce','failedRefreshKeepsSession')) {
+      if (-not [bool]$item.$field) { throw "review session cache regression failed: $field; $($item | ConvertTo-Json -Compress -Depth 8)" }
+    }
+    Add-CaseResult 'programmaticCases' @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs; collections = $item.collections; diskReads = $item.diskReads }
+  } catch {
+    Add-CaseResult 'programmaticCases' @{ id = 'programmatic.review-session-cache'; pass = $false; error = $_.Exception.Message }
+  }
+}
+
+if (-not $Case -or 'programmatic.review-config-explanation'.Contains($Case)) {
+  try {
+    $code = @'
+(async()=>{
+  const started=Date.now(),p=app.plugins.plugins.cancip,doc=activeDocument;
+  if(!p)throw new Error('Cancip runtime unavailable');
+  const view=await p.activateReviewView();
+  if(!view||typeof view.renderReviewConfigSummary!=='function')throw new Error('config explanation API unavailable');
+  const host=doc.createElement('div');host.className='obcc-review-leaf has-review-detail';host.style.cssText='position:fixed;left:-10000px;top:0;width:360px;height:700px;';doc.body.append(host);
+  const item={
+    path:'.cancip/config.json',category:'config',changes:['config'],links:{},structure:[],review_summary:'Autocomplete settings changed',
+    old_text:JSON.stringify({composerAutocompleteCandidateCount:3,composerAutocompleteEnabled:true,composerAutocompletePrompt:'old '.repeat(100),apiProfiles:[{name:'default',apiKey:'old-private-value',model:'model-a'}]}),
+    new_text:JSON.stringify({composerAutocompleteCandidateCount:2,composerAutocompleteEnabled:false,composerAutocompletePrompt:'new '.repeat(100),apiProfiles:[{name:'default',apiKey:'new-private-value',model:'model-b'}]})
+  };
+  const data={path:'.cancip/review-gates/config-test/manifest.json',folder:'.cancip/review-gates/config-test',title:'config-test',generatedAt:'',items:[item]};
+  try{
+    view.renderReviewDetail(host,data,item,1,1);
+    const text=host.textContent||'';
+    const rows=host.querySelectorAll('.obcc-review-config-change').length;
+    const raw=host.querySelector('details.obcc-review-config-raw');
+    const values=Array.from(host.querySelectorAll('.obcc-review-config-value-text')).map(el=>el.textContent||'');
+    const valueEls=Array.from(host.querySelectorAll('.obcc-review-config-value-text'));
+    return JSON.stringify({
+      id:'programmatic.review-config-explanation',elapsedMs:Date.now()-started,
+      readableRows:rows>=4,oldAndNewVisible:values.includes('3')&&values.includes('2'),
+      secretRedacted:!text.includes('old-private-value')&&!text.includes('new-private-value')&&values.some(value=>/hidden|隐藏/i.test(value)),
+      rawFolded:!!raw&&!raw.open,rawLazy:host.querySelectorAll('.obcc-review-source-row,.obcc-review-diff-row').length===0,
+      longValuesWrap:valueEls.every(el=>el.scrollWidth<=el.clientWidth+1)
+    });
+  }finally{
+    host.remove();await view.render();
+  }
+})()
+'@
+    $item = Invoke-CancipEval -Code $code -TimeoutSeconds 60
+    foreach ($field in @('readableRows','oldAndNewVisible','secretRedacted','rawFolded','rawLazy','longValuesWrap')) {
+      if (-not [bool]$item.$field) { throw "review config explanation regression failed: $field; $($item | ConvertTo-Json -Compress -Depth 8)" }
+    }
+    Add-CaseResult 'programmaticCases' @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs }
+  } catch {
+    Add-CaseResult 'programmaticCases' @{ id = 'programmatic.review-config-explanation'; pass = $false; error = $_.Exception.Message }
   }
 }
 
