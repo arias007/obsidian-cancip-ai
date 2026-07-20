@@ -449,6 +449,96 @@ $PromptCases = Select-CaseList @($AllCases.promptCases) { param($x) $Full -or -n
 $CommandCases = Select-CaseList @($AllCases.commandCases) { param($x) $Full -or ($DefaultCommandIds -contains [string]$x.id) }
 $WriteCases = Select-CaseList @($AllCases.writeCases) { param($x) $true }
 
+if (-not $Case -or 'programmatic.ui-button-composer-menus-upward'.Contains($Case)) {
+  try {
+    $code = @'
+(async()=>{
+  const started=Date.now(),p=app.plugins.plugins.cancip;
+  const previousLeaf=app.workspace.getLeaf(false);
+  const v=await p?.activateView?.();
+  if(!p||!v?.footerEl||!v?.menuEl||!v?.headerMenuEl)throw new Error('rendered composer menus unavailable');
+  await new Promise(resolve=>(v.containerEl.ownerDocument.defaultView??window).setTimeout(resolve,180));
+  const footerRect=v.footerEl.getBoundingClientRect(),inputRect=v.inputEl?.getBoundingClientRect();
+  if(footerRect.width<1||footerRect.height<1||!inputRect||inputRect.width<1||inputRect.height<1)throw new Error('composer view was revealed without measurable geometry');
+  const above=(element)=>{
+    const footerTop=v.footerEl.getBoundingClientRect().top,rect=element.getBoundingClientRect(),top=Number.parseFloat(element.style.top);
+    return element.style.bottom==='auto'&&Number.isFinite(top)&&top<=(footerTop-4)&&rect.bottom<=footerTop+1;
+  };
+  try{
+    v.toggleAccessMenu();
+    await new Promise(resolve=>(v.containerEl.ownerDocument.defaultView??window).setTimeout(resolve,160));
+    const accessAbove=above(v.menuEl),accessTop=v.menuEl.style.top,accessBottom=v.menuEl.style.bottom;
+    v.openMoreMenu();
+    const moreAbove=above(v.headerMenuEl),moreTop=v.headerMenuEl.style.top,moreBottom=v.headerMenuEl.style.bottom;
+    await v.openSkillsMenu();
+    const derivedAbove=above(v.headerMenuEl),derivedTop=v.headerMenuEl.style.top,derivedBottom=v.headerMenuEl.style.bottom;
+    return JSON.stringify({id:'programmatic.ui-button-composer-menus-upward',elapsedMs:Date.now()-started,accessAbove,moreAbove,derivedAbove,accessTop,accessBottom,moreTop,moreBottom,derivedTop,derivedBottom});
+  }finally{
+    v.closeCommandMenu();v.closeHeaderMenu();
+    if(previousLeaf&&app.workspace.getLeaf(false)!==previousLeaf)app.workspace.setActiveLeaf(previousLeaf,{focus:false});
+  }
+})()
+'@
+    $item = Invoke-CancipEval -Code (ConvertTo-CancipEvalBootstrap -Code $code) -TimeoutSeconds 45
+    foreach ($field in @('accessAbove','moreAbove','derivedAbove')) {
+      if (-not [bool]$item.$field) { throw "composer menu did not open upward: $field ($($item | ConvertTo-Json -Compress))" }
+    }
+    Add-CaseResult 'programmaticCases' @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs; accessTop = $item.accessTop; moreTop = $item.moreTop; derivedTop = $item.derivedTop }
+  } catch {
+    Add-CaseResult 'programmaticCases' @{ id = 'programmatic.ui-button-composer-menus-upward'; pass = $false; error = $_.Exception.Message }
+  }
+}
+
+if (-not $Case -or 'programmatic.ui-button-model-settings-structure'.Contains($Case)) {
+  try {
+    $code = @'
+(()=>{
+  const started=Date.now(),p=app.plugins.plugins.cancip,s=p?.settingTab;
+  if(!p||!s||typeof s.displayCommonSettings!=='function')throw new Error('settings runtime unavailable');
+  const root=activeDocument.body.createDiv({cls:'obcc-model-settings-smoke'}),oldState=s.detailsOpenState;
+  try{
+    s.detailsOpenState=new Map();
+    s.displayCommonSettings(root);
+    const source=root.querySelector('details[data-obcc-settings-fold-key="common:model-sources"]');
+    const models=root.querySelector('details[data-obcc-settings-fold-key="common:model-list"]');
+    const settingName=(element)=>element?.querySelector('.setting-item-name')?.textContent?.trim()||'';
+    const allSettings=[...root.querySelectorAll('.setting-item')];
+    const defaultRow=allSettings.find(element=>settingName(element)===p.t('settingsDefaultModel'));
+    const temperatureRow=allSettings.find(element=>settingName(element)===p.t('settingsTemperature'));
+    const sourceFields=[...source?.querySelectorAll('.setting-item-name')??[]].map(element=>element.textContent?.trim()||'');
+    const addRow=models?.querySelector('.obcc-model-list-add');
+    const controls=[...addRow?.querySelectorAll('select,input')??[]].map(element=>element.tagName.toLowerCase());
+    const defaultProfile=p.apiProfileForModel(p.settings.model);
+    const automationProfile=p.automationApiProfile({apiProfileId:'',model:''});
+    const oldAutocomplete={source:p.settings.composerAutocompleteApiProfileId,model:p.settings.composerAutocompleteModel};
+    p.settings.composerAutocompleteApiProfileId='';p.settings.composerAutocompleteModel='';
+    const autocompleteProfile=p.autocompleteApiProfile();
+    p.settings.composerAutocompleteApiProfileId=oldAutocomplete.source;p.settings.composerAutocompleteModel=oldAutocomplete.model;
+    return JSON.stringify({
+      id:'programmatic.ui-button-model-settings-structure',elapsedMs:Date.now()-started,
+      sourceCollapsed:!!source&&!source.open,modelCollapsed:!!models&&!models.open,
+      sourceTitle:source?.querySelector(':scope>summary')?.textContent?.trim()||'',
+      modelTitle:models?.querySelector(':scope>summary')?.textContent?.trim()||'',
+      sourceHasUrlAndKey:sourceFields.includes(p.t('settingsApiUrl'))&&sourceFields.includes(p.t('settingsApiKey')),
+      addSourceThenModel:controls[0]==='select'&&controls[1]==='input',
+      defaultOutsideFolds:!!defaultRow&&!defaultRow.closest('details'),
+      generationOutsideModel:!!temperatureRow&&!temperatureRow.closest('details[data-obcc-settings-fold-key="common:model-list"]'),
+      automationInheritsDefault:automationProfile.id===defaultProfile.id&&automationProfile.model===p.settings.model,
+      autocompleteInheritsDefault:autocompleteProfile.id===defaultProfile.id&&autocompleteProfile.model===p.settings.model
+    });
+  }finally{s.detailsOpenState=oldState;root.remove()}
+})()
+'@
+    $item = Invoke-CancipEval -Code (ConvertTo-CancipEvalBootstrap -Code $code) -TimeoutSeconds 45
+    foreach ($field in @('sourceCollapsed','modelCollapsed','sourceHasUrlAndKey','addSourceThenModel','defaultOutsideFolds','generationOutsideModel','automationInheritsDefault','autocompleteInheritsDefault')) {
+      if (-not [bool]$item.$field) { throw "model settings structure failed: $field ($($item | ConvertTo-Json -Compress))" }
+    }
+    Add-CaseResult 'programmaticCases' @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs; sourceTitle = $item.sourceTitle; modelTitle = $item.modelTitle }
+  } catch {
+    Add-CaseResult 'programmaticCases' @{ id = 'programmatic.ui-button-model-settings-structure'; pass = $false; error = $_.Exception.Message }
+  }
+}
+
 foreach ($test in $PromptCases) {
   try {
     $testJson = ConvertTo-CompactJson $test

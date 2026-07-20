@@ -4,7 +4,7 @@ Obsidian Cancip AI is a right-side AI chat panel shaped toward a mobile-first ag
 
 Cancip is a lightweight prototype for managing an Obsidian vault from a mobile-friendly AI panel:
 
-- Multiple API profiles, each with its own Base URL, key, API mode, and model.
+- Separate model sources and models: each source stores its own Base URL, key, and API mode, while each model ID is explicitly bound to one source and a single default model drives AI modules unless they override it.
 - Multilingual UI with auto device-language detection for Simplified Chinese, Traditional Chinese, English, Uyghur, Turkish, Russian, Japanese, Korean, Spanish, French, German, and Arabic; missing low-frequency strings fall back to English, and Arabic/Uyghur use RTL layout hints.
 - Automatic OpenAI Responses and OpenAI-compatible Chat Completions support.
 - `<vault.configDir>/plugins/cancip/data/config.json` as the authoritative vault-level config (normally `.obsidian/plugins/cancip/data/config.json`).
@@ -58,6 +58,11 @@ Cancip is a lightweight prototype for managing an Obsidian vault from a mobile-f
 - Startup and foreground loading follow a warm/cold lifecycle: the visible shell renders first, latest-session restore follows asynchronously, small high-value indexes warm during browser idle time, and startup maintenance yields between tasks so mobile interaction remains responsive.
 - New-file curation runs in an isolated session with a stable minimal prompt prefix. A programmatic benefit gate classifies each file as curate, skip, or protected before any model call: only concrete high-value defects become candidates; clean, cosmetic-only, or Inbox-only cases are consumed silently; templates, frequently referenced notes, plugin syntax, and generated files are protected from automatic rename/restructure. Each candidate carries a defect-derived action allowlist so one formatting issue cannot authorize unrelated tags, links, summaries, or renaming.
 - TTS is provider-routed by language. English defaults to Web Speech / system TTS and does not need a local model package. Chinese can auto-download and use the current compact PrimeTTS Chinese/English ONNX package. Other languages use system/Web/custom URL unless a compatible local PrimeTTS package is installed under `tts/<package>/` with a manifest.
+
+## 3.0.12
+
+- Composer access, More, Skills, and automation menus now measure the active Obsidian window's visual viewport and open above the composer, keeping the complete menus visible above the mobile keyboard.
+- Common model settings are split into three clear layers: collapsed model-source credentials, a collapsed source-bound model list, and a visible default-model selector. Automation and autocomplete inherit the default model/source unless explicitly overridden.
 
 ## 2.14.19
 

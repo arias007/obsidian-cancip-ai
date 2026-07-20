@@ -3668,14 +3668,14 @@ const EN = {
   languageAr: "العربية",
   settingsApiUrl: "API URL",
   settingsApiUrlDesc: "Base URL or endpoint. Auto supports /responses and /chat/completions.",
-  settingsApiProfile: "API profile",
-  settingsApiProfileDesc: "Each profile keeps its own Base URL, key, mode, and model. The active profile is used by chat requests.",
-  settingsApiProfileName: "Profile name",
-  addApiProfile: "Add profile",
-  removeApiProfile: "Remove profile",
+  settingsApiProfile: "Model source",
+  settingsApiProfileDesc: "Edit one model source at a time. A source stores only its name, Base URL, API key, and protocol mode; models are bound separately below.",
+  settingsApiProfileName: "Source name",
+  addApiProfile: "Add source",
+  removeApiProfile: "Remove source",
   defaultApiProfileName: "Default",
   settingsAccessMode: "Access mode",
-  settingsAccessModeDesc: "Only this UI setting or .cancip/config.json controls execution permission. Chat text cannot override it.",
+  settingsAccessModeDesc: "Only this UI setting or the synced Cancip data/config.json controls execution permission. Chat text cannot override it.",
   accessAskApproval: "Ask for approval",
   accessFullAccess: "Full access",
   settingsApiMode: "API mode",
@@ -3685,16 +3685,19 @@ const EN = {
   apiModeCompatible: "OpenAI-compatible",
   settingsApiKey: "API key",
   settingsApiKeyDesc: "Mirrored to Cancip data/config.json and plugin data.json. Both may sync with the Obsidian config folder; protect the remote account and credentials.",
+  settingsModelSources: "Model sources and API keys",
+  settingsModelSourcesDesc: "Manage reusable model sources. Each source contains a name, URL, API key, and protocol mode; selecting a source here does not change the default model.",
+  settingsModelListDesc: "Choose a model source, enter a model ID, and add it to the model list. Each model stays bound to that source.",
   settingsModel: "Model",
   settingsDefaultModelSource: "Default model source",
   settingsDefaultModelSourceDesc: "Choose the API profile used by the default model. Model switching carries its source with it.",
   settingsDefaultModel: "Default model",
   settingsDefaultModelDesc: "All AI calls use this model by default unless a module or automation overrides it.",
   settingsModelOptions: "Model options",
-  settingsModelOptionsDesc: "One model ID per line. Used by the model picker and API profile dropdown; .cancip/config.json wins on restart.",
+  settingsModelOptionsDesc: "One model ID per line. Used by the model picker and source dropdown; the synced Cancip data/config.json wins on restart.",
   resetModelOptions: "Reset model list",
   advancedSettings: "Advanced settings",
-  configAuthority: "Config file: .cancip/config.json. It wins over settings on restart.",
+  configAuthority: "Config file: .obsidian/plugins/cancip/data/config.json. It is synchronized and authoritative on restart.",
   settingsGroupCommon: "Common",
   settingsGroupInterface: "Interface",
   settingsGroupWorkbench: "Workbench",
@@ -3709,7 +3712,7 @@ const EN = {
   settingsGroupTts: "Text to speech",
   settingsGroupExport: "Export",
   settingsGroupSupport: "Payment QR codes",
-  settingsGroupModelAdvanced: "Advanced model",
+  settingsGroupModelAdvanced: "Model settings",
   settingsGroupReviewSystem: "Review system",
   settingsGroupFilePins: "File pin sorting",
   settingsTemperature: "Temperature",
@@ -4631,14 +4634,14 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     languageAr: "العربية",
     settingsApiUrl: "API URL",
     settingsApiUrlDesc: "Base URL 或 endpoint。自动支持 /responses 和 /chat/completions。",
-    settingsApiProfile: "API 配置",
-    settingsApiProfileDesc: "每组配置都有自己的 Base URL、key、模式和模型。聊天请求使用当前配置。",
-    settingsApiProfileName: "配置名称",
-    addApiProfile: "新增配置",
-    removeApiProfile: "删除配置",
+    settingsApiProfile: "模型源",
+    settingsApiProfileDesc: "这里只编辑模型源；每个模型源只保存名称、URL、密钥和 API 模式，模型在下方单独绑定。",
+    settingsApiProfileName: "模型源名称",
+    addApiProfile: "添加模型源",
+    removeApiProfile: "删除模型源",
     defaultApiProfileName: "默认",
     settingsAccessMode: "访问模式",
-    settingsAccessModeDesc: "只有这里或 .cancip/config.json 控制执行权限；对话文字不能覆盖权限。",
+    settingsAccessModeDesc: "只有这里或 Cancip 同步数据目录/config.json 控制执行权限；对话文字不能覆盖权限。",
     accessAskApproval: "Ask for approval",
     accessFullAccess: "Full access",
     settingsApiMode: "API 模式",
@@ -4648,16 +4651,19 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     apiModeCompatible: "OpenAI-compatible",
     settingsApiKey: "API key",
     settingsApiKeyDesc: "会同步到 Cancip 数据目录/config.json 和插件 data.json；两者都可能随 Obsidian 配置目录跨设备同步，请保护远端账号和凭据。",
+    settingsModelSources: "模型源和密钥设置",
+    settingsModelSourcesDesc: "管理可复用的模型源；每个模型源由名称、URL、密钥和协议模式组成，在这里切换编辑对象不会改变默认模型。",
+    settingsModelListDesc: "先选择模型源，再填写模型名并添加到模型列表；每个模型会记住自己绑定的模型源。",
     settingsModel: "模型",
     settingsDefaultModelSource: "默认模型源",
     settingsDefaultModelSourceDesc: "选择默认模型使用的 API 配置；切换模型会带着它绑定的模型源一起切。",
     settingsDefaultModel: "默认模型",
     settingsDefaultModelDesc: "所有 AI 调用默认走这个模型，模块或自动化单独覆盖时除外。",
     settingsModelOptions: "可选模型",
-    settingsModelOptionsDesc: "每行一个模型 ID。用于模型菜单和 API 配置下拉框；重启后仍以 .cancip/config.json 为准。",
+    settingsModelOptionsDesc: "每行一个模型 ID。用于模型菜单和模型源下拉框；重启后以 Cancip 同步数据目录/config.json 为准。",
     resetModelOptions: "重置模型列表",
     advancedSettings: "高级设置",
-    configAuthority: "配置文件：.cancip/config.json。重启后以该文件为准。",
+    configAuthority: "配置文件：.obsidian/plugins/cancip/data/config.json。该文件参与同步，重启后以它为准。",
     settingsGroupCommon: "常用",
     settingsGroupInterface: "界面",
     settingsGroupWorkbench: "工作台",
@@ -4672,7 +4678,7 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     settingsGroupTts: "朗读 / TTS",
     settingsGroupExport: "导出",
     settingsGroupSupport: "收款码设置",
-    settingsGroupModelAdvanced: "模型高级",
+    settingsGroupModelAdvanced: "模型设置",
     settingsGroupReviewSystem: "审核系统",
     settingsGroupFilePins: "文件置顶排序",
     settingsTemperature: "Temperature",
@@ -5079,7 +5085,7 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     settingsGroupVersioning: "本機版本",
     settingsGroupExport: "匯出",
     settingsGroupSupport: "收款碼設定",
-    settingsGroupModelAdvanced: "模型進階",
+    settingsGroupModelAdvanced: "模型設定",
     settingsModelOptions: "可選模型",
     settingsModelOptionsDesc: "每行一個模型 ID。用於模型選單和 API 設定下拉；重啟後仍以 .cancip/config.json 為準。",
     resetModelOptions: "重設模型列表",
@@ -6045,7 +6051,7 @@ const SETTINGS_I18N_PATCHES: Partial<Record<Language, Partial<Record<I18nKey, st
     settingsGroupVersioning: "يەرلىك نۇسخا",
     settingsGroupExport: "چىقىرىش",
     settingsGroupSupport: "پۇل ئېلىش QR كودى",
-    settingsGroupModelAdvanced: "مودېل ئىلغار",
+    settingsGroupModelAdvanced: "مودېل تەڭشىكى",
     settingsModelOptions: "مودېل تاللاشلىرى",
     settingsModelOptionsDesc: "ھەر قۇرغا بىر مودېل ID. مودېل تاللىغۇچ ۋە API تىزىملىكىدە ئىشلىتىلىدۇ؛ قايتا قوزغالغاندا .cancip/config.json ئۈستۈن تۇرىدۇ.",
     resetModelOptions: "مودېل تىزىملىكىنى ئەسلىگە قايتۇرۇش",
@@ -6096,7 +6102,7 @@ const SETTINGS_I18N_PATCHES: Partial<Record<Language, Partial<Record<I18nKey, st
     settingsGroupVersioning: "Yerel sürümleme",
     settingsGroupExport: "Dışa aktarma",
     settingsGroupSupport: "Ödeme QR kodları",
-    settingsGroupModelAdvanced: "Gelişmiş model",
+    settingsGroupModelAdvanced: "Model ayarları",
     settingsModelOptions: "Model seçenekleri",
     settingsModelOptionsDesc: "Her satıra bir model ID. Model seçici ve API profili açılır menüsünde kullanılır; yeniden başlatmada .cancip/config.json önceliklidir.",
     resetModelOptions: "Model listesini sıfırla",
@@ -6147,7 +6153,7 @@ const SETTINGS_I18N_PATCHES: Partial<Record<Language, Partial<Record<I18nKey, st
     settingsGroupVersioning: "Локальные версии",
     settingsGroupExport: "Экспорт",
     settingsGroupSupport: "Платёжные QR-коды",
-    settingsGroupModelAdvanced: "Модель",
+    settingsGroupModelAdvanced: "Настройки модели",
     settingsModelOptions: "Список моделей",
     settingsModelOptionsDesc: "Один ID модели на строку. Используется в выборе модели и профиле API; после перезапуска приоритет у .cancip/config.json.",
     resetModelOptions: "Сбросить список моделей",
@@ -6198,7 +6204,7 @@ const SETTINGS_I18N_PATCHES: Partial<Record<Language, Partial<Record<I18nKey, st
     settingsGroupVersioning: "ローカルバージョン",
     settingsGroupExport: "エクスポート",
     settingsGroupSupport: "支払いQRコード",
-    settingsGroupModelAdvanced: "モデル詳細",
+    settingsGroupModelAdvanced: "モデル設定",
     settingsModelOptions: "モデル候補",
     settingsModelOptionsDesc: "1行に1つのモデルID。モデル選択とAPIプロファイルのドロップダウンで使います。再起動後は .cancip/config.json が優先です。",
     resetModelOptions: "モデル一覧をリセット",
@@ -6249,7 +6255,7 @@ const SETTINGS_I18N_PATCHES: Partial<Record<Language, Partial<Record<I18nKey, st
     settingsGroupVersioning: "로컬 버전",
     settingsGroupExport: "내보내기",
     settingsGroupSupport: "결제 QR 코드",
-    settingsGroupModelAdvanced: "고급 모델",
+    settingsGroupModelAdvanced: "모델 설정",
     settingsModelOptions: "모델 옵션",
     settingsModelOptionsDesc: "한 줄에 모델 ID 하나. 모델 선택기와 API 프로필 드롭다운에 사용되며 재시작 후 .cancip/config.json이 우선합니다.",
     resetModelOptions: "모델 목록 재설정",
@@ -6300,7 +6306,7 @@ const SETTINGS_I18N_PATCHES: Partial<Record<Language, Partial<Record<I18nKey, st
     settingsGroupVersioning: "Versionado local",
     settingsGroupExport: "Exportación",
     settingsGroupSupport: "QR de pago",
-    settingsGroupModelAdvanced: "Modelo avanzado",
+    settingsGroupModelAdvanced: "Configuración del modelo",
     settingsModelOptions: "Opciones de modelo",
     settingsModelOptionsDesc: "Un ID de modelo por línea. Se usa en el selector de modelo y el perfil API; .cancip/config.json gana al reiniciar.",
     resetModelOptions: "Restablecer modelos",
@@ -6351,7 +6357,7 @@ const SETTINGS_I18N_PATCHES: Partial<Record<Language, Partial<Record<I18nKey, st
     settingsGroupVersioning: "Versions locales",
     settingsGroupExport: "Export",
     settingsGroupSupport: "QR de paiement",
-    settingsGroupModelAdvanced: "Modèle avancé",
+    settingsGroupModelAdvanced: "Paramètres du modèle",
     settingsModelOptions: "Options de modèle",
     settingsModelOptionsDesc: "Un ID de modèle par ligne. Utilisé par le sélecteur de modèle et le profil API ; .cancip/config.json gagne au redémarrage.",
     resetModelOptions: "Réinitialiser la liste",
@@ -6402,7 +6408,7 @@ const SETTINGS_I18N_PATCHES: Partial<Record<Language, Partial<Record<I18nKey, st
     settingsGroupVersioning: "Lokale Versionen",
     settingsGroupExport: "Export",
     settingsGroupSupport: "Zahlungs-QR-Codes",
-    settingsGroupModelAdvanced: "Erweitertes Modell",
+    settingsGroupModelAdvanced: "Modelleinstellungen",
     settingsModelOptions: "Modelloptionen",
     settingsModelOptionsDesc: "Eine Modell-ID pro Zeile. Wird im Modellmenü und API-Profil verwendet; nach Neustart hat .cancip/config.json Vorrang.",
     resetModelOptions: "Modellliste zurücksetzen",
@@ -6453,7 +6459,7 @@ const SETTINGS_I18N_PATCHES: Partial<Record<Language, Partial<Record<I18nKey, st
     settingsGroupVersioning: "الإصدارات المحلية",
     settingsGroupExport: "التصدير",
     settingsGroupSupport: "رموز QR للدفع",
-    settingsGroupModelAdvanced: "النموذج المتقدم",
+    settingsGroupModelAdvanced: "إعدادات النموذج",
     settingsModelOptions: "خيارات النموذج",
     settingsModelOptionsDesc: "معرّف نموذج واحد في كل سطر. يُستخدم في قائمة النموذج وملف API؛ بعد إعادة التشغيل تكون الأولوية لـ .cancip/config.json.",
     resetModelOptions: "إعادة ضبط قائمة النماذج",
@@ -16121,22 +16127,27 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       .slice(0, cappedLimit);
   }
 
-  async updateActiveApiProfile(patch: Partial<ApiProfile>): Promise<void> {
-    const active = this.activeApiProfile();
+  async updateApiProfile(id: string, patch: Partial<ApiProfile>): Promise<void> {
+    const resolvedId = resolveApiProfileId(id, this.settings.apiProfiles);
+    const target = this.settings.apiProfiles.find((profile) => profile.id === resolvedId);
+    if (!target) return;
     this.settings.apiProfiles = this.settings.apiProfiles.map((profile) =>
-      profile.id === active.id ? normalizeApiProfile({ ...profile, ...patch }, profile) : profile
+      profile.id === target.id ? normalizeApiProfile({ ...profile, ...patch }, profile) : profile
     );
-    this.settings.activeApiProfileId = active.id;
     if (typeof patch.model === "string" && patch.model.trim()) {
       const selectedModel = patch.model.trim();
-      this.settings.model = selectedModel;
       this.settings.modelOptions = normalizeModelOptions([selectedModel, ...this.settings.modelOptions], selectedModel);
       this.settings.modelSourceByModel = {
         ...this.settings.modelSourceByModel,
-        [selectedModel]: active.id
+        [selectedModel]: target.id
       };
+      if (target.id === this.settings.activeApiProfileId) this.settings.model = selectedModel;
     }
     await this.saveSettings();
+  }
+
+  async updateActiveApiProfile(patch: Partial<ApiProfile>): Promise<void> {
+    await this.updateApiProfile(this.activeApiProfile().id, patch);
   }
 
   async addApiProfile(): Promise<ApiProfile> {
@@ -16161,22 +16172,26 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       getDefaultApiProfile()
     );
     this.settings.apiProfiles = [...this.settings.apiProfiles, profile];
-    this.settings.activeApiProfileId = profile.id;
     await this.saveSettings();
     return profile;
   }
 
-  async removeActiveApiProfile(): Promise<void> {
+  async removeApiProfile(id: string): Promise<void> {
     if (this.settings.apiProfiles.length <= 1) return;
-    const active = this.activeApiProfile();
-    const remaining = this.settings.apiProfiles.filter((profile) => profile.id !== active.id);
+    const resolvedId = resolveApiProfileId(id, this.settings.apiProfiles);
+    if (!this.settings.apiProfiles.some((profile) => profile.id === resolvedId)) return;
+    const remaining = this.settings.apiProfiles.filter((profile) => profile.id !== resolvedId);
     this.settings.apiProfiles = remaining.length ? remaining : [getDefaultApiProfile()];
-    this.settings.activeApiProfileId = this.settings.apiProfiles[0].id;
-    const fallbackId = this.settings.activeApiProfileId;
+    const fallbackId = this.settings.apiProfiles[0].id;
+    if (this.settings.activeApiProfileId === resolvedId) this.settings.activeApiProfileId = fallbackId;
     this.settings.modelSourceByModel = Object.fromEntries(
-      Object.entries(this.settings.modelSourceByModel).map(([model, profileId]) => [model, profileId === active.id ? fallbackId : profileId])
+      Object.entries(this.settings.modelSourceByModel).map(([model, profileId]) => [model, profileId === resolvedId ? fallbackId : profileId])
     );
     await this.saveSettings();
+  }
+
+  async removeActiveApiProfile(): Promise<void> {
+    await this.removeApiProfile(this.activeApiProfile().id);
   }
 
   personalizedGreeting(): string {
@@ -25749,9 +25764,12 @@ class CancipView extends ItemView {
     const viewportWidth = Math.max(doc.documentElement.clientWidth, window.innerWidth || 0);
     const left = Math.max(6, Math.floor(rect.left) + 6);
     const right = Math.max(6, Math.floor(viewportWidth - rect.right) + 6);
-    const fallbackFooterHeight = getComputedStyle(root).getPropertyValue("--obcc-footer-height") || "72px";
+    const rootStyle = (doc.defaultView ?? window).getComputedStyle(root);
+    const fallbackFooterHeight = rootStyle.getPropertyValue("--obcc-footer-height") || "72px";
+    const footerBottom = rootStyle.getPropertyValue("--obcc-footer-viewport-bottom") || "0px";
     overlay.setCssProps({
       "--obcc-footer-height": footerHeight ?? fallbackFooterHeight,
+      "--obcc-footer-viewport-bottom": footerBottom,
       "--obcc-overlay-left": `${left}px`,
       "--obcc-overlay-right": `${right}px`
     });
@@ -27533,35 +27551,71 @@ class CancipView extends ItemView {
 
   private placeCommandMenu(): void {
     if (!this.menuEl || this.menuEl.hasClass("is-hidden")) return;
-    const visual = window.visualViewport;
-    const viewportLeft = visual?.offsetLeft ?? 0;
     const doc = this.containerEl.ownerDocument;
-    const viewportWidth = visual?.width ?? window.innerWidth ?? doc.documentElement.clientWidth;
+    const win = doc.defaultView ?? activeWindow;
+    const visual = win.visualViewport;
+    const viewportLeft = visual?.offsetLeft ?? 0;
+    const viewportTop = visual?.offsetTop ?? 0;
+    const viewportWidth = visual?.width ?? win.innerWidth ?? doc.documentElement.clientWidth;
+    const viewportHeight = visual?.height ?? win.innerHeight ?? doc.documentElement.clientHeight;
     const rootRect = this.contentEl.getBoundingClientRect();
+    const footerRect = this.footerEl?.getBoundingClientRect();
     const rootLeft = rootRect ? Math.max(viewportLeft + 4, rootRect.left + 4) : viewportLeft + 4;
     const rootRight = rootRect ? Math.min(viewportLeft + viewportWidth - 4, rootRect.right - 4) : viewportLeft + viewportWidth - 4;
     const width = Math.max(120, rootRight - rootLeft);
+    const footerTop = footerRect && Number.isFinite(footerRect.top)
+      ? Math.min(footerRect.top, viewportTop + viewportHeight - 4)
+      : viewportTop + viewportHeight - 72;
+    const availableHeight = Math.max(72, Math.floor(footerTop - viewportTop - 10));
+    const maxHeight = Math.min(this.activeMenu === "model" ? 560 : 160, availableHeight);
+    const measuredHeight = Math.max(56, Math.min(maxHeight, this.menuEl.scrollHeight || 56));
+    const top = Math.max(viewportTop + 4, Math.floor(footerTop - measuredHeight - 6));
     this.menuEl.setCssStyles({
       left: `${Math.floor(rootLeft)}px`,
       right: "auto",
+      top: `${top}px`,
+      bottom: "auto",
       width: `${Math.floor(width)}px`,
-      maxWidth: `${Math.floor(width)}px`
+      maxWidth: `${Math.floor(width)}px`,
+      maxHeight: `${maxHeight}px`
     });
   }
 
   private placeHeaderMenu(): void {
     if (!this.headerMenuEl || this.headerMenuEl.hasClass("is-hidden")) return;
-    const visual = window.visualViewport;
+    const doc = this.containerEl.ownerDocument;
+    const win = doc.defaultView ?? activeWindow;
+    const visual = win.visualViewport;
     const viewportLeft = visual?.offsetLeft ?? 0;
     const viewportTop = visual?.offsetTop ?? 0;
-    const doc = this.containerEl.ownerDocument;
-    const viewportWidth = visual?.width ?? window.innerWidth ?? doc.documentElement.clientWidth;
-    const viewportHeight = visual?.height ?? window.innerHeight ?? doc.documentElement.clientHeight;
+    const viewportWidth = visual?.width ?? win.innerWidth ?? doc.documentElement.clientWidth;
+    const viewportHeight = visual?.height ?? win.innerHeight ?? doc.documentElement.clientHeight;
     const rootRect = this.contentEl.getBoundingClientRect();
     const headerRect = this.containerEl.querySelector<HTMLElement>(".obcc-header")?.getBoundingClientRect();
     const rootLeft = rootRect ? Math.max(viewportLeft + 4, rootRect.left + 4) : viewportLeft + 4;
     const rootRight = rootRect ? Math.min(viewportLeft + viewportWidth - 4, rootRect.right - 4) : viewportLeft + viewportWidth - 4;
     const width = Math.max(180, rootRight - rootLeft);
+    const anchorAboveComposer = this.activeHeaderMenu === "more"
+      || this.activeHeaderMenu === "skills"
+      || this.activeHeaderMenu === "automation";
+    const footerRect = this.footerEl?.getBoundingClientRect();
+    if (anchorAboveComposer && footerRect && Number.isFinite(footerRect.top)) {
+      const footerTop = Math.min(footerRect.top, viewportTop + viewportHeight - 4);
+      const availableHeight = Math.max(120, Math.floor(footerTop - viewportTop - 10));
+      const maxHeight = Math.min(560, availableHeight);
+      const measuredHeight = Math.max(96, Math.min(maxHeight, this.headerMenuEl.scrollHeight || 96));
+      const top = Math.max(viewportTop + 4, Math.floor(footerTop - measuredHeight - 6));
+      this.headerMenuEl.setCssStyles({
+        left: `${Math.floor(rootLeft)}px`,
+        right: "auto",
+        top: `${top}px`,
+        bottom: "auto",
+        width: `${Math.floor(width)}px`,
+        maxWidth: `${Math.floor(width)}px`,
+        maxHeight: `${maxHeight}px`
+      });
+      return;
+    }
     const top = Math.max(viewportTop + 6, Math.floor((headerRect?.bottom ?? rootRect?.top ?? viewportTop) + 6));
     const maxHeight = Math.max(120, Math.floor(viewportTop + viewportHeight - top - 8));
     this.headerMenuEl.setCssStyles({
@@ -29214,6 +29268,7 @@ class CancipView extends ItemView {
     this.renderHeaderPanelActionButton(body, "calendar-clock", this.t("automationPanel"), "cancip.automation.*", () => {
       void this.openAutomationMenu();
     });
+    this.placeHeaderMenu();
   }
 
   private async openSkillsMenu(): Promise<void> {
@@ -29254,6 +29309,7 @@ class CancipView extends ItemView {
       this.startMentionQuery("skill", "menu");
     });
     const loadingEl = body.createDiv({ cls: "obcc-mention-empty", text: this.t("preparingContext") });
+    this.placeHeaderMenu();
     await sleep(0);
     if (loadId !== this.headerMenuLoadId || this.activeHeaderMenu !== "skills" || !this.headerMenuEl || this.headerMenuEl.hasClass("is-hidden")) return;
     const skills = await this.discoverSkills();
@@ -29261,6 +29317,7 @@ class CancipView extends ItemView {
     loadingEl.remove();
     if (!skills.length) {
       body.createDiv({ cls: "obcc-mention-empty", text: this.t("skillsNone") });
+      this.placeHeaderMenu();
       return;
     }
     for (const skill of skills.slice(0, 18)) {
@@ -29268,6 +29325,7 @@ class CancipView extends ItemView {
         void this.attachSkillFromPanel(skill);
       });
     }
+    this.placeHeaderMenu();
   }
 
   private async attachSkillFromPanel(skill: CancipSkill): Promise<void> {
@@ -29318,6 +29376,7 @@ class CancipView extends ItemView {
     });
 
     const loadingEl = body.createDiv({ cls: "obcc-mention-empty", text: this.t("preparingContext") });
+    this.placeHeaderMenu();
     await sleep(0);
     if (loadId !== this.headerMenuLoadId || this.activeHeaderMenu !== "automation" || !this.headerMenuEl || this.headerMenuEl.hasClass("is-hidden")) return;
     const tasks = await this.plugin.loadAutomations();
@@ -29325,11 +29384,13 @@ class CancipView extends ItemView {
     loadingEl.remove();
     if (!tasks.length) {
       body.createDiv({ cls: "obcc-mention-empty", text: this.t("automationListEmpty") });
+      this.placeHeaderMenu();
       return;
     }
     for (const task of tasks.slice(0, 12)) {
       this.renderAutomationPanelTask(body, task);
     }
+    this.placeHeaderMenu();
   }
 
   private renderAutomationPanelTask(parent: HTMLElement, task: AutomationTask): void {
@@ -44937,6 +44998,7 @@ class CancipSettingTab extends PluginSettingTab {
   private deferredSettingsRefresh = false;
   private settingsFocusOutHandler: ((event: FocusEvent) => void) | null = null;
   private deferredSettingsRefreshTimer: number | null = null;
+  private editingApiProfileId = "";
 
   constructor(
     app: App,
@@ -45123,9 +45185,27 @@ class CancipSettingTab extends PluginSettingTab {
           });
       });
 
+    const sourceGroup = this.createPersistentDetails(
+      parent,
+      "common:model-sources",
+      "obcc-settings-group obcc-model-settings-group is-model-sources",
+      this.plugin.t("settingsModelSources"),
+      false
+    );
+    sourceGroup.createEl("p", { cls: "obcc-settings-group-desc", text: this.plugin.t("settingsModelSourcesDesc") });
+    this.displayApiProfileSettings(sourceGroup.createDiv({ cls: "obcc-settings-group-body" }));
+
+    const modelGroup = this.createPersistentDetails(
+      parent,
+      "common:model-list",
+      "obcc-settings-group obcc-model-settings-group is-model-list",
+      this.plugin.t("settingsGroupModelAdvanced"),
+      false
+    );
+    modelGroup.createEl("p", { cls: "obcc-settings-group-desc", text: this.plugin.t("settingsModelListDesc") });
+    this.displayModelAdvancedSettings(modelGroup.createDiv({ cls: "obcc-settings-group-body" }));
+
     this.displayDefaultModelSettings(parent);
-    this.displayApiProfileSettings(parent);
-    this.displayModelAdvancedSettings(parent);
 
     new Setting(parent)
       .setName(this.plugin.t("settingsSystemPrompt"))
@@ -45146,28 +45226,7 @@ class CancipSettingTab extends PluginSettingTab {
 
   private displayDefaultModelSettings(parent: HTMLElement): void {
     const active = this.plugin.activeApiProfile();
-    const sourceOptions: Record<string, string> = {};
-    for (const profile of this.plugin.settings.apiProfiles) {
-      sourceOptions[profile.id] = apiProfileDisplayLabel(profile, this.plugin.language());
-    }
     const selectedModel = this.plugin.settings.model || active.model;
-    const selectedSourceId = resolveApiProfileId(
-      this.plugin.settings.modelSourceByModel[selectedModel] || this.plugin.settings.activeApiProfileId,
-      this.plugin.settings.apiProfiles
-    ) || active.id;
-    new Setting(parent)
-      .setName(this.plugin.t("settingsDefaultModelSource"))
-      .setDesc(this.plugin.t("settingsDefaultModelSourceDesc"))
-      .addDropdown((dropdown) => {
-        dropdown
-          .addOptions(sourceOptions)
-          .setValue(selectedSourceId)
-          .onChange(async (value) => {
-            await this.plugin.selectModel(selectedModel, value);
-            this.plugin.refreshOpenViews();
-            this.refreshSettings();
-          });
-      });
     const modelOptions: Record<string, string> = Object.fromEntries(
       normalizeModelOptions(this.plugin.settings.modelOptions, selectedModel).map((model) => {
         const profile = this.plugin.apiProfileForModel(model);
@@ -45182,21 +45241,29 @@ class CancipSettingTab extends PluginSettingTab {
           .addOptions(modelOptions)
           .setValue(selectedModel)
           .onChange(async (value) => {
-            await this.plugin.selectModel(value, this.plugin.settings.modelSourceByModel[value] || selectedSourceId);
+            await this.plugin.selectModel(value, this.plugin.settings.modelSourceByModel[value]);
             this.plugin.refreshOpenViews();
             this.refreshSettings();
           });
-      })
+      });
+
+    new Setting(parent)
+      .setName(this.plugin.t("settingsTemperature"))
       .addText((text) => {
         text
-          .setPlaceholder(DEFAULT_SETTINGS.model)
-          .setValue(selectedModel);
+          .setPlaceholder("0.2")
+          .setValue(String(this.plugin.settings.temperature));
         this.bindSettingsCommit(text.inputEl, () => text.getValue(), async (value) => {
-          await this.plugin.selectModel(value.trim(), selectedSourceId);
-          this.plugin.refreshOpenViews();
-          this.refreshSettings();
+          const parsed = Number(value);
+          if (Number.isNaN(parsed)) return;
+          this.plugin.settings.temperature = Math.max(0, Math.min(2, parsed));
+          await this.plugin.saveSettings();
         });
       });
+    this.addNumberSetting(parent, "settingsMaxOutputTokens", this.plugin.settings.maxOutputTokens, "2048", 16, 32000, async (value) => {
+      this.plugin.settings.maxOutputTokens = value;
+      await this.plugin.saveSettings();
+    });
   }
 
   private captureScrollSnapshots(): Array<{ element: HTMLElement; top: number; left: number; anchorIndex?: number; anchorOffset?: number; anchorIdentity?: string; anchorOccurrence?: number }> {
@@ -46582,59 +46649,152 @@ class CancipSettingTab extends PluginSettingTab {
   }
 
   private displayModelAdvancedSettings(parent: HTMLElement): void {
-    new Setting(parent)
-      .setName(this.plugin.t("settingsTemperature"))
+    const profiles = this.plugin.settings.apiProfiles;
+    const sourceOptions: Record<string, string> = Object.fromEntries(profiles.map((profile) => [
+      profile.id,
+      apiProfileDisplayLabel(profile, this.plugin.language())
+    ]));
+    const active = this.plugin.activeApiProfile();
+    let draftModel = "";
+    let draftSourceId = active.id;
+    const addRow = new Setting(parent)
+      .setName(this.plugin.t("addModel"))
+      .setDesc(this.plugin.t("settingsModelListDesc"));
+    addRow.settingEl.addClass("obcc-model-list-add");
+    addRow
+      .addDropdown((dropdown) => {
+        dropdown
+          .addOptions(sourceOptions)
+          .setValue(draftSourceId)
+          .onChange((value) => {
+            draftSourceId = value;
+          });
+      })
       .addText((text) => {
         text
-          .setPlaceholder("0.2")
-          .setValue(String(this.plugin.settings.temperature));
-        this.bindSettingsCommit(text.inputEl, () => text.getValue(), async (value) => {
-          const parsed = Number(value);
-          if (Number.isNaN(parsed)) return;
-          this.plugin.settings.temperature = Math.max(0, Math.min(2, parsed));
-          await this.plugin.saveSettings();
-        });
-      });
-    this.addNumberSetting(parent, "settingsMaxOutputTokens", this.plugin.settings.maxOutputTokens, "2048", 16, 32000, async (value) => {
-      this.plugin.settings.maxOutputTokens = value;
-      await this.plugin.saveSettings();
-    });
-    new Setting(parent)
-      .setName(this.plugin.t("settingsModelOptions"))
-      .setDesc(this.plugin.t("settingsModelOptionsDesc"))
-      .addTextArea((text) => {
-        text.inputEl.rows = 8;
-        text
-          .setPlaceholder(MODEL_PRESETS.join("\n"))
-          .setValue(this.plugin.settings.modelOptions.join("\n"));
-        this.bindSettingsCommit(text.inputEl, () => text.getValue(), async (value) => {
-            this.plugin.settings.modelOptions = normalizeModelOptions(value, this.plugin.activeApiProfile().model);
-            this.plugin.settings.modelSourceByModel = normalizeModelSourceByModel(
-              this.plugin.settings.modelSourceByModel,
-              this.plugin.settings.modelOptions,
-              this.plugin.settings.apiProfiles,
-              this.plugin.settings.activeApiProfileId
-            );
-            await this.plugin.saveSettings();
-            this.plugin.refreshOpenViews();
-          }, false);
+          .setPlaceholder(DEFAULT_SETTINGS.model)
+          .onChange((value) => {
+            draftModel = value;
+          });
       })
-      .addButton((button) => {
+      .addExtraButton((button) => {
         button
-          .setButtonText(this.plugin.t("resetModelOptions"))
+          .setIcon("plus")
+          .setTooltip(this.plugin.t("addModel"))
           .onClick(async () => {
-            this.plugin.settings.modelOptions = normalizeModelOptions(MODEL_PRESETS, this.plugin.activeApiProfile().model);
-            this.plugin.settings.modelSourceByModel = normalizeModelSourceByModel(
-              defaultModelSourceByModel(MODEL_PRESETS),
-              this.plugin.settings.modelOptions,
-              this.plugin.settings.apiProfiles,
-              this.plugin.settings.activeApiProfileId
-            );
-            await this.plugin.saveSettings();
-            this.plugin.refreshOpenViews();
-            this.renderSettings();
+            await this.addModelFromSettings(draftModel, draftSourceId);
           });
       });
+
+    const models = normalizeModelOptions(this.plugin.settings.modelOptions, this.plugin.settings.model);
+    for (const model of models) {
+      const sourceId = resolveApiProfileId(
+        this.plugin.settings.modelSourceByModel[model] || this.plugin.settings.activeApiProfileId,
+        profiles
+      ) || active.id;
+      const row = new Setting(parent)
+        .setName(model)
+        .setDesc(model === this.plugin.settings.model ? this.plugin.t("settingsDefaultModel") : "");
+      row.settingEl.addClass("obcc-model-list-entry");
+      row
+        .addDropdown((dropdown) => {
+          dropdown
+            .addOptions(sourceOptions)
+            .setValue(sourceId)
+            .onChange(async (value) => {
+              await this.bindModelSourceFromSettings(model, value);
+            });
+        })
+        .addExtraButton((button) => {
+          button
+            .setIcon("pencil")
+            .setTooltip(this.plugin.t("editModel"))
+            .onClick(async () => {
+              const result = await promptModelEditModal(this.app, {
+                title: this.plugin.t("editModel"),
+                modelLabel: this.plugin.t("modelNamePrompt"),
+                profileLabel: this.plugin.t("settingsApiProfile"),
+                saveLabel: this.plugin.t("buttonEditSave"),
+                cancelLabel: this.plugin.t("reviewGateCancel"),
+                profiles,
+                initialModel: model,
+                initialProfileId: sourceId
+              });
+              if (result) await this.editModelFromSettings(model, result.model, result.profileId);
+            });
+        })
+        .addExtraButton((button) => {
+          button
+            .setIcon("trash-2")
+            .setTooltip(this.plugin.t("removeModel"))
+            .setDisabled(models.length <= 1)
+            .onClick(async () => {
+              await this.removeModelFromSettings(model);
+            });
+        });
+    }
+
+  }
+
+  private async addModelFromSettings(model: string, profileId: string): Promise<void> {
+    const next = model.trim();
+    if (!next) return;
+    const resolvedProfileId = resolveApiProfileId(profileId, this.plugin.settings.apiProfiles)
+      || this.plugin.activeApiProfile().id;
+    this.plugin.settings.modelOptions = normalizeModelOptions([...this.plugin.settings.modelOptions, next], this.plugin.settings.model);
+    this.plugin.settings.modelSourceByModel = {
+      ...this.plugin.settings.modelSourceByModel,
+      [next]: resolvedProfileId
+    };
+    await this.plugin.saveSettings();
+    this.plugin.refreshOpenViews();
+    this.renderSettings();
+  }
+
+  private async bindModelSourceFromSettings(model: string, profileId: string): Promise<void> {
+    const resolvedProfileId = resolveApiProfileId(profileId, this.plugin.settings.apiProfiles);
+    if (!resolvedProfileId) return;
+    this.plugin.settings.modelSourceByModel = {
+      ...this.plugin.settings.modelSourceByModel,
+      [model]: resolvedProfileId
+    };
+    if (model === this.plugin.settings.model) await this.plugin.selectModel(model, resolvedProfileId);
+    else await this.plugin.saveSettings();
+    this.plugin.refreshOpenViews();
+  }
+
+  private async editModelFromSettings(model: string, nextModel: string, profileId: string): Promise<void> {
+    const next = nextModel.trim();
+    if (!next) return;
+    const resolvedProfileId = resolveApiProfileId(profileId, this.plugin.settings.apiProfiles)
+      || this.plugin.activeApiProfile().id;
+    const options = this.plugin.settings.modelOptions.map((item) => item === model ? next : item);
+    this.plugin.settings.modelOptions = normalizeModelOptions(options, this.plugin.settings.model === model ? next : this.plugin.settings.model);
+    const sources = { ...this.plugin.settings.modelSourceByModel };
+    delete sources[model];
+    sources[next] = resolvedProfileId;
+    this.plugin.settings.modelSourceByModel = sources;
+    if (this.plugin.settings.model === model) await this.plugin.selectModel(next, resolvedProfileId);
+    else await this.plugin.saveSettings();
+    this.plugin.refreshOpenViews();
+    this.renderSettings();
+  }
+
+  private async removeModelFromSettings(model: string): Promise<void> {
+    const remaining = this.plugin.settings.modelOptions.filter((item) => item !== model);
+    if (!remaining.length) return;
+    const fallbackModel = remaining[0];
+    this.plugin.settings.modelOptions = normalizeModelOptions(remaining, this.plugin.settings.model === model ? fallbackModel : this.plugin.settings.model);
+    const sources = { ...this.plugin.settings.modelSourceByModel };
+    delete sources[model];
+    this.plugin.settings.modelSourceByModel = sources;
+    if (this.plugin.settings.model === model) {
+      await this.plugin.selectModel(fallbackModel, sources[fallbackModel]);
+    } else {
+      await this.plugin.saveSettings();
+    }
+    this.plugin.refreshOpenViews();
+    this.renderSettings();
   }
 
   private renderSupportCodes(parent: HTMLElement): void {
@@ -46671,10 +46831,13 @@ class CancipSettingTab extends PluginSettingTab {
   }
 
   private displayApiProfileSettings(parent: HTMLElement): void {
-    const active = this.plugin.activeApiProfile();
+    const fallback = this.plugin.activeApiProfile();
+    const editingId = resolveApiProfileId(this.editingApiProfileId, this.plugin.settings.apiProfiles) || fallback.id;
+    const active = this.plugin.settings.apiProfiles.find((profile) => profile.id === editingId) ?? fallback;
+    this.editingApiProfileId = active.id;
     const profileOptions = Object.fromEntries(this.plugin.settings.apiProfiles.map((profile) => [
       profile.id,
-      profile.name || profile.id
+      apiProfileDisplayLabel(profile, this.plugin.language())
     ]));
 
     new Setting(parent)
@@ -46684,9 +46847,8 @@ class CancipSettingTab extends PluginSettingTab {
         dropdown
           .addOptions(profileOptions)
           .setValue(active.id)
-          .onChange(async (value) => {
-            await this.plugin.selectApiProfile(value);
-            this.plugin.refreshOpenViews();
+          .onChange((value) => {
+            this.editingApiProfileId = value;
             this.renderSettings();
           });
       })
@@ -46695,8 +46857,8 @@ class CancipSettingTab extends PluginSettingTab {
           .setButtonText(this.plugin.t("addApiProfile"))
           .onClick(async () => {
             const profile = await this.plugin.addApiProfile();
+            this.editingApiProfileId = profile.id;
             new Notice(this.plugin.t("apiProfileChanged", { profile: profile.name }));
-            this.plugin.refreshOpenViews();
             this.renderSettings();
           });
       })
@@ -46705,7 +46867,8 @@ class CancipSettingTab extends PluginSettingTab {
           .setButtonText(this.plugin.t("removeApiProfile"))
           .setDisabled(this.plugin.settings.apiProfiles.length <= 1)
           .onClick(async () => {
-            await this.plugin.removeActiveApiProfile();
+            await this.plugin.removeApiProfile(active.id);
+            this.editingApiProfileId = this.plugin.activeApiProfile().id;
             this.plugin.refreshOpenViews();
             this.renderSettings();
           });
@@ -46718,7 +46881,7 @@ class CancipSettingTab extends PluginSettingTab {
           .setPlaceholder(this.plugin.t("defaultApiProfileName"))
           .setValue(active.name);
         this.bindSettingsCommit(text.inputEl, () => text.getValue(), async (value) => {
-            await this.plugin.updateActiveApiProfile({ name: value.trim() || this.plugin.t("defaultApiProfileName") });
+            await this.plugin.updateApiProfile(active.id, { name: value.trim() || this.plugin.t("defaultApiProfileName") });
           });
       });
 
@@ -46730,7 +46893,7 @@ class CancipSettingTab extends PluginSettingTab {
           .setPlaceholder("https://api.openai.com/v1")
           .setValue(active.apiUrl);
         this.bindSettingsCommit(text.inputEl, () => text.getValue(), async (value) => {
-            await this.plugin.updateActiveApiProfile({ apiUrl: value.trim() });
+            await this.plugin.updateApiProfile(active.id, { apiUrl: value.trim() });
           });
       });
 
@@ -46746,7 +46909,7 @@ class CancipSettingTab extends PluginSettingTab {
           })
           .setValue(active.apiMode)
           .onChange(async (value) => {
-            await this.plugin.updateActiveApiProfile({ apiMode: value as ApiMode });
+            await this.plugin.updateApiProfile(active.id, { apiMode: value as ApiMode });
           });
       });
 
@@ -46759,33 +46922,8 @@ class CancipSettingTab extends PluginSettingTab {
           .setPlaceholder("sk-...")
           .setValue(active.apiKey);
         this.bindSettingsCommit(text.inputEl, () => text.getValue(), async (value) => {
-            await this.plugin.updateActiveApiProfile({ apiKey: value.trim() });
+            await this.plugin.updateApiProfile(active.id, { apiKey: value.trim() });
           });
-      });
-
-    const modelOptions: Record<string, string> = Object.fromEntries(
-      normalizeModelOptions(this.plugin.settings.modelOptions, active.model).map((model) => [model, model])
-    );
-
-    new Setting(parent)
-      .setName(this.plugin.t("settingsModel"))
-      .addDropdown((dropdown) => {
-        dropdown
-          .addOptions(modelOptions)
-          .setValue(active.model)
-          .onChange(async (value) => {
-            await this.plugin.selectModel(value, active.id);
-            this.plugin.refreshOpenViews();
-          });
-      })
-      .addText((text) => {
-        text
-          .setPlaceholder("gpt-5.6-sol")
-          .setValue(active.model);
-        this.bindSettingsCommit(text.inputEl, () => text.getValue(), async (value) => {
-          await this.plugin.selectModel(value.trim(), active.id);
-          this.plugin.refreshOpenViews();
-        });
       });
   }
 }
@@ -52960,7 +53098,7 @@ function normalizeModelOptions(raw: unknown, activeModel?: string): string[] {
     push(raw);
   }
   if (!values.length) values.push(...MODEL_PRESETS);
-  const unique = uniqueStrings([...values, ...MODEL_PRESETS]);
+  const unique = uniqueStrings(values);
   const active = activeModel?.trim();
   if (active && !unique.includes(active)) unique.push(active);
   return unique.slice(0, 80);

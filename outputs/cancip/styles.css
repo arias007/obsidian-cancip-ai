@@ -7559,6 +7559,14 @@ input.obcc-review-correction-input {
   padding: 0 8px 4px;
 }
 
+.obcc-settings-group-desc {
+  margin: 0;
+  padding: 0 10px 6px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  line-height: 1.45;
+}
+
 .obcc-settings-group-body .setting-item {
   padding: 10px 0;
 }
@@ -7567,6 +7575,22 @@ input.obcc-review-correction-input {
 .obcc-settings-group-body input[type="text"],
 .obcc-settings-group-body input[type="password"] {
   max-width: 100%;
+}
+
+.obcc-model-list-add .setting-item-control,
+.obcc-model-list-entry .setting-item-control {
+  flex-wrap: wrap;
+}
+
+.obcc-model-list-add .setting-item-control > input,
+.obcc-model-list-add .setting-item-control > select,
+.obcc-model-list-entry .setting-item-control > select {
+  min-width: 120px;
+  max-width: min(100%, 240px);
+}
+
+.obcc-model-list-entry .setting-item-info {
+  min-width: min(180px, 42%);
 }
 
 .obcc-support-codes {
