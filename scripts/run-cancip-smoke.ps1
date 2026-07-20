@@ -39,7 +39,7 @@ if (-not $VaultRoot) {
   throw 'Set -VaultPath or CANCIP_VAULT_PATH to the target Obsidian Vault before running smoke tests.'
 }
 $InstalledCancipDataPath = Join-Path $VaultRoot '.obsidian/plugins/cancip/data.json'
-$InstalledCancipConfigPath = Join-Path $VaultRoot '.cancip/config.json'
+$InstalledCancipConfigPath = Join-Path $VaultRoot '.obsidian/plugins/cancip/data/config.json'
 $OutDir = Join-Path $Root 'reports'
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $Script:OriginalSessionId = ''
@@ -538,18 +538,18 @@ if (-not $Case -or 'programmatic.vault-state-sync-classifier'.Contains($Case)) {
   const p=app.plugins.plugins.cancip;
   if(!p||typeof p.classifyCancipVaultSyncPath!=='function')throw new Error('missing vault sync classifier');
   const samples={
-    config:'.cancip/config.json',
-    sessionIndex:'.cancip/sessions/index.json',
-    sessionFile:'.cancip/sessions/session-2026-07-05T00-00-00Z.json',
-    automationState:'.cancip/automations.json',
-    automationLog:'.cancip/automations/2026-07-05.md',
+    config:'.obsidian/plugins/cancip/data/config.json',
+    sessionIndex:'.obsidian/plugins/cancip/data/sessions/index.json',
+    sessionFile:'.obsidian/plugins/cancip/data/sessions/session-2026-07-05T00-00-00Z.json',
+    automationState:'.obsidian/plugins/cancip/data/automations.json',
+    automationLog:'.obsidian/plugins/cancip/data/automations/2026-07-05.md',
     skill:'AI/Cancip/Skills/Desktop/obsidian/SKILL.md',
-    skillIndex:'.cancip/index/skills-index.json',
+    skillIndex:'.obsidian/plugins/cancip/data/index/skills-index.json',
     memory:'AI/Cancip/Memory/CANCIP_INDEX.md',
     visibleReview:'AI/Cancip/Review/smoke/manifest.json',
-    hiddenReview:'.cancip/review-gates/smoke/manifest.json',
-    filePins:'.cancip/file-pins.json',
-    versions:'.cancip/versions/index.json'
+    hiddenReview:'.obsidian/plugins/cancip/data/review-gates/smoke/manifest.json',
+    filePins:'.obsidian/plugins/cancip/data/file-pins.json',
+    versions:'.obsidian/plugins/cancip/data/versions/index.json'
   };
   const result={};
   for(const [key,path] of Object.entries(samples))result[key]=p.classifyCancipVaultSyncPath(path);
@@ -581,6 +581,60 @@ if (-not $Case -or 'programmatic.vault-state-sync-classifier'.Contains($Case)) {
     Add-CaseResult 'programmaticCases' @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs; result = $item.result }
   } catch {
     Add-CaseResult 'programmaticCases' @{ id = 'programmatic.vault-state-sync-classifier'; pass = $false; error = $_.Exception.Message }
+  }
+}
+
+if (-not $Case -or 'programmatic.storage-path-migration'.Contains($Case)) {
+  try {
+    $code = @'
+(async()=>{
+  const started=Date.now(),p=app.plugins.plugins.cancip,adapter=app.vault.adapter;
+  if(!p)throw new Error('Cancip runtime unavailable');
+  const dataRoot=`${app.vault.configDir}/plugins/cancip/data`,markerPath=`${dataRoot}/migration-from-dot-cancip-v1.json`;
+  const critical=['config.json','file-pins.json','automations.json','review-state.json','review-index.json','sessions/index.json','personalization.json','personalization-usage.json'];
+  const marker=JSON.parse(await adapter.read(markerPath));
+  const missing=[];
+  for(const relative of critical)if(await adapter.exists(`.cancip/${relative}`)&&!(await adapter.exists(`${dataRoot}/${relative}`)))missing.push(relative);
+  const settingsPaths=[p.settings.memoryFolder,...(p.settings.skillRoots||[])].map(value=>String(value||'').replace(/\\/g,'/'));
+  const runtimePaths=[];
+  const archive=await p.readCancipArchiveIndex();
+  for(const entry of archive.entries||[])runtimePaths.push(entry.path,entry.originalPath,entry.session?.path);
+  const searchIndex=await p.readUniversalSearchIndex();
+  for(const document of searchIndex.documents||[])runtimePaths.push(document.path);
+  const originalRead=adapter.read;
+  let sessionPathRemapped=false;
+  try{
+    adapter.read=async function(path,...args){
+      const raw=await originalRead.call(this,path,...args);
+      if(String(path||'').replace(/\\/g,'/')!==`${dataRoot}/sessions/index.json`)return raw;
+      const parsed=JSON.parse(raw),entry=parsed.entries?.[0];
+      if(entry?.id)entry.path=`.cancip/sessions/${entry.id}.json`;
+      return JSON.stringify(parsed);
+    };
+    const entries=await p.readSessionHistoryIndexForPlugin(false);
+    sessionPathRemapped=!entries.length||!String(entries[0].path||'').startsWith('.cancip/');
+  }finally{adapter.read=originalRead}
+  const legacyRuntimePaths=runtimePaths.filter(path=>String(path||'')==='.cancip'||String(path||'').startsWith('.cancip/'));
+  return JSON.stringify({
+    id:'programmatic.storage-path-migration',elapsedMs:Date.now()-started,dataRoot,markerPath,
+    markerTarget:marker.target,sourcePresent:marker.sourcePresent===true,sourceFiles:Number(marker.sourceFiles||0),
+    legacyPreserved:await adapter.exists('.cancip'),missing,
+    settingsMigrated:settingsPaths.every(path=>path!=='.cancip'&&!path.startsWith('.cancip/')),
+    configClassified:p.classifyCancipVaultSyncPath(`${dataRoot}/config.json`).includes('config'),
+    sessionPathRemapped,legacyRuntimePaths:legacyRuntimePaths.slice(0,12)
+  });
+})()
+'@
+    $item = Invoke-CancipEval -Code $code -TimeoutSeconds 90
+    if ($item.markerTarget -ne $item.dataRoot) { throw "migration marker target mismatch: $($item.markerTarget) / $($item.dataRoot)" }
+    if (-not [bool]$item.sourcePresent -or [int]$item.sourceFiles -lt 1) { throw "legacy source was not migrated: $($item | ConvertTo-Json -Compress)" }
+    if (-not [bool]$item.legacyPreserved) { throw 'legacy .cancip backup was removed' }
+    if (@($item.missing).Count) { throw "critical migrated files missing: $(@($item.missing) -join ', ')" }
+    if (-not [bool]$item.settingsMigrated -or -not [bool]$item.configClassified) { throw "runtime still references legacy storage: $($item | ConvertTo-Json -Compress)" }
+    if (-not [bool]$item.sessionPathRemapped -or @($item.legacyRuntimePaths).Count) { throw "embedded runtime paths still reference legacy storage: $($item | ConvertTo-Json -Compress)" }
+    Add-CaseResult 'programmaticCases' @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs; dataRoot = $item.dataRoot; sourceFiles = $item.sourceFiles }
+  } catch {
+    Add-CaseResult 'programmaticCases' @{ id = 'programmatic.storage-path-migration'; pass = $false; error = $_.Exception.Message }
   }
 }
 
@@ -662,7 +716,7 @@ if (-not $Case -or 'programmatic.review-count-canonical-state'.Contains($Case)) 
     const simulatedMobile=await collect();
     return JSON.stringify({
       id:'programmatic.review-count-canonical-state',elapsedMs:Date.now()-started,
-      statePath:'.cancip/review-state.json',packages:state.packages.length,
+      statePath:'.obsidian/plugins/cancip/data/review-state.json',packages:state.packages.length,
       expectedPending:expected.length,baselinePending:baseline.snapshot.pendingCount,
       simulatedMobilePending:simulatedMobile.snapshot.pendingCount,
       packageCount:simulatedMobile.packageCount,attentionCount:simulatedMobile.attentionCount,
@@ -697,20 +751,20 @@ if (-not $Case -or 'programmatic.vault-state-convergence'.Contains($Case)) {
 (async()=>{
   const started=Date.now(),p=app.plugins.plugins.cancip,adapter=app.vault.adapter;
   if(!p||typeof p.refreshAllSyncedVaultState!=='function')throw new Error('synced state refresh API missing');
-  const configBefore=await adapter.stat('.cancip/config.json'),configText=await adapter.read('.cancip/config.json');
+  const configBefore=await adapter.stat('.obsidian/plugins/cancip/data/config.json'),configText=await adapter.read('.obsidian/plugins/cancip/data/config.json');
   await p.writeCancipConfig();
-  const configAfter=await adapter.stat('.cancip/config.json');
+  const configAfter=await adapter.stat('.obsidian/plugins/cancip/data/config.json');
   let reviewRebuilds=0;
   const originalRebuild=p.rebuildReviewGateCanonicalState;
   p.rebuildReviewGateCanonicalState=async()=>{reviewRebuilds+=1;return await originalRebuild.call(p)};
-  try{await p.refreshOpenCancipVaultState(new Set(['review']),['.cancip/review-gates/simulated-remote/manifest.json'])}
+  try{await p.refreshOpenCancipVaultState(new Set(['review']),['.obsidian/plugins/cancip/data/review-gates/simulated-remote/manifest.json'])}
   finally{p.rebuildReviewGateCanonicalState=originalRebuild}
   await p.refreshAllSyncedVaultState(true);
   const canonical=await p.readReviewGateCanonicalState(),snapshot=await p.reviewGateSnapshot(true);
-  const pinsFile=JSON.parse(await adapter.read('.cancip/file-pins.json')),pins=await p.loadFilePinState(true);
-  const automationFile=JSON.parse(await adapter.read('.cancip/automations.json')),automations=await p.loadAutomations(true);
+  const pinsFile=JSON.parse(await adapter.read('.obsidian/plugins/cancip/data/file-pins.json')),pins=await p.loadFilePinState(true);
+  const automationFile=JSON.parse(await adapter.read('.obsidian/plugins/cancip/data/automations.json')),automations=await p.loadAutomations(true);
   const view=await p.getOrCreateChatView({reveal:false,focus:false});
-  const indexFile=JSON.parse(await adapter.read('.cancip/sessions/index.json'));
+  const indexFile=JSON.parse(await adapter.read('.obsidian/plugins/cancip/data/sessions/index.json'));
   const sessions=await view.readSessionHistoryIndex({force:true,refreshFiles:true});
   return JSON.stringify({
     id:'programmatic.vault-state-convergence',elapsedMs:Date.now()-started,
@@ -718,7 +772,7 @@ if (-not $Case -or 'programmatic.vault-state-convergence'.Contains($Case)) {
     sessionIndex:indexFile.entries?.length||0,sessionMerged:sessions.filter((entry)=>!entry.eventOnly).length,
     pinsSame:JSON.stringify(pinsFile.folders||{})===JSON.stringify(pins.folders||{}),
     automationsSame:(automationFile.tasks?.length||0)===automations.length,
-    configNoRewrite:configText===await adapter.read('.cancip/config.json')&&configBefore?.mtime===configAfter?.mtime,
+    configNoRewrite:configText===await adapter.read('.obsidian/plugins/cancip/data/config.json')&&configBefore?.mtime===configAfter?.mtime,
     polling:Boolean(p.cancipStatePollTimer),refreshRecorded:p.lastCancipResumeRefreshAt>0
   });
 })()
@@ -746,9 +800,9 @@ if (-not $Case -or 'programmatic.review-auto-advance'.Contains($Case)) {
   if(!view||typeof view.advanceReviewAfterDecision!=='function'||typeof view.renderReviewGatePanel!=='function')throw new Error('review navigation API unavailable');
   const item=(path)=>({path,old_text:'old',new_text:'new',changes:['write'],links:{},structure:[]});
   const entry=(pkg,path)=>({packagePath:pkg,data:{path:pkg,folder:pkg.replace(/\/manifest\.json$/,''),title:pkg,generatedAt:'',items:[item(path)]},item:item(path)});
-  const a=entry('.cancip/review-gates/a/manifest.json','notes/a.md');
-  const b=entry('.cancip/review-gates/a/manifest.json','notes/b.md');
-  const c=entry('.cancip/review-gates/b/manifest.json','notes/c.md');
+  const a=entry('.obsidian/plugins/cancip/data/review-gates/a/manifest.json','notes/a.md');
+  const b=entry('.obsidian/plugins/cancip/data/review-gates/a/manifest.json','notes/b.md');
+  const c=entry('.obsidian/plugins/cancip/data/review-gates/b/manifest.json','notes/c.md');
   const original={
     render:view.render,refresh:view.refreshReviewState,session:view.reviewSessionEntries,stale:view.reviewSessionStale,
     packagePath:view.packagePath,selectedItemPath:view.selectedItemPath,sourceMode:view.sourceMode,reviewViewMode:view.reviewViewMode
@@ -798,8 +852,8 @@ if (-not $Case -or 'programmatic.review-session-cache'.Contains($Case)) {
   if(!view||typeof view.reloadReviewSession!=='function')throw new Error('review session cache API unavailable');
   const item=(path)=>({path,old_text:'old',new_text:'new',changes:['write'],links:{},structure:[]});
   const entry=(pkg,path)=>({packagePath:pkg,data:{path:pkg,folder:pkg.replace(/\/manifest\.json$/,''),title:pkg,generatedAt:'',items:[item(path)]},item:item(path)});
-  const a=entry('.cancip/review-gates/cache-a/manifest.json','notes/cache-a.md');
-  const b=entry('.cancip/review-gates/cache-b/manifest.json','notes/cache-b.md');
+  const a=entry('.obsidian/plugins/cancip/data/review-gates/cache-a/manifest.json','notes/cache-a.md');
+  const b=entry('.obsidian/plugins/cancip/data/review-gates/cache-b/manifest.json','notes/cache-b.md');
   const adapter=app.vault.adapter,host=doc.createElement('div');
   const original={
     collect:view.collectAllPendingReviewEntries,render:view.render,session:view.reviewSessionEntries,stale:view.reviewSessionStale,
@@ -861,11 +915,11 @@ if (-not $Case -or 'programmatic.review-config-explanation'.Contains($Case)) {
   if(!view||typeof view.renderReviewConfigSummary!=='function')throw new Error('config explanation API unavailable');
   const host=doc.createElement('div');host.className='obcc-review-leaf has-review-detail';host.style.cssText='position:fixed;left:-10000px;top:0;width:360px;height:700px;';doc.body.append(host);
   const item={
-    path:'.cancip/config.json',category:'config',changes:['config'],links:{},structure:[],review_summary:'Autocomplete settings changed',
+    path:'.obsidian/plugins/cancip/data/config.json',category:'config',changes:['config'],links:{},structure:[],review_summary:'Autocomplete settings changed',
     old_text:JSON.stringify({composerAutocompleteCandidateCount:3,composerAutocompleteEnabled:true,composerAutocompletePrompt:'old '.repeat(100),apiProfiles:[{name:'default',apiKey:'old-private-value',model:'model-a'}]}),
     new_text:JSON.stringify({composerAutocompleteCandidateCount:2,composerAutocompleteEnabled:false,composerAutocompletePrompt:'new '.repeat(100),apiProfiles:[{name:'default',apiKey:'new-private-value',model:'model-b'}]})
   };
-  const data={path:'.cancip/review-gates/config-test/manifest.json',folder:'.cancip/review-gates/config-test',title:'config-test',generatedAt:'',items:[item]};
+  const data={path:'.obsidian/plugins/cancip/data/review-gates/config-test/manifest.json',folder:'.obsidian/plugins/cancip/data/review-gates/config-test',title:'config-test',generatedAt:'',items:[item]};
   try{
     view.renderReviewDetail(host,data,item,1,1);
     const text=host.textContent||'';
@@ -1274,11 +1328,11 @@ if (-not $Case -or 'programmatic.config-read-routing'.Contains($Case)) {
     const policy=view.promptPayloadPolicy(prompt);
     const run={
       id:'smoke-config-read',
-      action:{type:'read',path:'.cancip/config.json',maxChars:9000},
-      summary:'read .cancip/config.json',
+      action:{type:'read',path:'.obsidian/plugins/cancip/data/config.json',maxChars:9000},
+      summary:'read Cancip data config.json',
       status:'executed',
       createdAt:new Date().toISOString(),
-      result:'read .cancip/config.json\n{"accessMode":"full-access","activeApiProfileId":"default","apiProfiles":[{"id":"default","name":"tokenfree","apiMode":"auto","model":"gpt-5.5","apiUrl":"https://api.example/v1"}],"model":"fallback-model"}'
+      result:'read Cancip data config.json\n{"accessMode":"full-access","activeApiProfileId":"default","apiProfiles":[{"id":"default","name":"tokenfree","apiMode":"auto","model":"gpt-5.5","apiUrl":"https://api.example/v1"}],"model":"fallback-model"}'
     };
     const fallback=view.informationalFallbackFromToolRuns([run],prompt,'empty model reply');
     return JSON.stringify({id:'programmatic.config-read-routing',elapsedMs:Date.now()-t,actions,policy,fallback});
@@ -1290,10 +1344,10 @@ if (-not $Case -or 'programmatic.config-read-routing'.Contains($Case)) {
     $action0 = if ($actions.Count) { $actions[0] } else { $null }
     $fallbackText = [string]$item.fallback
     if ([int]$actions.Count -ne 1) { throw "expected one direct read action got $($actions.Count)" }
-    if ($action0.type -ne 'read' -or $action0.path -ne '.cancip/config.json') { throw "expected config read action got $($action0 | ConvertTo-Json -Compress)" }
+    if ($action0.type -ne 'read' -or $action0.path -ne '.obsidian/plugins/cancip/data/config.json') { throw "expected config read action got $($action0 | ConvertTo-Json -Compress)" }
     if ($fallbackText -notmatch 'full-access') { throw "fallback missing access mode: $fallbackText" }
     if ($fallbackText -notmatch 'gpt-5\.5') { throw "fallback missing model: $fallbackText" }
-    if ($fallbackText -match '\.cancip/config\.json') { throw "fallback leaked read-only config path: $fallbackText" }
+    if ($fallbackText -match '\.obsidian/plugins/cancip/data/config\.json') { throw "fallback leaked read-only config path: $fallbackText" }
     Add-CaseResult -Group 'programmaticCases' -Item @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs }
   } catch {
     Add-CaseResult -Group 'programmaticCases' -Item @{ id = 'programmatic.config-read-routing'; pass = $false; error = $_.Exception.Message }
@@ -1571,7 +1625,7 @@ if (-not $Case -or 'programmatic.automation-vault-curation-scan-pack'.Contains($
   }
   const paths=JSON.parse(pack.match(/^- candidatePathsJson:\s*(\[[^\r\n]*\])/m)?.[1]||'[]');
   const scanned=JSON.parse(pack.match(/^- scannedPathsJson:\s*(\[[^\r\n]*\])/m)?.[1]||'[]');
-  return JSON.stringify({id:'programmatic.automation-vault-curation-scan-pack',elapsedMs:Date.now()-t,length:pack.length,silent:modelCalls===0&&v.sessionId===beforeSession&&(v.messages||[]).length===beforeMessages,contract:pack.includes('newness only triggers one scan')&&pack.includes('allowedActions=format')&&/^- protectedThisBatch:\s*1$/m.test(pack),paths:paths.length===1&&paths[0]===files[0].path,scanned:files.every(file=>scanned.includes(file.path)),skill:pack.includes('.cancip/skills/vault-curation-specified-scope.skill.md')});
+  return JSON.stringify({id:'programmatic.automation-vault-curation-scan-pack',elapsedMs:Date.now()-t,length:pack.length,silent:modelCalls===0&&v.sessionId===beforeSession&&(v.messages||[]).length===beforeMessages,contract:pack.includes('newness only triggers one scan')&&pack.includes('allowedActions=format')&&/^- protectedThisBatch:\s*1$/m.test(pack),paths:paths.length===1&&paths[0]===files[0].path,scanned:files.every(file=>scanned.includes(file.path)),skill:pack.includes('.obsidian/plugins/cancip/data/skills/vault-curation-specified-scope.skill.md')});
 })()
 '@
     $item = Invoke-CancipEval -Code $code -TimeoutSeconds 45
@@ -2319,7 +2373,7 @@ if (Should-RunProgrammaticCase 'programmatic.context-editor-settings') {
 (async()=>{const p=app.plugins.plugins.cancip;if(!p)throw new Error('runtime unavailable');const h=Object.create(p),path='no-prefetch-smoke.md',profile={...p.activeApiProfile(),id:'no-prefetch-smoke-profile',apiUrl:'https://smoke.invalid/v1',apiKey:'smoke',model:'smoke-model'};h.settings={...p.settings,apiProfiles:[profile],activeApiProfileId:profile.id,composerAutocompleteApiProfileId:'',composerAutocompleteEnabled:true,composerAutocompletePrefetchEnabled:false,composerAutocompleteCandidateCount:4};h.editorAutocompleteCache=new Map();h.editorAutocompleteBranchCache=new Map();h.editorAutocompleteBranchPrefetches=new Map();h.editorAutocompleteBranchPrefetchAttempts=new Set();h.editorAutocompleteModelBusy=false;h.editorAutocompleteLastModelAt=0;h.editorAutocompleteGeneration=0;h.editorAutocompleteMemoryGeneration=0;h.editorLocalAutocompleteSuffix=()=>'';h.beginEditorAutocompleteActivity=()=>()=>{};let calls=0;h.generateEditorAutocompleteSuffix=async()=>{calls+=1;return JSON.stringify({candidates:['换批A','换批B','换批C','换批D'].map(text=>({text}))})};const forced=await h.editorAutocompleteCandidates('换批','换批<CURSOR>',path,{force:true,excluded:['旧A','旧B','旧C']}),forcedReady=await h.ensureEditorAutocompleteBranches('换批','换批<CURSOR>',path,forced),waited=await h.awaitEditorAutocompleteBranchPrefetch(`换批${forced[0]}`,path);h.scheduleEditorAutocompleteBranchPrefetch('换批','换批<CURSOR>',path,forced);await new Promise(resolve=>setTimeout(resolve,20));const noPrefetch=forced.length===4&&forcedReady===0&&waited.length===0&&h.editorAutocompleteBranchCache.size===0&&h.editorAutocompleteBranchPrefetches.size===0&&h.editorAutocompleteBranchPrefetchAttempts.size===0&&calls===1;return JSON.stringify({noPrefetch,forcedReady,calls})})()
 '@
     $editorMemoryCode = @'
-(async()=>{const p=app.plugins.plugins.cancip;if(!p)throw new Error('runtime unavailable');const old={include:p.settings.includeCoreMemory,enabled:p.settings.composerAutocompleteEnabled,corpus:p.editorAutocompleteMemoryCorpusCache,promise:p.editorAutocompleteMemoryCorpusPromise};try{p.settings.includeCoreMemory=true;p.settings.composerAutocompleteEnabled=false;p.editorAutocompleteMemoryCorpusPromise=null;p.editorAutocompleteMemoryCorpusCache={at:Date.now(),documents:[{path:'AI/Cancip/Memory/USER_PREFERENCES_QUICK.md',content:'用户称呼测试用户。偏好中文、结论优先、回答精简。apiKey: smoke-secret-value',kind:'memory',priority:0,updatedAt:Date.now()},{path:'AI/Cancip/Memory/PROFILE.md',content:'测试用户负责医疗行政、转诊协调和证书整理。',kind:'memory',priority:1,updatedAt:Date.now()},{path:'AI/Cancip/Memory/WORKFLOWS.md',content:'复诊安排固定流程：核对患者、日期、材料，再确认通知结果。',kind:'memory',priority:4,updatedAt:Date.now()},{path:'.cancip/PROJECT_MEMORY.md',content:'当前项目正在优化 Cancip 笔记自动补全和记忆检索。',kind:'project',priority:12,updatedAt:Date.now()},{path:'.cancip/sessions/recent.json',content:'会话：继续安排复诊\n用户：整理复诊材料并核对通知。',kind:'session',priority:30,updatedAt:Date.now()},{path:'AI/Cancip/Memory/TRADING.md',content:'量化交易回测与仓位控制。',kind:'memory',priority:40,updatedAt:Date.now()}]};const context=await p.editorAutocompleteMemoryContext('继续安排复诊','今天需要继续安排复诊并核对材料','常用/日记/2026-07-17.md');return JSON.stringify({richMemory:context.includes('测试用户')&&context.includes('复诊安排固定流程')&&context.includes('继续安排复诊'),memoryRelevant:!context.includes('量化交易回测'),memoryBounded:context.length>120&&context.length<=3600,memoryRedacted:!context.includes('smoke-secret-value')&&context.includes('REDACTED')})}finally{p.settings.includeCoreMemory=old.include;p.settings.composerAutocompleteEnabled=old.enabled;p.editorAutocompleteMemoryCorpusCache=old.corpus;p.editorAutocompleteMemoryCorpusPromise=old.promise}})()
+(async()=>{const p=app.plugins.plugins.cancip;if(!p)throw new Error('runtime unavailable');const old={include:p.settings.includeCoreMemory,enabled:p.settings.composerAutocompleteEnabled,corpus:p.editorAutocompleteMemoryCorpusCache,promise:p.editorAutocompleteMemoryCorpusPromise};try{p.settings.includeCoreMemory=true;p.settings.composerAutocompleteEnabled=false;p.editorAutocompleteMemoryCorpusPromise=null;p.editorAutocompleteMemoryCorpusCache={at:Date.now(),documents:[{path:'AI/Cancip/Memory/USER_PREFERENCES_QUICK.md',content:'用户称呼测试用户。偏好中文、结论优先、回答精简。apiKey: smoke-secret-value',kind:'memory',priority:0,updatedAt:Date.now()},{path:'AI/Cancip/Memory/PROFILE.md',content:'测试用户负责医疗行政、转诊协调和证书整理。',kind:'memory',priority:1,updatedAt:Date.now()},{path:'AI/Cancip/Memory/WORKFLOWS.md',content:'复诊安排固定流程：核对患者、日期、材料，再确认通知结果。',kind:'memory',priority:4,updatedAt:Date.now()},{path:'.obsidian/plugins/cancip/data/PROJECT_MEMORY.md',content:'当前项目正在优化 Cancip 笔记自动补全和记忆检索。',kind:'project',priority:12,updatedAt:Date.now()},{path:'.obsidian/plugins/cancip/data/sessions/recent.json',content:'会话：继续安排复诊\n用户：整理复诊材料并核对通知。',kind:'session',priority:30,updatedAt:Date.now()},{path:'AI/Cancip/Memory/TRADING.md',content:'量化交易回测与仓位控制。',kind:'memory',priority:40,updatedAt:Date.now()}]};const context=await p.editorAutocompleteMemoryContext('继续安排复诊','今天需要继续安排复诊并核对材料','常用/日记/2026-07-17.md');return JSON.stringify({richMemory:context.includes('测试用户')&&context.includes('复诊安排固定流程')&&context.includes('继续安排复诊'),memoryRelevant:!context.includes('量化交易回测'),memoryBounded:context.length>120&&context.length<=3600,memoryRedacted:!context.includes('smoke-secret-value')&&context.includes('REDACTED')})}finally{p.settings.includeCoreMemory=old.include;p.settings.composerAutocompleteEnabled=old.enabled;p.editorAutocompleteMemoryCorpusCache=old.corpus;p.editorAutocompleteMemoryCorpusPromise=old.promise}})()
 '@
     $editorPromptCode = @'
 (async()=>{const p=app.plugins.plugins.cancip;if(!p)throw new Error('runtime unavailable');const old={include:p.settings.includeCoreMemory,call:p.callLightweightAutocompleteModel,prefetch:p.settings.composerAutocompletePrefetchEnabled,count:p.settings.composerAutocompleteCandidateCount};const captured=[];try{p.settings.includeCoreMemory=false;p.settings.composerAutocompletePrefetchEnabled=true;p.settings.composerAutocompleteCandidateCount=3;p.callLightweightAutocompleteModel=async(_profile,input,system,maxTokens)=>{captured.push({input,system,maxTokens});return JSON.stringify({candidates:[{text:'补全A',next:['A1','A2','A3']},{text:'补全B',next:['B1','B2','B3']},{text:'补全C',next:['C1','C2','C3']}]})};const profile={id:'smoke',name:'smoke',apiUrl:'https://smoke.invalid/v1',apiKey:'smoke',apiMode:'compatible',model:'smoke-model'},raw=await p.generateEditorAutocompleteSuffix('继续安排复诊','今天需要继续安排复诊<CURSOR>并核对材料','常用/日记/2026-07-17.md',profile),branchRaw=await p.generateEditorAutocompleteSuffix('继续安排复诊','今天需要继续安排复诊<CURSOR>并核对材料','常用/日记/2026-07-17.md',profile,[],['补全A']);p.settings.composerAutocompletePrefetchEnabled=false;p.settings.composerAutocompleteCandidateCount=4;const noPrefetchRaw=await p.generateEditorAutocompleteSuffix('继续安排复诊','今天需要继续安排复诊<CURSOR>并核对材料','常用/日记/2026-07-17.md',profile),root=captured[0],branch=captured[1],disabled=captured[2],rootFirstPrompt=root.system.includes('只生成 3 个当前层 text')&&!root.system.includes('"next":['),branchPrompt=branch.system.includes('1 个 text')&&branch.system.includes('本次共预取 3 个')&&branch.system.includes('"next":['),disabledPrompt=disabled.system.includes('只生成 4 个当前层 text')&&!disabled.system.includes('"next":[');return JSON.stringify({memoryInjected:root.input.includes('<CURSOR>')&&!root.input.includes('相关记忆'),modelBudget:root.maxTokens===870&&root.input.length<2600&&branch.maxTokens===420&&disabled.maxTokens===1020,rootFirstPrompt,branchPrompt,disabledPrompt,modelCalled:raw.includes('补全A')&&branchRaw.includes('A3')&&noPrefetchRaw.includes('补全C')})}finally{p.settings.includeCoreMemory=old.include;p.settings.composerAutocompletePrefetchEnabled=old.prefetch;p.settings.composerAutocompleteCandidateCount=old.count;p.callLightweightAutocompleteModel=old.call}})()
@@ -4210,7 +4264,7 @@ if (-not $Case -or 'programmatic.system-prompt-persistence'.Contains($Case)) {
     const loaded=String(p.settings.systemPrompt||'');
     let configPrompt='';
     try{
-      const raw=await app.vault.adapter.read('.cancip/config.json');
+      const raw=await app.vault.adapter.read('.obsidian/plugins/cancip/data/config.json');
       configPrompt=String((JSON.parse(raw)||{}).systemPrompt||'');
     }catch(e){}
     return JSON.stringify({id:'programmatic.system-prompt-persistence',elapsedMs:Date.now()-t,loadedMatches:loaded===custom,configMatches:configPrompt===custom,loadedHead:loaded.split('\n')[0],configHead:configPrompt.split('\n')[0]});
@@ -4327,7 +4381,7 @@ if (-not $Case -or 'programmatic.prompt-payload-priority-and-experience-skill'.C
 (()=>{const v=app.workspace.getLeavesOfType('cancip-view')[0].view,runs=window.__payloadSmoke.runs,policy=v.promptPayloadPolicy('modify config and verify'),finalPolicyPrompt=v.modePrompt('modify config and verify'),block=v.taskControlBlockForModel('modify config and verify','modify config and verify'),continued=v.modelPromptForTurn('continue','fix target'),toolSummary=v.toolRunsForPrompt(runs,900,4);return JSON.stringify({includeWorkingState:policy.includeWorkingState,includeHistoryAnchors:policy.includeHistoryAnchors,finalOmitsEmpty:finalPolicyPrompt.includes('\u7a7a\u9879')&&finalPolicyPrompt.includes('\u4ec5\u8bfb\u53d6')&&finalPolicyPrompt.includes('\u4e0d\u89e3\u91ca'),blockLength:block.length,blockHasStatic:/Plan discipline|Need missing details/.test(block),blockHasHeld:block.includes('HELD-MUST-NOT-BE-SENT'),continueHasFullState:/Latest session state|Recent tool results/.test(continued),toolSummaryLength:toolSummary.length})})()
 '@
     $packingCode = @'
-(()=>{const v=app.workspace.getLeavesOfType('cancip-view')[0].view,nl=String.fromCharCode(10),memory='## Memory router index'+nl+('memory '.repeat(120)),packed=v.packPromptContext([memory,'## Active Skills'+nl+('skill instruction '.repeat(100)),'## @context:selected text'+nl+('selected '.repeat(100)),memory],700),single=['# Cancip Experience','','## 2026-07-12T00:00:00.000Z · executed','- Step: Workflow: one-off plugin setting','- Action: [{"type":"config","path":".cancip/config.json","set":{"enabled":true}}]','- Result: applied and verified'].join(nl),log=[single,'','## 2026-07-12T00:00:00.000Z · executed','- Step: Workflow: update plugin setting','- Action: [{"type":"config","path":".cancip/config.json","set":{"enabled":true}}]','- Result: applied and verified','','## 2026-07-12T00:01:00.000Z · executed','- Step: Workflow: update plugin setting','- Action: [{"type":"config","path":".cancip/config.json","set":{"enabled":true}}]','- Result: applied and verified again'].join(nl),recipes=v.buildExperienceSkillRecipes(log),singleRecipes=v.buildExperienceSkillRecipes(single);return JSON.stringify({packedLength:packed.length,packedHasSkill:packed.includes('Active Skills'),packedHasExplicit:packed.includes('@context:selected text'),memoryCount:(packed.match(/Memory router index/g)||[]).length,recipeCount:recipes.length,recipeHasAction:!!recipes[0]?.content?.includes('"type":"config"'),singleRecipeSkipped:singleRecipes.length===0})})()
+(()=>{const v=app.workspace.getLeavesOfType('cancip-view')[0].view,nl=String.fromCharCode(10),memory='## Memory router index'+nl+('memory '.repeat(120)),packed=v.packPromptContext([memory,'## Active Skills'+nl+('skill instruction '.repeat(100)),'## @context:selected text'+nl+('selected '.repeat(100)),memory],700),single=['# Cancip Experience','','## 2026-07-12T00:00:00.000Z · executed','- Step: Workflow: one-off plugin setting','- Action: [{"type":"config","path":".obsidian/plugins/cancip/data/config.json","set":{"enabled":true}}]','- Result: applied and verified'].join(nl),log=[single,'','## 2026-07-12T00:00:00.000Z · executed','- Step: Workflow: update plugin setting','- Action: [{"type":"config","path":".obsidian/plugins/cancip/data/config.json","set":{"enabled":true}}]','- Result: applied and verified','','## 2026-07-12T00:01:00.000Z · executed','- Step: Workflow: update plugin setting','- Action: [{"type":"config","path":".obsidian/plugins/cancip/data/config.json","set":{"enabled":true}}]','- Result: applied and verified again'].join(nl),recipes=v.buildExperienceSkillRecipes(log),singleRecipes=v.buildExperienceSkillRecipes(single);return JSON.stringify({packedLength:packed.length,packedHasSkill:packed.includes('Active Skills'),packedHasExplicit:packed.includes('@context:selected text'),memoryCount:(packed.match(/Memory router index/g)||[]).length,recipeCount:recipes.length,recipeHasAction:!!recipes[0]?.content?.includes('"type":"config"'),singleRecipeSkipped:singleRecipes.length===0})})()
 '@
     $packing = Invoke-CancipEval -TimeoutSeconds 25 -Code (ConvertTo-CancipEvalBootstrap -Code $packingCode)
     $item = [pscustomobject]@{
@@ -4582,7 +4636,7 @@ if ($Write -and (-not $Case -or 'programmatic.action-alias-write'.Contains($Case
   const v=p&&typeof p.activateView==='function'?await p.activateView():app.workspace.getLeavesOfType('cancip-view')[0]?.view??null;
   if(!v)throw new Error('Cancip view unavailable');
   const oldMode=p.settings.accessMode;
-  const path='.cancip/action-alias-'+Date.now()+'.md';
+  const path='.obsidian/plugins/cancip/data/action-alias-'+Date.now()+'.md';
   const content='alias action write ok';
   p.settings.accessMode='full-access';
   try{

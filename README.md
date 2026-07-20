@@ -7,15 +7,15 @@ Cancip is a lightweight prototype for managing an Obsidian vault from a mobile-f
 - Multiple API profiles, each with its own Base URL, key, API mode, and model.
 - Multilingual UI with auto device-language detection for Simplified Chinese, Traditional Chinese, English, Uyghur, Turkish, Russian, Japanese, Korean, Spanish, French, German, and Arabic; missing low-frequency strings fall back to English, and Arabic/Uyghur use RTL layout hints.
 - Automatic OpenAI Responses and OpenAI-compatible Chat Completions support.
-- `.cancip/config.json` as the authoritative vault-level config.
-- Two execution access modes only: confirmation mode reads freely and queues write-like actions for approval; full-access mode executes implemented actions directly. Access is controlled only by the UI or `.cancip/config.json`, not by conversation text.
+- `<vault.configDir>/plugins/cancip/data/config.json` as the authoritative vault-level config (normally `.obsidian/plugins/cancip/data/config.json`).
+- Two execution access modes only: confirmation mode reads freely and queues write-like actions for approval; full-access mode executes implemented actions directly. Access is controlled only by the UI or the Cancip data config, not by conversation text.
 - Current note, selection, dynamic `@` mentions, visible long-term/core memory, and universal hard-first search across notes, sessions, memories, paths, configs, PDFs, images/OCR sidecars, Office files, archives, and other Vault files.
 - `cancip-action` JSON tool blocks for validated vault-relative actions, including read/write/append/patch/mkdir/rename/copy.
 - Agent-style tool runs: approval mode queues action blocks under the assistant message with Run/Reject controls, while Full access executes and records results.
 - Tool result continuation loop: after tools finish, Cancip can feed results back into the model and continue for a bounded number of iterations, closer to local agent runs.
-- Outcome verification closes the execution loop inside Obsidian: `cancip.outcome.observe/verify` compare the active view, DOM/layout, file readback, plugin state, and workspace leaves with explicit expectations; `capture` adds active-region PNG evidence only when structured checks are insufficient, and `exportPdf` uses an installed exporter for PDF evidence. Failed checks trigger bounded difference-only correction, while reports and screenshots stay under `.cancip/evidence/` with direct review links and no persisted Base64 payloads.
+- Outcome verification closes the execution loop inside Obsidian: `cancip.outcome.observe/verify` compare the active view, DOM/layout, file readback, plugin state, and workspace leaves with explicit expectations; `capture` adds active-region PNG evidence only when structured checks are insufficient, and `exportPdf` uses an installed exporter for PDF evidence. Failed checks trigger bounded difference-only correction, while reports and screenshots stay under the Cancip data `evidence/` folder with direct review links and no persisted Base64 payloads.
 - Structured command bus actions for Obsidian internal commands, Cancip built-ins, and GitHub CLI-equivalent REST API commands.
-- Native File Explorer pinning: pin/unpin files and folders from the normal context menu, keep mixed pinned siblings above ordinary items, reorder with explicit up/down buttons or drag handles, and persist folder-local order in `.cancip/file-pins.json` without replacing Obsidian's normal unpinned sort or file drag/move behavior.
+- Native File Explorer pinning: pin/unpin files and folders from the normal context menu, keep mixed pinned siblings above ordinary items, reorder with explicit up/down buttons or drag handles, and persist folder-local order in the Cancip data `file-pins.json` without replacing Obsidian's normal unpinned sort or file drag/move behavior.
 - Universal document workbench: every Vault file can be opened as a Markdown representation from the native file menu. Text, HTML/MHTML, CSV, JSON, PDF, DOCX, XLSX, PPTX, media, ZIP-based documents, and unknown binaries receive format-aware previews; editable text formats save with readback verification, while binary originals remain protected and edited conversions export as Markdown or standalone HTML.
 - Obsidian-native Markdown rendering for chat messages, including Obsidian-supported HTML.
 - Cancip chat and rendered Markdown note code blocks keep Obsidian's copy action beside one global wrap toggle. Unwrapped horizontal scrolling is the default; one toggle updates current and future chat/note code blocks and persists across restarts.
@@ -23,11 +23,11 @@ Cancip is a lightweight prototype for managing an Obsidian vault from a mobile-f
 - First-install Vault orientation writes `AI/Cancip/Memory/VAULT_OVERVIEW.md` when missing. It is a shallow programmatic map of top-level folders, file kinds, recent user-facing files, and installed Obsidian plugins, so later turns can pick the right folder/plugin to inspect on demand without sending the whole vault.
 - Full-vault search is not attached by default. Cancip should first use long-term memory and necessary short-term/session context, then decide whether to run `cancip.searchVault` and read only the necessary matched files.
 - Model calls use a payload policy: trivial chat stays lightweight, informational turns add only targeted context, and implementation/self-repair turns include the full tool protocol and compact memory.
-- Skills and experience recipes are routed on demand: memory/rule/preference, OB plugin, command, attachment, and self-optimization tasks can auto-select relevant Skills, query `cancip.skills.*` / `cancip.experience.*`, and harvest repeatable successful workflows into `.cancip/skills/generated/`.
+- Skills and experience recipes are routed on demand: memory/rule/preference, OB plugin, command, attachment, and self-optimization tasks can auto-select relevant Skills, query `cancip.skills.*` / `cancip.experience.*`, and harvest repeatable successful workflows into the Cancip data `skills/generated/` folder.
 - Full session export from the chat header to Markdown and JSON under visible `AI/Cancip/Exports/`.
-- Lightweight project session history stays under `.cancip/sessions/`, opened from the compact history button beside the new-chat button.
+- Lightweight project session history stays under the Cancip data `sessions/` folder, opened from the compact history button beside the new-chat button.
 - Every session now keeps a normalized timeline: immutable creation time, latest activity, first start, and available completion/stop/failure times. History rows expand to exact local time with seconds and no timezone suffix; session commands, event audit, parent/child rows, and Markdown/JSON exports expose the same canonical ISO timestamps. Legacy sessions recover only timestamps that can be determined from stored data or a valid session ID.
-- The Review Gate view opens immediately on desktop and mobile, recovers deferred or stale leaves, reuses an already rendered review page, and avoids scanning the same package again when the requested package and file have not changed. New review packages use visible `AI/Cancip/Review/` as the synchronized source of truth; startup merges legacy `.cancip/review-gates/` packages and decisions into it, and visible packages shadow same-name hidden copies so desktop/mobile counts converge without duplicate files. Paired review panes synchronize vertically on mobile and horizontally on desktop.
+- The Review Gate view opens immediately on desktop and mobile, recovers deferred or stale leaves, reuses an already rendered review page, and avoids scanning the same package again when the requested package and file have not changed. Machine review packages stay under the Cancip data `review-gates/` folder; startup also imports legacy `.cancip/review-gates/` packages without deleting the legacy backup. Paired review panes synchronize vertically on mobile and horizontally on desktop.
 - Review data now uses one deduplicated parsed snapshot shared by the status bar, pending count, file list, and Review view. The snapshot is invalidated by Review changes, prewarmed before the view is revealed, and reused for ten seconds, eliminating repeated package scans and empty-list flashes. Status attention refreshes are coalesced and DOM updates are skipped when counts are unchanged.
 - Compact context chips live inside the rounded composer/input box: the current active file is shown automatically with its extension, and source/context chips no longer occupy a separate panel.
 - Context chips can be opened directly: file chips open the file in a tab, folder chips reveal the folder in the file navigator, and the small `x` removes only that context chip.
@@ -47,12 +47,12 @@ Cancip is a lightweight prototype for managing an Obsidian vault from a mobile-f
 - Running conversations use one first-level process record. Explicit readable model progress stays visible as numbered step headlines while API profiles, raw sent/received payloads, routing audits, tool JSON, tool results, and file-action details remain collapsed. Attribute-bearing `<details>` audit blocks are parsed structurally, empty audit blocks are omitted, and markup/JSON/truncation text cannot leak into step headlines. The process record opens while the request is running and collapses after the final answer.
 - Compact live plan and changed-file summaries sit immediately beside the Cancip title. The plan summary opens the full plan panel; the file summary opens a scrollable, deduplicated file list with green added lines, red removed lines, and direct Vault navigation. The composer now reserves its status area for actually queued prompts.
 - New chat renders and focuses immediately, then serializes the previous session and bootstraps the new session in the background. Session history reads before replacing visible rows, keeps the previous list during refresh, lazy-loads in batches, puts pinned sessions first, and shows `loaded/total` counts in the header.
-- Sessions unused for 30 days move out of the hot session set into reversible cold storage under `.cancip/archive/`. Pinned, running, actively requested, and currently open sessions are protected. Cold sessions stay visible/searchable and are copy-verified before the hot file is removed; opening or restoring one verifies it back into `.cancip/sessions/`. Old event/experience history is deduplicated into month bundles, while user-authored long-term memory is never moved or deleted merely because it is old.
+- Sessions unused for 30 days move out of the hot session set into reversible cold storage under the Cancip data `archive/` folder. Pinned, running, actively requested, and currently open sessions are protected. Cold sessions stay visible/searchable and are copy-verified before the hot file is removed; opening or restoring one verifies it back into the data `sessions/` folder. Old event/experience history is deduplicated into month bundles, while user-authored long-term memory is never moved or deleted merely because it is old.
 - Completed multi-step workflows are harvested only after at least two successful tool actions. The verified action sequence and final result feed the generated experience Skill so similar future tasks can route to a concrete prior workflow instead of repeating broad discovery.
 - Completion now requires a real user-visible final answer after process/tool work. Missing or process-only closure retries up to five times, then remains resumable instead of being stored as a false completion. Running and completed sessions broadcast disk-backed updates to every open view of the same session so background/foreground transitions preserve their correct shape.
 - PrimeTTS uses paired source/spoken chunks: the source chunk keeps original digits for display/highlight, while the spoken chunk applies language-aware number conversion. Chinese chunks use word segmentation without splitting ordinary words, adjacent English words stay together and use the system English voice when available, and decoded look-ahead is widened to reduce playback gaps.
 - Button rules store view, command, icon, stable target identity, creation time, and modification time. Recently changed buttons sort first in settings. Menu insertion applies rules only to the newly mounted menu subtree and runs one short subtree-only trailing pass; full refreshes cache repeated scope/selector queries. Observers and timers follow each live Obsidian document/WebView, ignore unrelated body/container class churn, and react only to actual editable buttons/menu/status items/tab headers; internal DOM writes never re-enter the queue, and stable menu-group/name identity prevents adjacent-item cross-application.
-- Lightweight local versioning under `.cancip/versions/`: manual commits and one daily auto snapshot, without native git and without per-edit history.
+- Lightweight local versioning under the Cancip data `versions/` folder: manual commits and one daily auto snapshot, without native git and without per-edit history.
 - Built-in local automation templates are seeded once from source and remain permanently user-editable. They include precomputed personalized new-chat greetings, evidence-backed diary assistance, review-gate generation, local version snapshots, news briefs, GitHub status, vault index refresh, daily read-only Vault checkups, memory/workflow review, and guarded new-file curation. Deleted defaults stay dismissed instead of being recreated on restart.
 - Automations run in a dedicated focus-neutral background view: starting a scheduled or manual task never reveals or switches the user's active leaf/session. Hidden runners skip message DOM repaint and cold foreground restore/index work, session snapshots are persisted at a lower bounded frequency for recoverability, and idle runners are released after a short reuse window.
 - Startup and foreground loading follow a warm/cold lifecycle: the visible shell renders first, latest-session restore follows asynchronously, small high-value indexes warm during browser idle time, and startup maintenance yields between tasks so mobile interaction remains responsive.
@@ -119,7 +119,7 @@ Cancip is a lightweight prototype for managing an Obsidian vault from a mobile-f
 - Composer todo/plan rows are hard-bounded to the sidebar and floating visual viewport, preventing long tasks from overflowing left or right.
 - Markdown completion rotates every five seconds and generates a three-option tree with three prefetched continuations per option. Applying a branch shows its cached next choices immediately and starts prefetching the following level.
 - Button editing and autocomplete now have independent settings pages. Built-in automation controls use localized labels, templates choose Chinese or English fallback content from the active UI language, and user-edited tasks are never overwritten by startup migration.
-- Personalized greeting refresh and diary writing assistance are visible built-in automation tasks. Their prompts, schedules, model/profile routes, notifications, and enabled state remain editable in `.cancip/automations.json` through the normal automation settings UI.
+- Personalized greeting refresh and diary writing assistance are visible built-in automation tasks. Their prompts, schedules, model/profile routes, notifications, and enabled state remain editable in the Cancip data `automations.json` through the normal automation settings UI.
 
 ## 2.14.4
 
@@ -256,7 +256,7 @@ npm run smoke:ui
 
 Every smoke run writes a timestamped report plus `reports/cancip-smoke-latest.json`. The latest report contains failed case ids, group counts, and next-action recommendations so another agent or Cancip itself can resume from the smallest failing surface.
 
-Optional write/config tests create temporary files under `.cancip/test-lab` and then clean them up. Run them only when Vault write tests are intentionally allowed:
+Optional write/config tests create temporary files under the Cancip data `test-lab/` folder and then clean them up. Run them only when Vault write tests are intentionally allowed:
 
 ```bash
 npm run smoke:write
@@ -361,21 +361,23 @@ Use `cancip.tts.probe` to inspect the current route, selected package, installed
 Cancip reads and writes:
 
 ```text
-.cancip/config.json
+<vault.configDir>/plugins/cancip/data/config.json
 ```
 
-On startup, `.cancip/config.json` wins over plugin `data.json` and the settings UI. Settings changed in the UI are saved back to both places.
+With the normal Obsidian config folder this is `.obsidian/plugins/cancip/data/config.json`. On first startup after upgrading, Cancip copies missing files from legacy `.cancip/` into this data directory without overwriting files already synced from another device. The legacy directory remains as a read-only rollback backup.
+
+On startup, the Cancip data `config.json` wins over plugin `data.json` and the settings UI. Settings changed in the UI are saved back to both places.
 
 API settings are stored in `apiProfiles`; the active profile is mirrored to the legacy `apiUrl`, `apiKey`, `apiMode`, and `model` fields for compatibility.
 
-Do not commit or share `.cancip/config.json` if it contains an API key.
+Do not commit or share the Cancip data `config.json` if it contains an API key.
 
 ## Session Export
 
 Use the history icon in the chat header to reload recent conversations. Cancip saves lightweight JSON session history under:
 
 ```text
-.cancip/sessions/
+<vault.configDir>/plugins/cancip/data/sessions/
 ```
 
 Use the download icon to export the current conversation as a handoff/archive snapshot.
@@ -460,7 +462,7 @@ Currently supported command names:
 - `cancip.automation.templates`: list built-in local automation presets.
 - `cancip.automation.addTemplate`: add a built-in preset, e.g. `{"id":"auto-review-gate-current-vault"}`.
 - `cancip.automation.addVaultDailyReport`: add or refresh the daily Vault maintenance report automation.
-- `cancip.automation.addVaultCuration`: add or refresh the unified Vault curation automation. It keeps new/recent Markdown notes and old/specified-scope notes in separate lanes, then runs beautify/refactor, properties/tags/summaries/links, and file renaming as needed. New notes are scanned by the plugin before the model call and passed as a concrete candidate pack; specified files/folders become a strong-scope lane that the model must read and act on instead of doing vague full-vault scanning. Cancip also installs `.cancip/skills/vault-curation-specified-scope.skill.md` as a built-in strong Skill for explicit file/folder curation.
+- `cancip.automation.addVaultCuration`: add or refresh the unified Vault curation automation. It keeps new/recent Markdown notes and old/specified-scope notes in separate lanes, then runs beautify/refactor, properties/tags/summaries/links, and file renaming as needed. New notes are scanned by the plugin before the model call and passed as a concrete candidate pack; specified files/folders become a strong-scope lane that the model must read and act on instead of doing vague full-vault scanning. Cancip also installs `skills/vault-curation-specified-scope.skill.md` under its data directory as a built-in strong Skill for explicit file/folder curation.
 - `todo` action type: maintain the current session's visible Plan todos. Supported operations are `set`, `add`, `update`, `remove`, `list`, and `clear`.
 - `github.help`: list mobile GitHub command targets.
 - `github.repo`: show repository status from GitHub REST.
@@ -474,7 +476,7 @@ Currently supported command names:
 
 JS boundary: this is an Obsidian WebView/API bridge, not an OS shell. `obsidian.js.help/probe` are read-only. `obsidian.eval` and aliases are effect-capable and follow Cancip access mode: confirmation mode queues Approve/Reject, while full-access executes directly.
 
-GitHub settings live in the advanced Command bus group and mirror to `.cancip/config.json`:
+GitHub settings live in the advanced Command bus group and mirror to the Cancip data `config.json`:
 
 ```json
 {
@@ -495,7 +497,7 @@ Use the official API or a trusted self-owned relay; do not send GitHub tokens th
 
 - Product target: mobile-first AI agent for an Obsidian vault, not a whole-device
   remote-control assistant.
-- Keep the core boundary vault-scoped: Cancip can control vault files, `.cancip`
+- Keep the core boundary vault-scoped: Cancip can control vault files, its plugin data
   config, configured project workspaces, GitHub, and plugin build/install
   workflows, but should not control the entire device.
 - Absorb Smart Composer's Obsidian-native chat UX: file chips, current-file context, vault chat, tool visibility, and compact mobile controls.
@@ -509,7 +511,7 @@ Use the official API or a trusted self-owned relay; do not send GitHub tokens th
   Obsidian JS bridge should all connect to the AI through named, reviewable
   command actions.
 - Continue expanding lightweight local versioning: restore/diff UI, retention,
-  and GitHub sync from `.cancip/versions/`.
+  and GitHub sync from the Cancip data `versions/` folder.
 - Support Obsidian plugin building/adaptation: source-first TypeScript/CSS
   changes, build/package/install loops, and built-JS patching only as a
   fallback.

@@ -2400,8 +2400,10 @@ class CancipButtonEditModal extends Modal {
 }
 
 const CANCIP_AI_DIR = "AI/Cancip";
+const LEGACY_CANCIP_CONFIG_DIR = ".cancip";
+const DEFAULT_CANCIP_DATA_DIR = ".obsidian/plugins/cancip/data";
 const DEFAULT_MEMORY_FOLDER = `${CANCIP_AI_DIR}/Memory`;
-const DEFAULT_HIDDEN_MEMORY_FOLDER = ".cancip/memory";
+let DEFAULT_HIDDEN_MEMORY_FOLDER = `${DEFAULT_CANCIP_DATA_DIR}/memory`;
 const DEFAULT_CODEX_MEMORY_IMPORT_PATH = "~/.codex/memories";
 const DEFAULT_CODEX_SKILLS_IMPORT_ROOT = `${CANCIP_AI_DIR}/Skills/Desktop`;
 const LEGACY_DEFAULT_MEMORY_FOLDER = "AI/Memory";
@@ -2415,7 +2417,7 @@ const DEFAULT_SUPPORT_CODE_DATA_URLS: Record<string, string> = {
   [DEFAULT_SUPPORT_CODE_TWO_PATH]: supportCodeTwoDataUrl
 };
 const DEFAULT_CORE_MEMORY_MAX_FILES = 3;
-const DEFAULT_SKILL_ROOTS = [".cancip/skills", "AI/Cancip/Skills", "SkillOB", "skills", "技能", "能力"] as const;
+let DEFAULT_SKILL_ROOTS: readonly string[] = [`${DEFAULT_CANCIP_DATA_DIR}/skills`, "AI/Cancip/Skills", "SkillOB", "skills", "技能", "能力"];
 const CODEX_CORE_MEMORY_FILES = [
   "USER_PREFERENCES_QUICK.md",
   "PROFILE.md",
@@ -2763,48 +2765,48 @@ const DEFAULT_SETTINGS: Settings = {
   systemPrompt: DEFAULT_SYSTEM_PROMPT
 };
 
-const CANCIP_CONFIG_DIR = ".cancip";
-const CANCIP_CONFIG_PATH = `${CANCIP_CONFIG_DIR}/config.json`;
-const CANCIP_FILE_PINS_PATH = `${CANCIP_CONFIG_DIR}/file-pins.json`;
-const DOCUMENT_PERSISTENT_EDITS_DIR = `${CANCIP_CONFIG_DIR}/document-edits`;
+let CANCIP_CONFIG_DIR = DEFAULT_CANCIP_DATA_DIR;
+let CANCIP_CONFIG_PATH = `${CANCIP_CONFIG_DIR}/config.json`;
+let CANCIP_FILE_PINS_PATH = `${CANCIP_CONFIG_DIR}/file-pins.json`;
+let DOCUMENT_PERSISTENT_EDITS_DIR = `${CANCIP_CONFIG_DIR}/document-edits`;
 const CANCIP_FILE_PINS_SCHEMA_VERSION = 1;
 const CANCIP_CONFIG_SCHEMA_VERSION = 1;
-const CANCIP_CONFIG_BACKUP_DIR = `${CANCIP_CONFIG_DIR}/config-backups`;
-const CANCIP_CONFIG_BACKUP_INDEX_PATH = `${CANCIP_CONFIG_BACKUP_DIR}/index.json`;
+let CANCIP_CONFIG_BACKUP_DIR = `${CANCIP_CONFIG_DIR}/config-backups`;
+let CANCIP_CONFIG_BACKUP_INDEX_PATH = `${CANCIP_CONFIG_BACKUP_DIR}/index.json`;
 const CANCIP_CONFIG_BACKUP_SCHEMA_VERSION = 1;
 const CANCIP_CONFIG_BACKUP_MAX_RECORDS_PER_PATH = 60;
-const CANCIP_MACHINE_INDEX_DIR = `${CANCIP_CONFIG_DIR}/index`;
-const CANCIP_OUTCOME_EVIDENCE_DIR = `${CANCIP_CONFIG_DIR}/evidence`;
+let CANCIP_MACHINE_INDEX_DIR = `${CANCIP_CONFIG_DIR}/index`;
+let CANCIP_OUTCOME_EVIDENCE_DIR = `${CANCIP_CONFIG_DIR}/evidence`;
 const CANCIP_OUTCOME_EVIDENCE_SCHEMA_VERSION = 1;
 const CANCIP_OUTCOME_MAX_SCREENSHOT_PIXELS = 6_000_000;
-const CANCIP_SKILLS_INDEX_PATH = `${CANCIP_MACHINE_INDEX_DIR}/skills-index.json`;
+let CANCIP_SKILLS_INDEX_PATH = `${CANCIP_MACHINE_INDEX_DIR}/skills-index.json`;
 const CANCIP_SKILLS_INDEX_SCHEMA_VERSION = 1;
-const CANCIP_GENERATED_SKILLS_DIR = `${CANCIP_CONFIG_DIR}/skills/generated`;
-const CANCIP_BUILTIN_CURATION_SKILL_PATH = `${CANCIP_CONFIG_DIR}/skills/vault-curation-specified-scope.skill.md`;
+let CANCIP_GENERATED_SKILLS_DIR = `${CANCIP_CONFIG_DIR}/skills/generated`;
+let CANCIP_BUILTIN_CURATION_SKILL_PATH = `${CANCIP_CONFIG_DIR}/skills/vault-curation-specified-scope.skill.md`;
 const CANCIP_BUILTIN_CURATION_SKILL_MARKER = "<!-- cancip-built-in-vault-curation-specified-scope-skill -->";
-const CANCIP_EXPERIENCE_RECIPES_INDEX_PATH = `${CANCIP_MACHINE_INDEX_DIR}/experience-recipes.md`;
+let CANCIP_EXPERIENCE_RECIPES_INDEX_PATH = `${CANCIP_MACHINE_INDEX_DIR}/experience-recipes.md`;
 const CANCIP_OBSIDIAN_ORGANIZATION_MEMORY_MARKER = "<!-- cancip-ob-organization-preferences -->";
 const CANCIP_VAULT_OVERVIEW_MARKER = "<!-- cancip-programmatic-vault-overview -->";
 const CANCIP_KNOWLEDGE_WIKI_START = "<!-- cancip-knowledge-wiki-auto-start -->";
 const CANCIP_KNOWLEDGE_WIKI_END = "<!-- cancip-knowledge-wiki-auto-end -->";
 const CANCIP_KNOWLEDGE_WIKI_MAX_CARDS = 80;
-const PROJECT_MEMORY_PATH = `${CANCIP_CONFIG_DIR}/PROJECT_MEMORY.md`;
-const LOCAL_VERSION_DIR = `${CANCIP_CONFIG_DIR}/versions`;
-const LOCAL_VERSION_INDEX_PATH = `${LOCAL_VERSION_DIR}/index.json`;
+let PROJECT_MEMORY_PATH = `${CANCIP_CONFIG_DIR}/PROJECT_MEMORY.md`;
+let LOCAL_VERSION_DIR = `${CANCIP_CONFIG_DIR}/versions`;
+let LOCAL_VERSION_INDEX_PATH = `${LOCAL_VERSION_DIR}/index.json`;
 const LOCAL_VERSION_SCHEMA_VERSION = 1;
 const SESSION_EXPORT_DIR = `${CANCIP_AI_DIR}/Exports`;
 const SESSION_EXPORT_SCHEMA_VERSION = 1;
-const SESSION_HISTORY_DIR = `${CANCIP_CONFIG_DIR}/sessions`;
-const CANCIP_TRASH_DIR = `${CANCIP_CONFIG_DIR}/Trash`;
-const SESSION_HISTORY_INDEX_PATH = `${SESSION_HISTORY_DIR}/index.json`;
-const SESSION_EVENTS_PATH = `${SESSION_HISTORY_DIR}/events.jsonl`;
-const PERSONALIZATION_CACHE_PATH = `${CANCIP_CONFIG_DIR}/personalization.json`;
+let SESSION_HISTORY_DIR = `${CANCIP_CONFIG_DIR}/sessions`;
+let CANCIP_TRASH_DIR = `${CANCIP_CONFIG_DIR}/Trash`;
+let SESSION_HISTORY_INDEX_PATH = `${SESSION_HISTORY_DIR}/index.json`;
+let SESSION_EVENTS_PATH = `${SESSION_HISTORY_DIR}/events.jsonl`;
+let PERSONALIZATION_CACHE_PATH = `${CANCIP_CONFIG_DIR}/personalization.json`;
 
 function memoryPathForFolder(folder: string, fileName: string): string {
   const root = normalizePath(folder || DEFAULT_MEMORY_FOLDER).replace(/\/+$/, "");
   return `${root}/${fileName}`;
 }
-const PERSONALIZATION_USAGE_PATH = `${CANCIP_CONFIG_DIR}/personalization-usage.json`;
+let PERSONALIZATION_USAGE_PATH = `${CANCIP_CONFIG_DIR}/personalization-usage.json`;
 const PERSONALIZATION_PRIORITY_REVIEW_PATH = "AI/Cancip/个性化建议/按钮排序.md";
 const PERSONALIZATION_PRIORITY_REVIEW_MARKER = "cancip-personalization-priority";
 const PERSONALIZATION_SCHEMA_VERSION = 3;
@@ -2846,18 +2848,18 @@ const EDITOR_AUTOCOMPLETE_MEMORY_MAX_SESSION_BYTES = 256 * 1024;
 const SESSION_HISTORY_SCHEMA_VERSION = 1;
 const SESSION_HISTORY_LIMIT = 60;
 const SESSION_EVENTS_MAX_BYTES = 1024 * 1024;
-const CANCIP_ARCHIVE_DIR = `${CANCIP_CONFIG_DIR}/archive`;
-const CANCIP_ARCHIVE_SESSIONS_DIR = `${CANCIP_ARCHIVE_DIR}/sessions`;
-const CANCIP_ARCHIVE_EVENTS_DIR = `${CANCIP_ARCHIVE_DIR}/session-events`;
-const CANCIP_ARCHIVE_EXPERIENCE_DIR = `${CANCIP_ARCHIVE_DIR}/experience`;
-const CANCIP_ARCHIVE_INDEX_PATH = `${CANCIP_ARCHIVE_DIR}/index.json`;
+let CANCIP_ARCHIVE_DIR = `${CANCIP_CONFIG_DIR}/archive`;
+let CANCIP_ARCHIVE_SESSIONS_DIR = `${CANCIP_ARCHIVE_DIR}/sessions`;
+let CANCIP_ARCHIVE_EVENTS_DIR = `${CANCIP_ARCHIVE_DIR}/session-events`;
+let CANCIP_ARCHIVE_EXPERIENCE_DIR = `${CANCIP_ARCHIVE_DIR}/experience`;
+let CANCIP_ARCHIVE_INDEX_PATH = `${CANCIP_ARCHIVE_DIR}/index.json`;
 const CANCIP_ARCHIVE_SCHEMA_VERSION = 1;
 const CANCIP_ARCHIVE_AFTER_DAYS = 30;
 const CANCIP_ARCHIVE_AFTER_MS = CANCIP_ARCHIVE_AFTER_DAYS * 24 * 60 * 60 * 1000;
 const CANCIP_ARCHIVE_MAINTENANCE_INTERVAL_MS = 12 * 60 * 60 * 1000;
 const CANCIP_ARCHIVE_SESSION_SCAN_BATCH = 36;
 const CANCIP_ARCHIVE_SESSION_MOVE_BATCH = 12;
-const UNIVERSAL_SEARCH_INDEX_PATH = `${CANCIP_MACHINE_INDEX_DIR}/universal-search.json`;
+let UNIVERSAL_SEARCH_INDEX_PATH = `${CANCIP_MACHINE_INDEX_DIR}/universal-search.json`;
 const UNIVERSAL_SEARCH_SCHEMA_VERSION = 1;
 const UNIVERSAL_SEARCH_BLOOM_BITS = 4096;
 const UNIVERSAL_SEARCH_MAX_TERMS_PER_DOCUMENT = 900;
@@ -2868,14 +2870,14 @@ const UNIVERSAL_SEARCH_BINARY_BUILD_BATCH = 2;
 const UNIVERSAL_SEARCH_BACKGROUND_DELAY_MS = 1800;
 const UNIVERSAL_SEARCH_MAX_DOCUMENTS = 12000;
 const UNIVERSAL_SEARCH_MAX_QUERY_CANDIDATES = 180;
-const AUTOMATION_DIR = `${CANCIP_CONFIG_DIR}/automations`;
-const AUTOMATION_STATE_PATH = `${CANCIP_CONFIG_DIR}/automations.json`;
+let AUTOMATION_DIR = `${CANCIP_CONFIG_DIR}/automations`;
+let AUTOMATION_STATE_PATH = `${CANCIP_CONFIG_DIR}/automations.json`;
 const AUTOMATION_SCHEMA_VERSION = 6;
 const AUTOMATION_NEW_FILE_DEFAULT_DEBOUNCE_SECONDS = 45;
 const AUTOMATION_NEW_FILE_MAX_BATCH = 40;
 const VAULT_CURATION_AUTOMATION_ID = "auto-vault-curation";
 const VAULT_CURATION_AUTOMATION_PROMPT_MARKER = "Vault Curation v6";
-const VAULT_CURATION_NEW_FILE_STATE_PATH = `${AUTOMATION_DIR}/vault-curation-new-files.json`;
+let VAULT_CURATION_NEW_FILE_STATE_PATH = `${AUTOMATION_DIR}/vault-curation-new-files.json`;
 const MEMORY_DREAM_AUTOMATION_ID = "auto-cancip-memory-dream";
 const MEMORY_DREAM_PROMPT_MARKER = "Workflow Optimizer v3";
 const DEPRECATED_AUTOMATION_IDS = new Set([
@@ -2902,7 +2904,7 @@ const NEWS_BRIEF_SOURCES: NewsBriefSource[] = [
   { name: "BBC Technology", category: "科技/AI", url: "https://feeds.bbci.co.uk/news/technology/rss.xml" },
   { name: "CoinDesk", category: "加密/大宗商品", url: "https://www.coindesk.com/arc/outboundfeeds/rss/" }
 ];
-const EXPERIENCE_LOG_PATH = `${CANCIP_CONFIG_DIR}/experience.md`;
+let EXPERIENCE_LOG_PATH = `${CANCIP_CONFIG_DIR}/experience.md`;
 const EXPERIENCE_LOG_MAX_CHARS = 12000;
 const EXPERIENCE_CONTEXT_MAX_CHARS = 2200;
 const PROGRESS_STEP_MARKER = "<!-- cancip-progress-step -->";
@@ -2913,9 +2915,68 @@ const PROCESS_DETAIL_MAX_CHARS = 120000;
 const TOOL_RESULT_DETAIL_MAX_CHARS = 120000;
 const MODEL_EXCHANGE_FRAGMENT_MAX_CHARS = 60000;
 const REVIEW_GATE_DIR = `${CANCIP_AI_DIR}/Review`;
-const REVIEW_GATE_HIDDEN_DIR = `${CANCIP_CONFIG_DIR}/review-gates`;
-const REVIEW_GATE_PACKAGE_INDEX_PATH = `${CANCIP_CONFIG_DIR}/review-index.json`;
-const REVIEW_GATE_CANONICAL_STATE_PATH = `${CANCIP_CONFIG_DIR}/review-state.json`;
+let REVIEW_GATE_HIDDEN_DIR = `${CANCIP_CONFIG_DIR}/review-gates`;
+let REVIEW_GATE_PACKAGE_INDEX_PATH = `${CANCIP_CONFIG_DIR}/review-index.json`;
+let REVIEW_GATE_CANONICAL_STATE_PATH = `${CANCIP_CONFIG_DIR}/review-state.json`;
+let CANCIP_STORAGE_MIGRATION_MARKER_PATH = `${CANCIP_CONFIG_DIR}/migration-from-dot-cancip-v1.json`;
+const CANCIP_STORAGE_MIGRATION_CRITICAL_PATHS = [
+  "config.json",
+  "file-pins.json",
+  "automations.json",
+  "review-state.json",
+  "review-index.json",
+  "sessions/index.json",
+  "personalization.json",
+  "personalization-usage.json"
+];
+
+function configureCancipStoragePaths(configDir: string, pluginId: string): void {
+  const normalizedConfigDir = normalizePath(configDir || ".obsidian").replace(/^\/+|\/+$/g, "") || ".obsidian";
+  const normalizedPluginId = pluginId.trim().replace(/[^a-zA-Z0-9._-]/g, "") || "cancip";
+  configureCancipStorageRoot(`${normalizedConfigDir}/plugins/${normalizedPluginId}/data`);
+}
+
+function configureCancipStorageRoot(storageDir: string): void {
+  CANCIP_CONFIG_DIR = normalizePath(storageDir).replace(/^\/+|\/+$/g, "");
+  CANCIP_CONFIG_PATH = `${CANCIP_CONFIG_DIR}/config.json`;
+  CANCIP_FILE_PINS_PATH = `${CANCIP_CONFIG_DIR}/file-pins.json`;
+  DOCUMENT_PERSISTENT_EDITS_DIR = `${CANCIP_CONFIG_DIR}/document-edits`;
+  CANCIP_CONFIG_BACKUP_DIR = `${CANCIP_CONFIG_DIR}/config-backups`;
+  CANCIP_CONFIG_BACKUP_INDEX_PATH = `${CANCIP_CONFIG_BACKUP_DIR}/index.json`;
+  CANCIP_MACHINE_INDEX_DIR = `${CANCIP_CONFIG_DIR}/index`;
+  CANCIP_OUTCOME_EVIDENCE_DIR = `${CANCIP_CONFIG_DIR}/evidence`;
+  CANCIP_SKILLS_INDEX_PATH = `${CANCIP_MACHINE_INDEX_DIR}/skills-index.json`;
+  CANCIP_GENERATED_SKILLS_DIR = `${CANCIP_CONFIG_DIR}/skills/generated`;
+  CANCIP_BUILTIN_CURATION_SKILL_PATH = `${CANCIP_CONFIG_DIR}/skills/vault-curation-specified-scope.skill.md`;
+  CANCIP_EXPERIENCE_RECIPES_INDEX_PATH = `${CANCIP_MACHINE_INDEX_DIR}/experience-recipes.md`;
+  PROJECT_MEMORY_PATH = `${CANCIP_CONFIG_DIR}/PROJECT_MEMORY.md`;
+  LOCAL_VERSION_DIR = `${CANCIP_CONFIG_DIR}/versions`;
+  LOCAL_VERSION_INDEX_PATH = `${LOCAL_VERSION_DIR}/index.json`;
+  SESSION_HISTORY_DIR = `${CANCIP_CONFIG_DIR}/sessions`;
+  CANCIP_TRASH_DIR = `${CANCIP_CONFIG_DIR}/Trash`;
+  SESSION_HISTORY_INDEX_PATH = `${SESSION_HISTORY_DIR}/index.json`;
+  SESSION_EVENTS_PATH = `${SESSION_HISTORY_DIR}/events.jsonl`;
+  PERSONALIZATION_CACHE_PATH = `${CANCIP_CONFIG_DIR}/personalization.json`;
+  PERSONALIZATION_USAGE_PATH = `${CANCIP_CONFIG_DIR}/personalization-usage.json`;
+  CANCIP_ARCHIVE_DIR = `${CANCIP_CONFIG_DIR}/archive`;
+  CANCIP_ARCHIVE_SESSIONS_DIR = `${CANCIP_ARCHIVE_DIR}/sessions`;
+  CANCIP_ARCHIVE_EVENTS_DIR = `${CANCIP_ARCHIVE_DIR}/session-events`;
+  CANCIP_ARCHIVE_EXPERIENCE_DIR = `${CANCIP_ARCHIVE_DIR}/experience`;
+  CANCIP_ARCHIVE_INDEX_PATH = `${CANCIP_ARCHIVE_DIR}/index.json`;
+  UNIVERSAL_SEARCH_INDEX_PATH = `${CANCIP_MACHINE_INDEX_DIR}/universal-search.json`;
+  AUTOMATION_DIR = `${CANCIP_CONFIG_DIR}/automations`;
+  AUTOMATION_STATE_PATH = `${CANCIP_CONFIG_DIR}/automations.json`;
+  VAULT_CURATION_NEW_FILE_STATE_PATH = `${AUTOMATION_DIR}/vault-curation-new-files.json`;
+  EXPERIENCE_LOG_PATH = `${CANCIP_CONFIG_DIR}/experience.md`;
+  REVIEW_GATE_HIDDEN_DIR = `${CANCIP_CONFIG_DIR}/review-gates`;
+  REVIEW_GATE_PACKAGE_INDEX_PATH = `${CANCIP_CONFIG_DIR}/review-index.json`;
+  REVIEW_GATE_CANONICAL_STATE_PATH = `${CANCIP_CONFIG_DIR}/review-state.json`;
+  CANCIP_STORAGE_MIGRATION_MARKER_PATH = `${CANCIP_CONFIG_DIR}/migration-from-dot-cancip-v1.json`;
+  DEFAULT_HIDDEN_MEMORY_FOLDER = `${CANCIP_CONFIG_DIR}/memory`;
+  DEFAULT_SKILL_ROOTS = [`${CANCIP_CONFIG_DIR}/skills`, "AI/Cancip/Skills", "SkillOB", "skills", "技能", "能力"];
+  DEFAULT_SETTINGS.skillRoots = [...DEFAULT_SKILL_ROOTS];
+}
+
 const REVIEW_GATE_MAX_FILES = 80;
 const REVIEW_GATE_MAX_FILE_CHARS = 120000;
 const CONTEXT_STEP_TIMEOUT_MS = 3500;
@@ -3623,7 +3684,7 @@ const EN = {
   apiModeResponses: "Responses",
   apiModeCompatible: "OpenAI-compatible",
   settingsApiKey: "API key",
-  settingsApiKeyDesc: "Mirrored to .cancip/config.json and plugin data.json on this device. Do not share vault config folders.",
+  settingsApiKeyDesc: "Mirrored to Cancip data/config.json and plugin data.json. Both may sync with the Obsidian config folder; protect the remote account and credentials.",
   settingsModel: "Model",
   settingsDefaultModelSource: "Default model source",
   settingsDefaultModelSourceDesc: "Choose the API profile used by the default model. Model switching carries its source with it.",
@@ -3656,9 +3717,9 @@ const EN = {
   settingsCoreMemoryFolder: "Core memory folder",
   settingsCoreMemoryFolderDesc: "Markdown files under this folder are included as core memory.",
   settingsCoreMemoryLocation: "Memory location",
-  settingsCoreMemoryLocationDesc: "Choose the visible memory folder, hidden .cancip memory folder, or keep a custom folder.",
+  settingsCoreMemoryLocationDesc: "Choose the visible memory folder, the synced Cancip data folder, or a custom folder.",
   settingsCoreMemoryLocationVisible: "Visible AI/Cancip folder",
-  settingsCoreMemoryLocationHidden: "Hidden .cancip folder",
+  settingsCoreMemoryLocationHidden: "Cancip synced data folder",
   settingsCoreMemoryLocationCustom: "Custom folder",
   settingsMaxContextFiles: "Max context files",
   settingsMaxCoreMemoryFiles: "Core memory files per prompt",
@@ -4586,7 +4647,7 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     apiModeResponses: "Responses",
     apiModeCompatible: "OpenAI-compatible",
     settingsApiKey: "API key",
-    settingsApiKeyDesc: "会同步到 .cancip/config.json 和本设备插件 data.json。不要共享 vault config 文件夹。",
+    settingsApiKeyDesc: "会同步到 Cancip 数据目录/config.json 和插件 data.json；两者都可能随 Obsidian 配置目录跨设备同步，请保护远端账号和凭据。",
     settingsModel: "模型",
     settingsDefaultModelSource: "默认模型源",
     settingsDefaultModelSourceDesc: "选择默认模型使用的 API 配置；切换模型会带着它绑定的模型源一起切。",
@@ -4619,9 +4680,9 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     settingsCoreMemoryFolder: "核心记忆文件夹",
     settingsCoreMemoryFolderDesc: "该文件夹下的 Markdown 会作为核心记忆加入上下文。",
     settingsCoreMemoryLocation: "记忆存放位置",
-    settingsCoreMemoryLocationDesc: "选择可见的 AI/Cancip 记忆目录、隐藏的 .cancip 配置目录，或继续使用自定义目录。",
+    settingsCoreMemoryLocationDesc: "选择可见的 AI/Cancip 记忆目录、随配置同步的 Cancip 数据目录，或继续使用自定义目录。",
     settingsCoreMemoryLocationVisible: "可见 AI/Cancip 文件夹",
-    settingsCoreMemoryLocationHidden: "隐藏 .cancip 文件夹",
+    settingsCoreMemoryLocationHidden: "Cancip 同步数据目录",
     settingsCoreMemoryLocationCustom: "自定义文件夹",
     settingsMaxContextFiles: "最大上下文文件数",
     settingsMaxCoreMemoryFiles: "每次提示词核心记忆文件数",
@@ -7690,7 +7751,55 @@ export default class CancipPlugin extends Plugin {
     await Promise.allSettled(tasks);
   }
 
+  private async migrateLegacyCancipStorage(): Promise<void> {
+    const adapter = this.app.vault.adapter;
+    await ensureFolder(adapter, CANCIP_CONFIG_DIR);
+    const legacyStat = await adapter.stat(LEGACY_CANCIP_CONFIG_DIR);
+    const markerExists = await adapter.exists(CANCIP_STORAGE_MIGRATION_MARKER_PATH);
+    if (markerExists) {
+      if (legacyStat?.type !== "folder") return;
+      const missingCriticalPath = await firstMissingCancipStorageCriticalPath(adapter);
+      if (!missingCriticalPath) return;
+    }
+
+    const stats: CancipStorageMigrationStats = {
+      sourceFiles: 0,
+      sourceFolders: 0,
+      copiedFiles: 0,
+      preservedTargetFiles: 0,
+      targetConflicts: 0
+    };
+    if (legacyStat?.type === "folder") {
+      await copyMissingCancipStoragePath(adapter, LEGACY_CANCIP_CONFIG_DIR, CANCIP_CONFIG_DIR, stats);
+      const missingCriticalPath = await firstMissingCancipStorageCriticalPath(adapter);
+      if (missingCriticalPath) throw new Error(`missing migrated data: ${missingCriticalPath}`);
+    }
+
+    const marker = {
+      schemaVersion: 1,
+      migratedAt: new Date().toISOString(),
+      source: LEGACY_CANCIP_CONFIG_DIR,
+      target: CANCIP_CONFIG_DIR,
+      sourcePresent: legacyStat?.type === "folder",
+      ...stats
+    };
+    await adapter.write(CANCIP_STORAGE_MIGRATION_MARKER_PATH, `${JSON.stringify(marker, null, 2)}\n`);
+    const verified = JSON.parse(await adapter.read(CANCIP_STORAGE_MIGRATION_MARKER_PATH)) as unknown;
+    if (!isRecord(verified) || verified.target !== CANCIP_CONFIG_DIR) {
+      throw new Error("migration marker verification failed");
+    }
+  }
+
   async onload(): Promise<void> {
+    configureCancipStoragePaths(this.app.vault.configDir, this.manifest.id);
+    try {
+      await this.migrateLegacyCancipStorage();
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      console.error("Cancip data migration failed; retaining legacy storage", error);
+      this.devErrors.push(`data migration failed: ${reason}`);
+      configureCancipStorageRoot(LEGACY_CANCIP_CONFIG_DIR);
+    }
     try {
       await this.loadSettings();
     } catch (error) {
@@ -12449,6 +12558,7 @@ export default class CancipPlugin extends Plugin {
       nextSettings.systemPrompt = DEFAULT_SYSTEM_PROMPT;
     }
     nextSettings = migrateVisibleFolderDefaults(nextSettings);
+    nextSettings = migrateLegacyCancipStorageSettings(nextSettings);
     nextSettings = migrateDefaultMemorySearchPolicy(nextSettings);
     nextSettings = migrateTokenSavingDefaults(nextSettings);
     if (migrateDocumentWorkbenchWildcard) {
@@ -12552,7 +12662,7 @@ export default class CancipPlugin extends Plugin {
 
 Cancip 的长期记忆入口。这个文件是给人和 AI 都能读的自然目录，不放 001/002 机器索引。
 
-机器缓存只放在 \`.cancip/index/\`，例如 Skill 索引、轻量检索缓存、运行状态缓存。
+机器缓存只放在 \`${CANCIP_MACHINE_INDEX_DIR}/\`，例如 Skill 索引、轻量检索缓存、运行状态缓存。
 
 ## Core long-term memory
 - [[${memoryFolder}/README]]
@@ -12567,11 +12677,11 @@ Cancip 的长期记忆入口。这个文件是给人和 AI 都能读的自然目
 - [[${memoryFolder}/CANCIP_RULES]]
 
 ## Project and runtime memory
-- .cancip/PROJECT_MEMORY.md
-- .cancip/experience.md
-- .cancip/sessions/events.jsonl
-- .cancip/config.json
-- .cancip/index/
+- ${PROJECT_MEMORY_PATH}
+- ${EXPERIENCE_LOG_PATH}
+- ${SESSION_EVENTS_PATH}
+- ${CANCIP_CONFIG_PATH}
+- ${CANCIP_MACHINE_INDEX_DIR}/
 
 ## Memory routing
 - 普通聊天可直接答；身份、记忆、连续任务、用户纠错类问题若上下文不足，先查本记忆入口、会话历史或工具索引，不要先反问。
@@ -12593,7 +12703,7 @@ Cancip 的长期记忆入口。这个文件是给人和 AI 都能读的自然目
 `);
       } else {
         const index = await adapter.read(memoryIndexPath);
-        let nextIndex = index.replace(
+        let nextIndex = index.split(LEGACY_CANCIP_CONFIG_DIR).join(CANCIP_CONFIG_DIR).replace(
           "- 普通聊天、问候、测试：通常直接答；身份/记忆/连续任务问题若上下文不足，先查本记忆入口、PROFILE/偏好或会话历史，不要先反问。",
           "- 普通聊天可直接答；身份、记忆、连续任务、用户纠错类问题若上下文不足，先查本记忆入口、会话历史或工具索引，不要先反问。"
         );
@@ -12616,11 +12726,11 @@ Vault 初装概览入口：[[${memoryFolder}/VAULT_OVERVIEW]]。这个文件由 
             ? nextIndex.replace(overviewLink, `${overviewLink}\n${wikiLink}`)
             : `${nextIndex.trimEnd()}\n${wikiLink}\n`;
         }
-        if (!nextIndex.includes("CANCIP_RULES") || !nextIndex.includes(".cancip/index/") || !nextIndex.includes("cancip.tools.index")) {
+        if (!nextIndex.includes("CANCIP_RULES") || !nextIndex.includes(`${CANCIP_MACHINE_INDEX_DIR}/`) || !nextIndex.includes("cancip.tools.index")) {
           nextIndex = `${nextIndex.trimEnd()}
 - [[${memoryFolder}/CANCIP_RULES]]
 
-机器缓存路径：.cancip/index/。不要用 001/002 式索引污染可见知识库。
+机器缓存路径：${CANCIP_MACHINE_INDEX_DIR}/。不要用 001/002 式索引污染可见知识库。
 工具路由入口：不确定该用什么工具时，先查 \`cancip.tools.index\` 或最近的 \`*.help\` / \`*.list\` 命令，让模型根据用户提示词选择工具路线。
 `;
         }
@@ -12648,7 +12758,7 @@ Detailed operating rules that should not live in the system prompt. Read this fi
 - Search the Vault only when the current context is insufficient. Read only the exact needed files or snippets.
 - Use the memory router: user preference, Cancip project, plugin guide, Vault maintenance, current file, and history conclusion are separate routes.
 - Send only the last useful conclusion, recent user wording, and necessary tool result summaries by default; do not send full history unless asked.
-- Keep machine-readable indexes under .cancip/index/. Keep ${memoryIndexPath} as a readable natural directory.
+- Keep machine-readable indexes under ${CANCIP_MACHINE_INDEX_DIR}/. Keep ${memoryIndexPath} as a readable natural directory.
 
 ## Tool instruction injection
 - Ordinary chat should not receive the full tool protocol.
@@ -12660,7 +12770,7 @@ Detailed operating rules that should not live in the system prompt. Read this fi
 ## Skill and experience routing
 - Prefer indexed Skill instructions over broad memory dumps when a task matches a capability.
 - Use cancip.skills.list/read/refresh to discover and read the exact Skill; only inject the selected Skill, not the whole Skill folder.
-- Use .cancip/experience.md for recent failed/successful implementation lessons. Read only relevant snippets.
+- Use ${EXPERIENCE_LOG_PATH} for recent failed/successful implementation lessons. Read only relevant snippets.
 - Prefer built-in command scripts and helper commands before asking the model to hand-write long procedures.
 
 ## Execution loop
@@ -12673,7 +12783,7 @@ Detailed operating rules that should not live in the system prompt. Read this fi
 ## Permission model
 - Plan panel only adds planning/todos. It does not change write permission.
 - Confirmation mode can read freely but queues write actions for approval.
-- Full access can use implemented tools to read/write the Vault, including the Obsidian config folder, .cancip, and installed Cancip files.
+- Full access can use implemented tools to read/write the Vault, including ${CANCIP_CONFIG_DIR} and installed Cancip files.
 - Read/list/help/status actions do not need natural-language permission questions.
 - When a write/config/delete/move/execute action is needed, output the action. Confirmation/full-access mode generates the approval UI; the model should not ask "should I proceed" in prose.
 - In confirmation mode, the approval/review card waits for the user. In full access mode, implemented tools may auto-approve.
@@ -12714,7 +12824,7 @@ Detailed operating rules that should not live in the system prompt. Read this fi
       } else {
         const rules = await adapter.read(rulesPath);
         const oldPlanRule = ["- Plan", "mode only adds planning/todos. It does not change write permission."].join(" ");
-        let nextRules = rules.replace(
+        let nextRules = rules.split(LEGACY_CANCIP_CONFIG_DIR).join(CANCIP_CONFIG_DIR).replace(
           "- Do not search the whole Vault for greetings, tests, or direct chat. For identity, memory, continuation, or user-correction questions, inspect the memory index, PROFILE/preferences, session history, or tool index before asking the user.",
           "- Do not search the whole Vault for greetings, tests, or direct chat. For identity, memory, continuation, or user-correction questions, inspect the memory index, session history, or tool index before asking the user."
         ).replace(
@@ -12733,7 +12843,7 @@ Detailed operating rules that should not live in the system prompt. Read this fi
 ## Memory routing
 - Use the memory router instead of sending all memory every turn: user preference, Cancip project, plugin guide, Vault maintenance, current file, and history conclusion are separate routes.
 - Default history context is the last useful conclusion, recent user wording, and necessary tool result summaries. Full transcript is only for explicit review/debug requests.
-- Keep machine-readable indexes under .cancip/index/. Keep the configured core-memory CANCIP_INDEX.md as a readable natural directory.
+- Keep machine-readable indexes under ${CANCIP_MACHINE_INDEX_DIR}/. Keep the configured core-memory CANCIP_INDEX.md as a readable natural directory.
 `;
         }
         if (!nextRules.includes("## Tool instruction injection")) {
@@ -12753,7 +12863,7 @@ Detailed operating rules that should not live in the system prompt. Read this fi
 ## Skill and experience routing
 - Prefer indexed Skill instructions over broad memory dumps when a task matches a capability.
 - Use cancip.skills.list/read/refresh to discover and read the exact Skill; only inject the selected Skill, not the whole Skill folder.
-- Use .cancip/experience.md for recent failed/successful implementation lessons. Read only relevant snippets.
+- Use ${EXPERIENCE_LOG_PATH} for recent failed/successful implementation lessons. Read only relevant snippets.
 - Prefer built-in command scripts and helper commands before asking the model to hand-write long procedures.
 `;
         }
@@ -12832,12 +12942,12 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
 ## Current prompt policy
 - The system prompt should stay small.
 - Long-term reusable memory belongs in ${memoryFolder}.
-- Temporary project state and execution lessons belong here or in .cancip/experience.md.
+- Temporary project state and execution lessons belong here or in ${EXPERIENCE_LOG_PATH}.
 
 ## Runtime references
-- .cancip/config.json
-- .cancip/experience.md
-- .cancip/sessions/events.jsonl
+- ${CANCIP_CONFIG_PATH}
+- ${EXPERIENCE_LOG_PATH}
+- ${SESSION_EVENTS_PATH}
 `);
       }
     } catch (error) {
@@ -15612,7 +15722,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
   }
 
   private normalizeReviewGatePackageManifestPath(path: string): string {
-    const normalized = normalizeReviewGateLogicalPath(String(path ?? "").replace(/^\/+|\/+$/g, ""));
+    const normalized = normalizeReviewGateLogicalPath(migrateLegacyCancipStoragePath(String(path ?? "").replace(/^\/+|\/+$/g, "")));
     const prefix = `${REVIEW_GATE_HIDDEN_DIR}/`;
     if (!normalized.startsWith(prefix)) return "";
     const parts = normalized.slice(prefix.length).split("/").filter(Boolean);
@@ -20512,6 +20622,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       nextSettings.systemPrompt = DEFAULT_SYSTEM_PROMPT;
     }
     nextSettings = migrateVisibleFolderDefaults(nextSettings);
+    nextSettings = migrateLegacyCancipStorageSettings(nextSettings);
     nextSettings = migrateDefaultMemorySearchPolicy(nextSettings);
     nextSettings = migrateTokenSavingDefaults(nextSettings);
     nextSettings = await this.importNtfySettingsFromInstalledPlugin(nextSettings);
@@ -31459,7 +31570,7 @@ class CancipView extends ItemView {
   private async vaultDailyVersionState(): Promise<string> {
     try {
       const adapter = this.app.vault.adapter;
-      if (!(await adapter.exists(LOCAL_VERSION_INDEX_PATH))) return "- .cancip/versions/index.json missing";
+      if (!(await adapter.exists(LOCAL_VERSION_INDEX_PATH))) return `- ${LOCAL_VERSION_INDEX_PATH} missing`;
       const raw = await adapter.read(LOCAL_VERSION_INDEX_PATH);
       const index = normalizeLocalVersionIndex(JSON.parse(raw));
       const latest = index.commits[0];
@@ -33670,7 +33781,7 @@ class CancipView extends ItemView {
       ].filter(Boolean).join("\n\n");
     }
     const policy = this.promptPayloadPolicy(prompt);
-    const base = this.plugin.settings.systemPrompt || DEFAULT_SYSTEM_PROMPT;
+    const base = runtimeCancipStorageText(this.plugin.settings.systemPrompt || DEFAULT_SYSTEM_PROMPT);
     const accessPrompt = this.plugin.settings.accessMode === "full-access" ? this.t("accessPromptFull") : this.t("accessPromptAsk");
     const routedToolPrompt = policy.includeToolCatalog && !policy.includeToolProtocol
       ? this.lightweightToolCatalogPrompt()
@@ -33758,15 +33869,15 @@ class CancipView extends ItemView {
     if (this.plugin.language().startsWith("zh")) {
       return [
         "Skill/经验路由：已注入的 Skill 是可执行说明；没注入或路线不清时，先用 cancip.skills.list/read、cancip.experience.list、cancip.tools.index 或相关记忆/插件索引找方法。",
-        `记忆/规则/偏好：用户要求记住、沉淀规则或优化工作流时，按访问模式修改 ${memoryFolder} 或 .cancip 经验数据；不要只口头说已记住。`,
-        "自我优化：重复成功的 OB 工作流要复用 .cancip/experience 和 generated Skill，成功后可调用 cancip.experience.harvest 让下次更快。",
+        `记忆/规则/偏好：用户要求记住、沉淀规则或优化工作流时，按访问模式修改 ${memoryFolder} 或 ${CANCIP_CONFIG_DIR} 经验数据；不要只口头说已记住。`,
+        `自我优化：重复成功的 OB 工作流要复用 ${EXPERIENCE_LOG_PATH} 和 generated Skill，成功后可调用 cancip.experience.harvest 让下次更快。`,
         "OB 插件能力：先发现插件命令、公开 API、按钮/UI、配置或 JS bridge，再把可复用步骤沉淀成经验/Skill；确认不可行前不要先说不能。"
       ].join("\n");
     }
     return [
       "Skill/experience route: injected Skills are executable instructions; if no Skill is injected or the route is unclear, use cancip.skills.list/read, cancip.experience.list, cancip.tools.index, or the relevant memory/plugin index first.",
-      `Memory/rules/preferences: when the user asks to remember, preserve a rule, or improve a workflow, update ${memoryFolder} or .cancip experience data through the current access mode; do not merely say it is remembered.`,
-      "Self-optimization: reuse .cancip/experience and generated Skills for repeated successful OB workflows, and call cancip.experience.harvest after success when it will help future runs.",
+      `Memory/rules/preferences: when the user asks to remember, preserve a rule, or improve a workflow, update ${memoryFolder} or ${CANCIP_CONFIG_DIR} experience data through the current access mode; do not merely say it is remembered.`,
+      `Self-optimization: reuse ${EXPERIENCE_LOG_PATH} and generated Skills for repeated successful OB workflows, and call cancip.experience.harvest after success when it will help future runs.`,
       "OB plugin capability: discover plugin commands, public APIs, buttons/UI, config, or JS bridge routes before claiming a task cannot be done; turn reusable steps into experience/Skills."
     ].join("\n");
   }
@@ -34613,7 +34724,7 @@ class CancipView extends ItemView {
         "- 改：最小读取 -> patch/write/config/move/delete/command -> cancip.outcome.verify 验收；只修差异并有限重试，权限由 UI 处理。",
         "- 能力：Skills/经验/插件/OB命令/附件/TTS/GitHub/自动化/web 先 list/help；插件走 pluginCapabilities/pluginRoute/pluginAction；批注/复习走 annotate/study help。",
         "- 子 agent：长任务可 subagents.start/list/status/stop/open；子会话折叠在父历史。",
-        "- 记忆/经验：按需读 CANCIP_INDEX/RULES、.cancip/experience 或 Skill；记住/沉淀走写入/harvest，不全量发送。"
+        `- 记忆/经验：按需读 CANCIP_INDEX/RULES、${EXPERIENCE_LOG_PATH} 或 Skill；记住/沉淀走写入/harvest，不全量发送。`
       ].join("\n");
     }
     return [
@@ -34622,7 +34733,7 @@ class CancipView extends ItemView {
       "- Change: focused read -> patch/write/config/move/delete/command -> cancip.outcome.verify; correct measured differences with bounded retries; UI handles access.",
       "- Capabilities: list/help Skills/experience/plugins/OB commands/attachments/TTS/GitHub/automation/web; plugins start with pluginCapabilities/pluginRoute; new plugins use pluginAction; annotation/study start with annotate/study help.",
       "- Subagents: use subagents.start/list/status/stop/open for long split work.",
-      "- Memory/experience: read CANCIP_INDEX/RULES, .cancip/experience, or Skills only as needed; for remember/harvest requests, perform the write/harvest route."
+      `- Memory/experience: read CANCIP_INDEX/RULES, ${EXPERIENCE_LOG_PATH}, or Skills only as needed; for remember/harvest requests, perform the write/harvest route.`
     ].join("\n");
   }
 
@@ -34636,8 +34747,8 @@ class CancipView extends ItemView {
         "- 编辑/新建/修复/配置/大文件：先读最小相关片段，再用 patch/write/append/config；大内容用 chunks；最后读回验证。",
         "- 移动/重命名/复制/删除：用文件动作；delete 默认进系统回收站或 Cancip 回收目录，只有用户明确永久删除才用 permanent:true。",
         "- Obsidian UI/按钮/标签页/标签/命令/JS：先用 obsidian.currentView、obsidian.dom.snapshot、obsidian.listCommands/resolveCommand、obsidian.ui.buttons、obsidian.tabs、obsidian.tags 检查；执行后用 cancip.outcome.verify 对照视图/DOM/文件/插件/工作区预期验收，结构证据不足才 capture 截活动视图；命令名不确定先 resolveCommand，明确后按需 execute/click/input/apply rules；需要 app/workspace/vault/plugin API 时先查 obsidian.js.help/probe，再用 obsidian.eval/js.eval，经访问模式批准后执行。",
-        "- 插件/未知能力/新插件/Skills/MCP：插件功能词或插件名先用 cancip.pluginCapabilities 或 cancip.pluginRoute 查命令、运行时 API、按钮/UI、data.json 和插件文件入口；明确命令或公开 API 后用 cancip.pluginAction/obsidian.execute/obsidian.ui/dom/obsidian.eval/config/read/patch 执行；笔记/PDF 高亮涂鸦优先 cancip.annotate.help/note/pdf，间隔重复优先 cancip.study.help/review；API 用法不明再 web.search/fetch。Skills/MCP 用 cancip.skills.list/read/refresh 和 .cancip/mcp.json/.cancip/plugins 索引。",
-        `- 记忆/经验/自我优化：用户要求记住、沉淀规则、复用成功经验或让 Cancip 优化自己时，先读 CANCIP_INDEX/RULES、cancip.experience.list 或相关 Skill；需要写入时按访问模式修改 ${memoryFolder} 或 .cancip/experience，成功重复流程可 cancip.experience.harvest 生成经验 Skill。`,
+        `- 插件/未知能力/新插件/Skills/MCP：插件功能词或插件名先用 cancip.pluginCapabilities 或 cancip.pluginRoute 查命令、运行时 API、按钮/UI、data.json 和插件文件入口；明确命令或公开 API 后用 cancip.pluginAction/obsidian.execute/obsidian.ui/dom/obsidian.eval/config/read/patch 执行；笔记/PDF 高亮涂鸦优先 cancip.annotate.help/note/pdf，间隔重复优先 cancip.study.help/review；API 用法不明再 web.search/fetch。Skills/MCP 用 cancip.skills.list/read/refresh 和 ${CANCIP_CONFIG_DIR}/mcp.json、${CANCIP_CONFIG_DIR}/plugins 索引。`,
+        `- 记忆/经验/自我优化：用户要求记住、沉淀规则、复用成功经验或让 Cancip 优化自己时，先读 CANCIP_INDEX/RULES、cancip.experience.list 或相关 Skill；需要写入时按访问模式修改 ${memoryFolder} 或 ${EXPERIENCE_LOG_PATH}，成功重复流程可 cancip.experience.harvest 生成经验 Skill。`,
         "- 附件/PDF/Office/图片/库外文件：库内文件优先用 cancip.documents.help/open/convert 统一预览、按 Markdown 打开和转换；附件解析查 cancip.attachment.help，库外访问查 cancip.externalFiles.help。",
         "- 外部知识/互联网：需要当前资料、插件文档、未知 API/命令用法时，用 web.search 找入口，用 web.fetch 抓取具体页面；再回到本地工具执行。",
         "- TTS/朗读：先查 cancip.tts.help，再用 probe/voices/status/speak/readActive/pause/resume/seek/stop/installLocal。",
@@ -34655,8 +34766,8 @@ class CancipView extends ItemView {
       "- Edit/create/fix/config/large files: inspect the smallest relevant snippet, then patch/write/append/config with chunks when large, then verify by reading state back.",
       "- Move/rename/copy/delete: use file actions; delete uses trash/Cancip trash unless permanent:true is explicitly requested.",
       "- Obsidian UI/buttons/tabs/tags/commands/JS: inspect with currentView/dom.snapshot/listCommands/resolveCommand/ui.buttons/tabs/tags; after execution use cancip.outcome.verify for view/DOM/file/plugin/workspace expectations and capture only when structured evidence is insufficient. Resolve fuzzy commands before execute/click/input/apply rules. Use obsidian.js.help/probe then obsidian.eval/js.eval for API gaps.",
-      "- Plugins/unknown capabilities/new plugins/Skills/MCP: for plugin feature words or plugin names, call cancip.pluginCapabilities or cancip.pluginRoute to inspect commands, runtime API, buttons/UI, data.json, and plugin file entry points; after a command/API is clear use cancip.pluginAction/obsidian.execute/obsidian.ui/dom/obsidian.eval/config/read/patch; use cancip.annotate.help/note/pdf for note/PDF highlight/doodle and cancip.study.help/review for spaced repetition; use web.search/fetch only when API usage is unclear. Use cancip.skills.list/read/refresh and .cancip/mcp.json/.cancip/plugins indexes for Skills/MCP.",
-      `- Memory/experience/self-optimization: when the user asks to remember, preserve rules, reuse successful workflows, or improve Cancip itself, read CANCIP_INDEX/RULES, cancip.experience.list, or relevant Skills first; when writing is needed, use the access-mode route for ${memoryFolder} or .cancip/experience, and call cancip.experience.harvest after repeatable success.`,
+      `- Plugins/unknown capabilities/new plugins/Skills/MCP: for plugin feature words or plugin names, call cancip.pluginCapabilities or cancip.pluginRoute to inspect commands, runtime API, buttons/UI, data.json, and plugin file entry points; after a command/API is clear use cancip.pluginAction/obsidian.execute/obsidian.ui/dom/obsidian.eval/config/read/patch; use cancip.annotate.help/note/pdf for note/PDF highlight/doodle and cancip.study.help/review for spaced repetition; use web.search/fetch only when API usage is unclear. Use cancip.skills.list/read/refresh and ${CANCIP_CONFIG_DIR}/mcp.json plus ${CANCIP_CONFIG_DIR}/plugins indexes for Skills/MCP.`,
+      `- Memory/experience/self-optimization: when the user asks to remember, preserve rules, reuse successful workflows, or improve Cancip itself, read CANCIP_INDEX/RULES, cancip.experience.list, or relevant Skills first; when writing is needed, use the access-mode route for ${memoryFolder} or ${EXPERIENCE_LOG_PATH}, and call cancip.experience.harvest after repeatable success.`,
       "- Attachments/PDF/Office/images/external files: for Vault files use cancip.documents.help/open/convert for preview, Markdown opening, and conversion; use cancip.attachment.help for attachment parsing and cancip.externalFiles.help for outside-Vault access.",
       "- External knowledge/web: when current docs, plugin docs, unknown APIs, or command usage are needed, use web.search to find entry points and web.fetch to read concrete pages; then return to local tools.",
       "- TTS/read aloud: use cancip.tts.help first, then probe/voices/status/speak/readActive/pause/resume/seek/stop/installLocal as needed.",
@@ -34695,7 +34806,7 @@ class CancipView extends ItemView {
       "",
       this.t("toolProtocol"),
       "",
-      "Compatibility notes: Skills are Vault Markdown capabilities discovered by cancip.skills.*. Plugin compatibility starts from cancip.pluginCapabilities, then .cancip/mcp.json, .cancip/plugins, installed Obsidian plugins, web.search/web.fetch docs, and bridge commands; mobile Obsidian should expose command/UI/API/config/JS bridges instead of claiming unavailable before checking these indexes."
+      `Compatibility notes: Skills are Vault Markdown capabilities discovered by cancip.skills.*. Plugin compatibility starts from cancip.pluginCapabilities, then ${CANCIP_CONFIG_DIR}/mcp.json, ${CANCIP_CONFIG_DIR}/plugins, installed Obsidian plugins, web.search/web.fetch docs, and bridge commands; mobile Obsidian should expose command/UI/API/config/JS bridges instead of claiming unavailable before checking these indexes.`
     ].join("\n");
   }
 
@@ -34894,7 +35005,7 @@ class CancipView extends ItemView {
   private skillDiscoveryRoots(): string[] {
     return uniqueStrings([
       ...this.plugin.settings.skillRoots,
-      ".cancip",
+      CANCIP_CONFIG_DIR,
       this.plugin.pluginInstallDir(),
       "AI/Cancip"
     ])
@@ -35428,12 +35539,12 @@ class CancipView extends ItemView {
           "action:preview-vault-search": "用户提及功能：预览 Vault Search 命中结果。",
           "action:add-core-memory": "用户提及功能：加入核心记忆文件夹上下文。",
           "action:import-capability-pack": `用户提及功能：导入桌面能力包。可用 command cancip.importCapabilityPack 把本机已整理记忆复制到 ${memoryFolder}，把精选 Skill 和插件能力索引复制到 AI/Cancip/Skills/Desktop，并刷新 Skill 索引，便于手机同步后按需调用。`,
-      "action:automation": "用户提及功能：自动化任务。可用 automation action 新增/更新/列出/删除/运行任务，也可用 cancip.automation.templates 和 cancip.automation.addTemplate 添加内置本地任务；任务保存在 .cancip/automations.json，日志写入 .cancip/automations。",
+      "action:automation": `用户提及功能：自动化任务。可用 automation action 新增/更新/列出/删除/运行任务，也可用 cancip.automation.templates 和 cancip.automation.addTemplate 添加内置本地任务；任务保存在 ${AUTOMATION_STATE_PATH}，日志写入 ${AUTOMATION_DIR}。`,
           "action:rebuild-index": "用户提及功能：重建轻量索引。",
           "action:command-bus": "用户提及功能：命令总线。Cancip 支持 cancip-action 的 command 类型，用结构化命令连接 OB 内部命令、Cancip 内置命令和 GitHub CLI 等价 REST 接口。",
           "action:obsidian-commands": "用户提及功能：Obsidian 内部命令库。可用 obsidian.listCommands 查询命令，用 obsidian.resolveCommand 解析自然语言/中文名/英文名/命令 ID，用 obsidian.execute 执行命令；确认权限会排队，Full access 直接执行。",
           "action:plugin-capabilities": "用户提及功能：插件能力发现。先用 cancip.pluginCapabilities 或 cancip.pluginRoute 按插件名/功能词查已安装插件、相关命令、运行时 API、按钮/UI、data.json 和插件文件入口；新插件明确命令/API 后用 cancip.pluginAction 执行；笔记/PDF 高亮涂鸦优先 cancip.annotate.help/note/pdf，间隔重复优先 cancip.study.help/review；再选择 obsidian.execute、obsidian.ui/dom、obsidian.eval、config/read/patch 或 web 文档路线。",
-          "action:local-version-commit": "用户提及功能：创建本地版本提交。Cancip 支持手动提交到 .cancip/versions，不依赖本地 git。",
+          "action:local-version-commit": `用户提及功能：创建本地版本提交。Cancip 支持手动提交到 ${LOCAL_VERSION_DIR}，不依赖本地 git。`,
           "action:daily-version-status": "用户提及功能：每日本地版本。Cancip 支持每天自动创建轻量版本快照。",
           "action:github": "用户提及功能：GitHub 管理。Cancip 的移动端 GitHub 能力通过设置里的 GitHub REST API URL/token 执行；不要使用公共 token 代理。",
           "action:clear-context": "用户提及功能：清空草稿上下文。",
@@ -35451,12 +35562,12 @@ class CancipView extends ItemView {
           "action:preview-vault-search": "Mentioned function: preview Vault Search hits.",
           "action:add-core-memory": "Mentioned function: include core memory folder context.",
           "action:import-capability-pack": `Mentioned function: import the desktop capability pack. Use command cancip.importCapabilityPack to copy local curated memory into ${memoryFolder}, selected Skills and plugin capability indexes into AI/Cancip/Skills/Desktop, then refresh the Skill index for mobile sync and on-demand use.`,
-          "action:automation": "Mentioned function: automations. Use automation actions or cancip.automation.templates/addTemplate for built-in local tasks. State lives in .cancip/automations.json and logs go to .cancip/automations.",
+          "action:automation": `Mentioned function: automations. Use automation actions or cancip.automation.templates/addTemplate for built-in local tasks. State lives in ${AUTOMATION_STATE_PATH} and logs go to ${AUTOMATION_DIR}.`,
           "action:rebuild-index": "Mentioned function: rebuild the lightweight index.",
           "action:command-bus": "Mentioned function: command bus. Cancip supports cancip-action command actions for structured Obsidian commands, Cancip commands, and GitHub CLI-equivalent REST interfaces.",
           "action:obsidian-commands": "Mentioned function: Obsidian internal command library. Use obsidian.listCommands to inspect commands, obsidian.resolveCommand to resolve natural names/ids, and obsidian.execute to run; approval mode queues, Full access executes.",
           "action:plugin-capabilities": "Mentioned function: plugin capability discovery. First use cancip.pluginCapabilities or cancip.pluginRoute with plugin names or feature words to inspect installed plugins, related commands, runtime APIs, buttons/UI, data.json, and plugin file entry points; for new plugins use cancip.pluginAction after a command/API is clear; for note/PDF highlight/doodle use cancip.annotate.help/note/pdf, for spaced repetition use cancip.study.help/review; then choose obsidian.execute, obsidian.ui/dom, obsidian.eval, config/read/patch, or web docs.",
-          "action:local-version-commit": "Mentioned function: create a local version commit under .cancip/versions without native git.",
+          "action:local-version-commit": `Mentioned function: create a local version commit under ${LOCAL_VERSION_DIR} without native git.`,
           "action:daily-version-status": "Mentioned function: daily local versions. Cancip supports one lightweight snapshot per day.",
           "action:github": "Mentioned function: GitHub management. Mobile GitHub support uses the configured GitHub REST API URL/token; do not use public token proxies.",
           "action:clear-context": "Mentioned function: clear draft context.",
@@ -35896,7 +36007,7 @@ class CancipView extends ItemView {
     const wantsObsidian = lower.includes("obsidian") || lower.includes("插件") || lower.includes("配置") || lower.includes("config");
     const wantsCancip = lower.includes(".cancip") || lower.includes("cancip");
     if (wantsObsidian) hiddenFiles.push(...await this.listTextFilesInFolder(this.plugin.obsidianConfigDir()));
-    if (wantsCancip) hiddenFiles.push(...await this.listTextFilesInFolder(".cancip"));
+    if (wantsCancip) hiddenFiles.push(...await this.listTextFilesInFolder(CANCIP_CONFIG_DIR));
 
     const seen = new Set<string>();
     return [...regularFiles, ...hiddenFiles]
@@ -46720,8 +46831,8 @@ function normalizeLocalVersionIndex(raw: unknown): LocalVersionIndex {
 function isLocalVersionCandidate(file: TFile, maxBytes: number, obsidianConfigDir: string): boolean {
   const path = file.path.replace(/\\/g, "/");
   if (isPathInFolder(path, obsidianConfigDir)) return false;
-  if (path === ".cancip/config.json") return false;
-  if (path.startsWith(".cancip/versions/")) return false;
+  if (path === CANCIP_CONFIG_PATH || isPathInVaultFolder(path, LOCAL_VERSION_DIR)) return false;
+  if (isPathInVaultFolder(path, LEGACY_CANCIP_CONFIG_DIR)) return false;
   if (path.startsWith(".trash/")) return false;
   if (isSensitiveLocalVersionPath(path)) return false;
   if (file.stat.size > maxBytes) return false;
@@ -47246,7 +47357,7 @@ function cancipAutomationTemplates(language: Language = "en"): AutomationTemplat
     {
       id: "auto-local-version-daily",
       title: local("每日本地版本快照", "Daily local version snapshot"),
-      description: local("每天在 .cancip/versions 创建一个轻量本地版本快照。", "Create one lightweight daily snapshot under .cancip/versions."),
+      description: local(`每天在 ${LOCAL_VERSION_DIR} 创建一个轻量本地版本快照。`, `Create one lightweight daily snapshot under ${LOCAL_VERSION_DIR}.`),
       command: "cancip.localVersionCommit",
       args: {},
       schedule: "daily",
@@ -47529,7 +47640,7 @@ function buildBuiltInVaultCurationSkillContent(): string {
     "- Treat the specified file/folder as the primary target. Do not replace it with vague full-vault scanning.",
     "- If target resolution is unclear, call `cancip.findTarget` once with the supplied text, then continue from the resolved candidate or report the exact blocker.",
     "- For a file: read the file first; decide whether it needs Markdown beautify/refactor, properties/tags/summary/links, or rename; then patch/write/move one small step and read back to verify.",
-    "- For a folder: process a small batch of Markdown files from that folder, list skipped files with concrete reasons, and avoid touching internal `.cancip`, review, export, memory, or skill-cache files unless the user explicitly names them.",
+    `- For a folder: process a small batch of Markdown files from that folder, list skipped files with concrete reasons, and avoid touching internal ${CANCIP_CONFIG_DIR}, review, export, memory, or skill-cache files unless the user explicitly names them.`,
     "- Do not run every curation action on every note. Decide per note whether beautify/refactor, tag/category, summary, links, or rename is actually needed.",
     "- Tags follow the user's existing classification/category system. Add only a few stable category tags when the note clearly belongs there; do not tag-stuff.",
     "- Summaries are only for long notes that exceed about one screen of reading; short notes do not need summary/description just to satisfy a checklist.",
@@ -47969,7 +48080,7 @@ function isVaultCurationContentFile(file: TFile, obsidianConfigDir: string, memo
   if (!isMarkdownFile(file)) return false;
   const path = normalizePath(file.path.replace(/\\/g, "/"));
   if (!path || isPathInFolder(path, obsidianConfigDir)) return false;
-  if (path.startsWith(".cancip/")) return false;
+  if (isCancipStoragePath(path)) return false;
   if (path.startsWith(".trash/")) return false;
   if (path.startsWith("AI/Cancip/Exports/")) return false;
   if (isLegacyVisibleReviewGateArtifactPath(path)) return false;
@@ -47983,7 +48094,7 @@ function isVaultDailyReportContentFile(file: TFile, obsidianConfigDir: string, m
   if (!isContextTextFile(file)) return false;
   const path = file.path.replace(/\\/g, "/");
   if (isPathInFolder(path, obsidianConfigDir)) return false;
-  if (path.startsWith(".cancip/")) return false;
+  if (isCancipStoragePath(path)) return false;
   if (path.startsWith("AI/Cancip/Exports/")) return false;
   if (isLegacyVisibleReviewGateArtifactPath(path)) return false;
   if (isPathInVaultFolder(path, memoryFolder || DEFAULT_MEMORY_FOLDER)) return false;
@@ -48295,7 +48406,7 @@ function normalizeCancipArchiveIndex(raw: unknown): CancipArchiveIndex {
   const kinds = new Set<CancipArchiveKind>(["session", "session-events", "experience", "memory"]);
   for (const item of Array.isArray(raw.entries) ? raw.entries : []) {
     if (!isRecord(item) || typeof item.kind !== "string" || !kinds.has(item.kind as CancipArchiveKind)) continue;
-    const path = typeof item.path === "string" ? normalizePath(item.path) : "";
+    const path = typeof item.path === "string" ? migrateLegacyCancipStoragePath(item.path) : "";
     if (!path) continue;
     const kind = item.kind as CancipArchiveKind;
     const id = typeof item.id === "string" && item.id.trim() ? item.id.trim() : `${kind}:${path}`;
@@ -48308,7 +48419,7 @@ function normalizeCancipArchiveIndex(raw: unknown): CancipArchiveIndex {
       kind,
       title: typeof item.title === "string" && item.title.trim() ? item.title.trim() : reviewFileName(path),
       path,
-      originalPath: typeof item.originalPath === "string" ? normalizePath(item.originalPath) : "",
+      originalPath: typeof item.originalPath === "string" ? migrateLegacyCancipStoragePath(item.originalPath) : "",
       archivedAt,
       lastUsedAt,
       size: typeof item.size === "number" && Number.isFinite(item.size) ? Math.max(0, item.size) : 0,
@@ -48333,7 +48444,11 @@ function archiveMonthFromIso(value: string): string {
 }
 
 function upsertArchiveEntry(index: CancipArchiveIndex, entry: CancipArchiveEntry): void {
-  const normalized = { ...entry, path: normalizePath(entry.path), originalPath: normalizePath(entry.originalPath) };
+  const normalized = {
+    ...entry,
+    path: migrateLegacyCancipStoragePath(entry.path),
+    originalPath: migrateLegacyCancipStoragePath(entry.originalPath)
+  };
   const position = index.entries.findIndex((item) => item.id === normalized.id || normalizePath(item.path) === normalized.path);
   if (position >= 0) index.entries[position] = normalized;
   else index.entries.push(normalized);
@@ -48356,7 +48471,7 @@ function normalizeUniversalSearchIndex(raw: unknown): UniversalSearchIndex {
   const byPath = new Map<string, UniversalSearchDocument>();
   for (const item of Array.isArray(raw.documents) ? raw.documents : []) {
     if (!isRecord(item)) continue;
-    const path = typeof item.path === "string" ? normalizePath(item.path) : "";
+    const path = typeof item.path === "string" ? migrateLegacyCancipStoragePath(item.path) : "";
     if (!path) continue;
     const kind = typeof item.kind === "string" && kinds.has(item.kind as UniversalSearchDocumentKind)
       ? item.kind as UniversalSearchDocumentKind
@@ -48412,7 +48527,7 @@ function universalSearchDocumentKind(path: string, memoryFolder: string, obsidia
   if (isImagePath(normalized)) return "image";
   if (/\.(docx|xlsx|pptx)$/i.test(normalized)) return "office";
   if (/\.(zip|7z|rar|tar|gz|tgz)$/i.test(normalized)) return "archive";
-  if (lower.startsWith(".cancip/") || (configRoot && (lower === configRoot || lower.startsWith(`${configRoot}/`))) || /(^|\/)(?:config|settings?)(\/|\.|$)/i.test(lower)) return "config";
+  if (isCancipStoragePath(normalized) || (configRoot && (lower === configRoot || lower.startsWith(`${configRoot}/`))) || /(^|\/)(?:config|settings?)(\/|\.|$)/i.test(lower)) return "config";
   if (/\.(md|markdown)$/i.test(normalized)) return "note";
   return "file";
 }
@@ -49893,7 +50008,7 @@ function isSkillFileCandidatePath(path: string): boolean {
   if (!isContextTextPath(normalized)) return false;
   if (name === "skill.md" || name.endsWith(".skill.md")) return true;
   if (/(^|\/)(skills?|skillob|技能|能力)(\/|$)/i.test(lower)) return name.endsWith(".md") || name.endsWith(".txt");
-  if (lower.startsWith(".cancip/skills/") || lower.startsWith("ai/cancip/skills/")) return name.endsWith(".md") || name.endsWith(".txt");
+  if (isPathInVaultFolder(lower, `${CANCIP_CONFIG_DIR.toLowerCase()}/skills`) || lower.startsWith("ai/cancip/skills/")) return name.endsWith(".md") || name.endsWith(".txt");
   return false;
 }
 
@@ -49904,7 +50019,7 @@ function skillCandidatePriority(path: string, pluginInstallDir: string): number 
   if (lower.startsWith("cancip://builtin/")) score += 30;
   if (lower.endsWith("/skill.md") || lower === "skill.md") score += 100;
   if (lower.endsWith(".skill.md")) score += 90;
-  if (lower.startsWith(".cancip/skills/")) score += 70;
+  if (isPathInVaultFolder(lower, `${CANCIP_CONFIG_DIR.toLowerCase()}/skills`)) score += 70;
   if (lower.startsWith("ai/cancip/skills/")) score += 64;
   if (lower.includes("/skillob/")) score += 55;
   if (/(^|\/)(skills?|技能|能力)(\/|$)/i.test(lower)) score += 45;
@@ -49973,7 +50088,7 @@ function builtinCancipSkills(): BuiltinCancipSkill[] {
 适用于用户要求记住、纠正规则、反馈遗忘，或成功/失败经验值得复用时。
 
 1. 先判断内容属于用户偏好、项目事实、工具经验还是当前会话临时状态。
-2. 稳定偏好写入设置中选择的核心记忆目录；项目运行信息写入 .cancip/PROJECT_MEMORY.md；可复用流程写入 .cancip/experience 或 Skill。
+2. 稳定偏好写入设置中选择的核心记忆目录；项目运行信息写入 ${PROJECT_MEMORY_PATH}；可复用流程写入 ${EXPERIENCE_LOG_PATH} 或 Skill。
 3. 写入前保持条目短小，格式优先用“触发条件 -> 规则/动作 -> 路径或命令 -> 限制”。
 4. 回答“不记得”之前，先按需检查记忆索引、项目记忆、经验和相关 Skill。
 5. 不保存密钥、令牌、整段聊天原文或未经验证的能力声明。
@@ -50200,7 +50315,7 @@ function parseCancipSkillFile(path: string, content: string): CancipSkill | null
     folder,
     description,
     triggers,
-    source: normalized.startsWith(".cancip/") || normalized.startsWith("AI/Cancip/") ? "cancip" : "vault",
+    source: isCancipStoragePath(normalized) || normalized.startsWith("AI/Cancip/") ? "cancip" : "vault",
     priority: skillCandidatePriority(normalized, "")
   };
 }
@@ -51039,17 +51154,16 @@ function isContextTextExtension(extension: string): boolean {
 
 function shouldUsePathInAutomaticVaultSearch(path: string, query: string, tokens: string[], obsidianConfigDir: string): boolean {
   const normalized = normalizePath(path);
-  if (normalized.startsWith(".cancip/exports/")) return false;
-  if (normalized.startsWith(".cancip/sessions/")) return false;
-  if (normalized.startsWith(".cancip/versions/")) return false;
-  if (normalized.startsWith(".cancip/automations/")) return false;
+  if (isPathInVaultFolder(normalized, SESSION_HISTORY_DIR)) return false;
+  if (isPathInVaultFolder(normalized, LOCAL_VERSION_DIR)) return false;
+  if (isPathInVaultFolder(normalized, AUTOMATION_DIR)) return false;
   if (normalized.startsWith(".trash/")) return false;
   if (isPathInFolder(normalized, obsidianConfigDir)) {
     const lower = query.toLowerCase();
     const wantsObsidianConfig = lower.includes("obsidian") || lower.includes("插件") || lower.includes("配置") || lower.includes("config");
     return wantsObsidianConfig || tokens.some((token) => normalized.toLowerCase().includes(token));
   }
-  if (normalized.startsWith(".cancip/")) {
+  if (isCancipStoragePath(normalized)) {
     const lower = query.toLowerCase();
     const wantsCancipConfig = lower.includes(".cancip") || lower.includes("cancip") || lower.includes("配置") || lower.includes("config");
     return wantsCancipConfig || tokens.some((token) => normalized.toLowerCase().includes(token));
@@ -51259,9 +51373,10 @@ function extractVaultPathCandidates(input: string): string[] {
   const candidates = new Set<string>();
   const normalized = input.replace(/\\/g, "/");
   const configDirPattern = escapeRegExp(OBSIDIAN_CONFIG_FALLBACK);
+  const cancipDataDirPattern = escapeRegExp(CANCIP_CONFIG_DIR);
   const patterns = [
     /(^|[\s"'`([{，。；,;：:])((?:\.?[A-Za-z0-9_\-\u4e00-\u9fff]+\/)+[A-Za-z0-9_\-\u4e00-\u9fff @()[\].]+)(?=$|[\s"'`)\]}，。；,;])/g,
-    new RegExp(`(^|[\\s"'\\\`([{，。；,;：:])((?:${configDirPattern}|\\.cancip)(?:/[^\\s"'\\\`)\\]}，。；,;]+)*)`, "gi")
+    new RegExp(`(^|[\\s"'\\\`([{，。；,;：:])((?:${configDirPattern}|${cancipDataDirPattern}|\\.cancip)(?:/[^\\s"'\\\`)\\]}，。；,;]+)*)`, "gi")
   ];
   for (const pattern of patterns) {
     let match: RegExpExecArray | null;
@@ -51280,7 +51395,7 @@ function extractVaultPathCandidates(input: string): string[] {
 
 function isLikelyConcreteVaultPath(path: string): boolean {
   const normalized = normalizePath(path);
-  if (normalized.startsWith(OBSIDIAN_CONFIG_FALLBACK) || normalized.startsWith(".cancip")) return true;
+  if (normalized.startsWith(OBSIDIAN_CONFIG_FALLBACK) || isCancipStoragePath(normalized)) return true;
   const last = normalized.split("/").filter(Boolean).pop() ?? "";
   if (/\.[A-Za-z0-9]{1,8}$/.test(last)) return true;
   return normalized.split("/").length >= 3;
@@ -51701,7 +51816,7 @@ function isVaultOverviewUserFacingPath(path: string, obsidianConfigDir: string):
   const normalized = normalizePath(path);
   if (!normalized) return false;
   if (isPathInFolder(normalized, obsidianConfigDir)) return false;
-  if (normalized.startsWith(".cancip/")) return false;
+  if (isCancipStoragePath(normalized)) return false;
   if (normalized.startsWith(".trash/")) return false;
   if (normalized.startsWith("AI/Cancip/Exports/")) return false;
   if (isLegacyVisibleReviewGateArtifactPath(normalized)) return false;
@@ -51759,7 +51874,7 @@ function shouldNeedMoreActionForPrompt(prompt: string, runs: ToolRun[]): boolean
   if (!hasUnverifiedWriteAction(active)) return false;
   const hasPluginWrite = writePaths.some((path) => path.includes("/plugins/cancip/"));
   if (hasPluginWrite) return false;
-  return writePaths.every((path) => path === ".cancip/config.json" || path.startsWith(".cancip/"));
+  return writePaths.every((path) => path === CANCIP_CONFIG_PATH || isPathInVaultFolder(path, CANCIP_CONFIG_DIR));
 }
 
 function activeFilePathFromToolRuns(runs: ToolRun[]): string {
@@ -51963,8 +52078,8 @@ function shouldScanHiddenForQuery(query: string): boolean {
 function hiddenMentionFoldersForQuery(query: string, obsidianConfigDir: string): string[] {
   const lower = query.toLowerCase();
   if (lower.includes("obsidian") || lower.includes("plugin") || lower.includes("插件")) return [obsidianConfigDir];
-  if (lower.includes(".cancip") || lower.includes("cancip") || lower.includes("config") || lower.includes("配置")) return [".cancip", obsidianConfigDir];
-  return [obsidianConfigDir, ".cancip"];
+  if (lower.includes(".cancip") || lower.includes("cancip") || lower.includes("config") || lower.includes("配置")) return [CANCIP_CONFIG_DIR, obsidianConfigDir];
+  return [obsidianConfigDir, CANCIP_CONFIG_DIR];
 }
 
 function scoreSearchCandidate(file: VaultTextFile, tokens: string[]): number {
@@ -52399,7 +52514,12 @@ function formatI18n(template: string, vars: Record<string, string | number> = {}
   return template.replace(/\{(\w+)\}/g, (_, key: string) => String(vars[key] ?? ""));
 }
 
+function runtimeCancipStorageText(template: string): string {
+  return template.replace(/\.cancip(?=\/|\b)/g, CANCIP_CONFIG_DIR);
+}
+
 function runtimeI18nTemplate(key: I18nKey, template: string): string {
+  template = runtimeCancipStorageText(template);
   if (key === "finalAnswerFormatPrompt") {
     return `${template} ${/[\u3400-\u9fff]/.test(template)
       ? "不能只根据函数返回成功就宣称完成；先读回实际状态，界面任务还要核对活动视图、DOM/布局或视觉证据。未达到预期且仍可修时继续最小修正，达到上限才带证据交审核。"
@@ -53832,6 +53952,24 @@ function migrateVisibleFolderDefaults(settings: Settings): Settings {
   return { ...settings, memoryFolder: DEFAULT_MEMORY_FOLDER };
 }
 
+function migrateLegacyCancipStoragePath(rawPath: string): string {
+  const normalized = normalizePath(rawPath.replace(/\\/g, "/")).replace(/^\/+|\/+$/g, "");
+  const legacy = LEGACY_CANCIP_CONFIG_DIR.toLowerCase();
+  const lower = normalized.toLowerCase();
+  if (lower === legacy) return CANCIP_CONFIG_DIR;
+  if (lower.startsWith(`${legacy}/`)) {
+    return `${CANCIP_CONFIG_DIR}/${normalized.slice(LEGACY_CANCIP_CONFIG_DIR.length + 1)}`;
+  }
+  return normalized;
+}
+
+function migrateLegacyCancipStorageSettings(settings: Settings): Settings {
+  const memoryFolder = migrateLegacyCancipStoragePath(settings.memoryFolder);
+  const skillRoots = uniqueStrings(settings.skillRoots.map(migrateLegacyCancipStoragePath));
+  if (memoryFolder === settings.memoryFolder && sameStringArray(skillRoots, settings.skillRoots)) return settings;
+  return { ...settings, memoryFolder, skillRoots };
+}
+
 function migrateDefaultMemorySearchPolicy(settings: Settings): Settings {
   let next = settings;
   if (settings.useVaultSearchByDefault) {
@@ -54676,7 +54814,7 @@ function cancipSessionTimelineText(raw: Partial<SessionTimeline> & { sessionCrea
 
 function normalizeSessionHistoryEntry(item: Record<string, unknown>): SessionHistoryEntry | null {
   const id = typeof item.id === "string" ? item.id : "";
-  const path = typeof item.path === "string" ? item.path : "";
+  const path = typeof item.path === "string" ? migrateLegacyCancipStoragePath(item.path) : "";
   if (!id || !path) return null;
   const status = isSessionStatus(item.status) ? item.status : "idle";
   const completedNotice = typeof item.completedNotice === "boolean" ? item.completedNotice : false;
@@ -58435,14 +58573,19 @@ function isConfigOrRuntimeVaultPath(path: string, obsidianConfigDir: string): bo
   const normalized = normalizePath(path.replace(/\\/g, "/"));
   const lower = normalized.toLowerCase();
   const configDir = normalizePath(obsidianConfigDir).toLowerCase();
-  return lower === ".cancip"
-    || lower.startsWith(".cancip/")
+  return isCancipStoragePath(normalized)
     || isReviewGateMachineFilePath(normalized)
     || (configDir ? isPathInFolder(lower, configDir) : false)
     || lower === ".trash"
     || lower.startsWith(".trash/")
     || lower === ".git"
     || lower.startsWith(".git/");
+}
+
+function isCancipStoragePath(path: string): boolean {
+  const normalized = normalizePath(path.replace(/\\/g, "/")).replace(/^\/+|\/+$/g, "");
+  return isPathInVaultFolder(normalized, CANCIP_CONFIG_DIR)
+    || isPathInVaultFolder(normalized, LEGACY_CANCIP_CONFIG_DIR);
 }
 
 async function applyApprovedReviewGateItem(app: App, item: ReviewGateManifestItem, obsidianConfigDir: string, memoryFolder = DEFAULT_MEMORY_FOLDER): Promise<string> {
@@ -58786,6 +58929,64 @@ async function ensureParentFolder(adapter: DataAdapter, path: string): Promise<v
   if (parent) await ensureFolder(adapter, parent);
 }
 
+type CancipStorageMigrationStats = {
+  sourceFiles: number;
+  sourceFolders: number;
+  copiedFiles: number;
+  preservedTargetFiles: number;
+  targetConflicts: number;
+};
+
+async function firstMissingCancipStorageCriticalPath(adapter: DataAdapter): Promise<string | null> {
+  for (const relativePath of CANCIP_STORAGE_MIGRATION_CRITICAL_PATHS) {
+    const legacyPath = `${LEGACY_CANCIP_CONFIG_DIR}/${relativePath}`;
+    if (await adapter.exists(legacyPath) && !(await adapter.exists(`${CANCIP_CONFIG_DIR}/${relativePath}`))) {
+      return relativePath;
+    }
+  }
+  return null;
+}
+
+async function copyMissingCancipStoragePath(
+  adapter: DataAdapter,
+  sourcePath: string,
+  targetPath: string,
+  stats: CancipStorageMigrationStats
+): Promise<void> {
+  const sourceStat = await adapter.stat(sourcePath);
+  if (!sourceStat) return;
+  if (sourceStat.type === "file") {
+    stats.sourceFiles += 1;
+    const targetStat = await adapter.stat(targetPath);
+    if (targetStat) {
+      if (targetStat.type !== "file") throw new Error(`migration target is not a file: ${targetPath}`);
+      stats.preservedTargetFiles += 1;
+      if (sourceStat.size !== targetStat.size) stats.targetConflicts += 1;
+      return;
+    }
+    await ensureParentFolder(adapter, targetPath);
+    await adapter.copy(sourcePath, targetPath);
+    const copiedStat = await adapter.stat(targetPath);
+    if (copiedStat?.type !== "file" || copiedStat.size !== sourceStat.size) {
+      throw new Error(`migration copy verification failed: ${sourcePath}`);
+    }
+    stats.copiedFiles += 1;
+    return;
+  }
+
+  stats.sourceFolders += 1;
+  await ensureFolder(adapter, targetPath);
+  const listing = await adapter.list(sourcePath);
+  for (const folder of listing.folders) {
+    const childName = normalizePath(folder).slice(normalizePath(sourcePath).length).replace(/^\/+/, "");
+    if (childName) await copyMissingCancipStoragePath(adapter, folder, `${targetPath}/${childName}`, stats);
+  }
+  for (const file of listing.files) {
+    const childName = normalizePath(file).slice(normalizePath(sourcePath).length).replace(/^\/+/, "");
+    if (childName) await copyMissingCancipStoragePath(adapter, file, `${targetPath}/${childName}`, stats);
+  }
+}
+
 async function ensureFolder(adapter: DataAdapter, folderPath: string): Promise<void> {
   const folder = normalizeActionPath(folderPath);
   const parts = folder.split("/").filter(Boolean);
@@ -58921,7 +59122,7 @@ function normalizeConfigBackupIndex(raw: unknown): ConfigBackupIndex {
         ? value.backups
             .filter(isRecord)
             .map((item) => ({
-              path: typeof item.path === "string" ? item.path : "",
+              path: typeof item.path === "string" ? migrateLegacyCancipStoragePath(item.path) : "",
               createdAt: typeof item.createdAt === "string" ? item.createdAt : "",
               hash: typeof item.hash === "string" ? item.hash : "",
               source: item.source === "manual-baseline" ? "manual-baseline" as const : "before-cancip-write" as const
@@ -58929,13 +59130,13 @@ function normalizeConfigBackupIndex(raw: unknown): ConfigBackupIndex {
             .filter((item) => item.path && item.createdAt && item.hash)
             .slice(-CANCIP_CONFIG_BACKUP_MAX_RECORDS_PER_PATH)
         : [];
-      entries[normalizePath(path)] = {
+      entries[migrateLegacyCancipStoragePath(path)] = {
         lastCancipWriteHash: typeof value.lastCancipWriteHash === "string" ? value.lastCancipWriteHash : undefined,
         lastCancipWriteAt: typeof value.lastCancipWriteAt === "string" ? value.lastCancipWriteAt : undefined,
         lastManualBaselineHash: typeof value.lastManualBaselineHash === "string" ? value.lastManualBaselineHash : undefined,
         lastManualBaselineAt: typeof value.lastManualBaselineAt === "string" ? value.lastManualBaselineAt : undefined,
-        latestBackupPath: typeof value.latestBackupPath === "string" ? value.latestBackupPath : undefined,
-        latestManualBaselinePath: typeof value.latestManualBaselinePath === "string" ? value.latestManualBaselinePath : undefined,
+        latestBackupPath: typeof value.latestBackupPath === "string" ? migrateLegacyCancipStoragePath(value.latestBackupPath) : undefined,
+        latestManualBaselinePath: typeof value.latestManualBaselinePath === "string" ? migrateLegacyCancipStoragePath(value.latestManualBaselinePath) : undefined,
         backups
       };
     }
