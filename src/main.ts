@@ -31,6 +31,8 @@ import html2canvas from "html2canvas";
 import { StateEffect, StateField, type Extension } from "@codemirror/state";
 import { Decoration, EditorView, keymap, ViewPlugin, type ViewUpdate, WidgetType } from "@codemirror/view";
 import { DEFAULT_SYSTEM_PROMPT, LEGACY_SYSTEM_PROMPT, PLUGIN_NAME, VIEW_TYPE } from "./constants";
+import supportCodeOneDataUrl from "./support/code-1.png";
+import supportCodeTwoDataUrl from "./support/code-2.png";
 import {
   buildObReviewGatePackage,
   formatReviewGateResult,
@@ -410,6 +412,9 @@ class CancipModelEditModal extends Modal {
   onOpen(): void {
     this.containerEl.addClass("obcc-model-edit-modal-container");
     this.modalEl.addClass("obcc-model-edit-modal");
+    const stopOuterTouch = (event: Event) => event.stopPropagation();
+    this.modalEl.addEventListener("pointerdown", stopOuterTouch);
+    this.modalEl.addEventListener("touchstart", stopOuterTouch);
     this.setTitle(this.input.title);
     new Setting(this.contentEl)
       .setName(this.input.profileLabel)
@@ -1961,6 +1966,7 @@ type Settings = {
   composerAutocompleteRotationSeconds: number;
   composerAutocompleteCandidateCount: number;
   composerAutocompleteApiProfileId: string;
+  composerAutocompleteModel: string;
   composerAutocompletePrompt: string;
   forceStatusBarVisible: boolean;
   autoOpenPlanPanel: boolean;
@@ -2375,6 +2381,10 @@ const DEFAULT_SUPPORT_CODE_ONE_PATH = "extras/code-1.jpg";
 const DEFAULT_SUPPORT_CODE_TWO_PATH = "extras/code-2.png";
 const DEFAULT_SUPPORT_CODE_ONE_LABEL = "Alipay";
 const DEFAULT_SUPPORT_CODE_TWO_LABEL = "Binance";
+const DEFAULT_SUPPORT_CODE_DATA_URLS: Record<string, string> = {
+  [DEFAULT_SUPPORT_CODE_ONE_PATH]: supportCodeOneDataUrl,
+  [DEFAULT_SUPPORT_CODE_TWO_PATH]: supportCodeTwoDataUrl
+};
 const DEFAULT_CORE_MEMORY_MAX_FILES = 3;
 const DEFAULT_SKILL_ROOTS = [".cancip/skills", "AI/Cancip/Skills", "SkillOB", "skills", "技能", "能力"] as const;
 const CODEX_CORE_MEMORY_FILES = [
@@ -2660,6 +2670,7 @@ const DEFAULT_SETTINGS: Settings = {
   composerAutocompleteRotationSeconds: 5,
   composerAutocompleteCandidateCount: 2,
   composerAutocompleteApiProfileId: "",
+  composerAutocompleteModel: "",
   composerAutocompletePrompt: "",
   forceStatusBarVisible: true,
   autoOpenPlanPanel: true,
@@ -2829,7 +2840,7 @@ const UNIVERSAL_SEARCH_MAX_DOCUMENTS = 12000;
 const UNIVERSAL_SEARCH_MAX_QUERY_CANDIDATES = 180;
 const AUTOMATION_DIR = `${CANCIP_CONFIG_DIR}/automations`;
 const AUTOMATION_STATE_PATH = `${CANCIP_CONFIG_DIR}/automations.json`;
-const AUTOMATION_SCHEMA_VERSION = 4;
+const AUTOMATION_SCHEMA_VERSION = 6;
 const AUTOMATION_NEW_FILE_DEFAULT_DEBOUNCE_SECONDS = 45;
 const AUTOMATION_NEW_FILE_MAX_BATCH = 40;
 const VAULT_CURATION_AUTOMATION_ID = "auto-vault-curation";
@@ -3069,7 +3080,10 @@ const EN = {
   settingsAutocompleteCandidateCountDesc: "Number shown at each level. Set 1 to show one candidate without rotation; the default is 2. With preloading enabled, every candidate prepares the same number for its next level.",
   settingsAutocompleteModel: "Autocomplete model",
   settingsAutocompleteModelDesc: "Use the current model or a separately configured API profile for chat and note completions.",
+  settingsAutocompleteSource: "Autocomplete source",
+  settingsAutocompleteSourceDesc: "Use the current source or a separately configured API profile for chat and note completions.",
   autocompleteFollowCurrentModel: "Follow current model",
+  autocompleteFollowDefaultSource: "Follow current source",
   autocompleteApply: "Apply completion",
   autocompleteSettings: "Autocomplete settings",
   autocompleteEnabled: "Automatic completion",
@@ -3581,6 +3595,10 @@ const EN = {
   settingsApiKey: "API key",
   settingsApiKeyDesc: "Mirrored to .cancip/config.json and plugin data.json on this device. Do not share vault config folders.",
   settingsModel: "Model",
+  settingsDefaultModelSource: "Default model source",
+  settingsDefaultModelSourceDesc: "Choose the API profile used by the default model. Model switching carries its source with it.",
+  settingsDefaultModel: "Default model",
+  settingsDefaultModelDesc: "All AI calls use this model by default unless a module or automation overrides it.",
   settingsModelOptions: "Model options",
   settingsModelOptionsDesc: "One model ID per line. Used by the model picker and API profile dropdown; .cancip/config.json wins on restart.",
   resetModelOptions: "Reset model list",
@@ -3598,10 +3616,12 @@ const EN = {
   settingsGroupVersioning: "Local versioning",
   settingsGroupAutomation: "Automations",
   settingsGroupTts: "Text to speech",
-    settingsGroupExport: "Export",
-    settingsGroupSupport: "Payment QR codes",
-    settingsGroupModelAdvanced: "Advanced model",
-    settingsTemperature: "Temperature",
+  settingsGroupExport: "Export",
+  settingsGroupSupport: "Payment QR codes",
+  settingsGroupModelAdvanced: "Advanced model",
+  settingsGroupReviewSystem: "Review system",
+  settingsGroupFilePins: "File pin sorting",
+  settingsTemperature: "Temperature",
   settingsMaxOutputTokens: "Max output tokens",
   settingsCoreMemoryFolder: "Core memory folder",
   settingsCoreMemoryFolderDesc: "Markdown files under this folder are included as core memory.",
@@ -3629,6 +3649,7 @@ const EN = {
   settingsUiButtonRulesList: "Changed buttons",
   settingsUiButtonRulesListDesc: "Button-management changes saved on this device. Reset one item to restore that button to the original Obsidian/plugin state.",
   settingsUiButtonRulesEmpty: "No changed buttons.",
+  settingsUiButtonRuleUpdatedAt: "Updated {time}",
   buttonRuleReset: "Reset",
   buttonRuleResetAll: "Reset all",
   buttonRuleResetDone: "Button restored",
@@ -3695,6 +3716,17 @@ const EN = {
   settingsDailyLocalVersioningDesc: "Creates one lightweight snapshot per day under .cancip/versions when Obsidian is open. First daily run initializes a hash baseline without copying the whole vault.",
   settingsLocalVersionHour: "Daily version hour",
   settingsLocalVersionMaxFileBytes: "Max versioned file bytes",
+  settingsReviewSystemDesc: "Review state is shared through .cancip/review-state.json. Open pending items here and rebuild the shared count if another device looks different.",
+  settingsReviewPendingCount: "{count} pending item(s)",
+  settingsReviewOpenPending: "Open pending review",
+  settingsReviewOpenLatest: "Open latest review",
+  settingsReviewRebuildState: "Rebuild shared count",
+  settingsReviewStateRebuilt: "Review count rebuilt: {count}",
+  settingsFilePinsDesc: "Files and folders pinned from the native File Explorer are saved in .cancip/file-pins.json and rendered inside the normal file list.",
+  settingsFilePinsSummary: "Pinned files and folders",
+  settingsFilePinsRefresh: "Refresh file list",
+  settingsFilePinsSortActiveFolder: "Sort active folder",
+  settingsFilePinsNoActiveFolder: "Open a file or folder first, then sort that folder's pinned items.",
   settingsAutomationsEnabled: "Enable automations",
   settingsAutomationCheckMinutes: "Automation check minutes",
   automationSettingsReload: "Reload tasks",
@@ -3795,7 +3827,7 @@ const EN = {
   settingsSupportCodeOneLabel: "Alipay label",
   settingsSupportCodeTwoLabel: "Binance label",
   supportCodesTitle: "Payment QR codes / Support",
-  supportCodesNote: "Optional support for maintenance. These images are local plugin resources and are not included in prompts.",
+  supportCodesNote: "Optional support for maintenance. These images are built-in local plugin resources and are not included in prompts.",
   supportCodeMissing: "Image path not configured",
   settingsSystemPrompt: "System prompt",
   settingsSystemPromptDesc: "Sent with every model call. Keep it short. Edits are saved permanently and synced to .cancip/config.json like a normal config file.",
@@ -3993,7 +4025,10 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     settingsAutocompleteCandidateCountDesc: "当前层显示的候选数量；设为1时只显示一个且不轮换，默认2个。开启预加载时，每个候选也准备相同数量的下一级。",
     settingsAutocompleteModel: "自动补全模型",
     settingsAutocompleteModelDesc: "聊天输入和笔记编辑补全使用的模型，可跟随当前模型或选择一个已配置模型。",
+    settingsAutocompleteSource: "自动补全来源",
+    settingsAutocompleteSourceDesc: "聊天输入和笔记编辑补全使用的来源配置，可跟随当前来源或选择一个已配置 API 配置。",
     autocompleteFollowCurrentModel: "跟随当前模型",
+    autocompleteFollowDefaultSource: "跟随当前来源",
     autocompleteApply: "应用补全",
     autocompleteSettings: "自动补全设置",
     autocompleteEnabled: "自动补全",
@@ -4281,6 +4316,7 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     settingsUiButtonRulesList: "已改按钮",
     settingsUiButtonRulesListDesc: "这里列出按钮管理保存过的改动；点单项重置可把这个按钮恢复到 Obsidian/插件原始状态。",
     settingsUiButtonRulesEmpty: "还没有改过的按钮。",
+    settingsUiButtonRuleUpdatedAt: "{time} 更新",
     buttonRuleReset: "重置",
     buttonRuleResetAll: "全部重置",
     buttonRuleResetDone: "按钮已恢复",
@@ -4443,7 +4479,7 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     mentionMode: "模式",
     mentionFolderDetail: "{count} 个文件",
     mentionContextIncluded: "已提及上下文",
-    placeholder: "问 OB：@文件、搜索、计划、修改...",
+    placeholder: "问 Cancip：@文件、搜索、计划、修改...",
     ready: "准备就绪",
     missingApi: "还没有配置 API URL/key/model。",
     preparingContext: "正在准备上下文...",
@@ -4522,12 +4558,16 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     settingsApiKey: "API key",
     settingsApiKeyDesc: "会同步到 .cancip/config.json 和本设备插件 data.json。不要共享 vault config 文件夹。",
     settingsModel: "模型",
+    settingsDefaultModelSource: "默认模型源",
+    settingsDefaultModelSourceDesc: "选择默认模型使用的 API 配置；切换模型会带着它绑定的模型源一起切。",
+    settingsDefaultModel: "默认模型",
+    settingsDefaultModelDesc: "所有 AI 调用默认走这个模型，模块或自动化单独覆盖时除外。",
     settingsModelOptions: "可选模型",
     settingsModelOptionsDesc: "每行一个模型 ID。用于模型菜单和 API 配置下拉框；重启后仍以 .cancip/config.json 为准。",
     resetModelOptions: "重置模型列表",
     advancedSettings: "高级设置",
     configAuthority: "配置文件：.cancip/config.json。重启后以该文件为准。",
-    settingsGroupCommon: "常用设置",
+    settingsGroupCommon: "常用",
     settingsGroupInterface: "界面",
     settingsGroupWorkbench: "工作台",
     settingsGroupButtonEditing: "按钮编辑",
@@ -4542,6 +4582,8 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     settingsGroupExport: "导出",
     settingsGroupSupport: "收款码设置",
     settingsGroupModelAdvanced: "模型高级",
+    settingsGroupReviewSystem: "审核系统",
+    settingsGroupFilePins: "文件置顶排序",
     settingsTemperature: "Temperature",
     settingsMaxOutputTokens: "最大输出 tokens",
     settingsCoreMemoryFolder: "核心记忆文件夹",
@@ -4565,6 +4607,17 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     settingsCompactHeader: "紧凑标题栏",
     settingsForceStatusBarVisible: "显示手机状态栏",
     settingsForceStatusBarVisibleDesc: "始终显示 Obsidian 底部状态栏和 Cancip 状态按钮，避免被按钮管理规则隐藏。",
+    settingsReviewSystemDesc: "审核状态通过 .cancip/review-state.json 在设备间共享。这里可打开待审核项；如果手机和电脑数字不一致，可重建共享计数。",
+    settingsReviewPendingCount: "{count} 个待审核项",
+    settingsReviewOpenPending: "打开待审核",
+    settingsReviewOpenLatest: "打开最近审核",
+    settingsReviewRebuildState: "重建共享计数",
+    settingsReviewStateRebuilt: "审核计数已重建：{count}",
+    settingsFilePinsDesc: "从原生文件列表置顶的文件和文件夹保存在 .cancip/file-pins.json，并直接渲染回普通文件列表。",
+    settingsFilePinsSummary: "已置顶文件和文件夹",
+    settingsFilePinsRefresh: "刷新文件列表",
+    settingsFilePinsSortActiveFolder: "排序当前文件夹",
+    settingsFilePinsNoActiveFolder: "先打开一个文件或文件夹，再排序这个文件夹里的置顶项。",
     settingsAutoOpenPlanPanel: "自动打开计划面板",
     settingsShowLiveTodos: "显示实时待办",
     settingsShowManualTodos: "显示手动待办",
@@ -4722,7 +4775,7 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     settingsSupportCodeOneLabel: "支付宝标签",
     settingsSupportCodeTwoLabel: "币安标签",
     supportCodesTitle: "收款码 / Support",
-    supportCodesNote: "可选打赏支持维护。图片只作为本机插件资源显示，不会进入提示词。",
+    supportCodesNote: "可选打赏支持维护。图片作为插件内置本机资源显示，不会进入提示词。",
     supportCodeMissing: "未配置图片路径",
     settingsSystemPrompt: "系统提示词",
   settingsSystemPromptDesc: "每次模型调用都会发送。尽量保持短；修改会像普通配置一样永久保存并同步到 .cancip/config.json。",
@@ -6915,6 +6968,17 @@ function showEditorAutocompleteModelMenu(view: EditorView, position: { x: number
   const plugin = cancipEditorAutocompletePlugin;
   const menu = new Menu();
   menu.addItem((item) => item.setTitle(plugin.t("settingsAutocompleteModel")).setIcon("brain-circuit").setIsLabel(true));
+  for (const option of plugin.autocompleteModelOptions()) {
+    menu.addItem((item) => {
+      item
+        .setTitle(option.label)
+        .setIcon(option.value ? "bot" : "git-branch")
+        .setChecked(plugin.settings.composerAutocompleteModel === option.value)
+        .onClick(() => void plugin.selectAutocompleteModel(option.value));
+    });
+  }
+  menu.addSeparator();
+  menu.addItem((item) => item.setTitle(plugin.t("settingsAutocompleteSource")).setIcon("server").setIsLabel(true));
   for (const option of plugin.autocompleteApiProfileOptions()) {
     menu.addItem((item) => {
       item
@@ -7307,9 +7371,6 @@ function createCancipEditorAutocompleteExtension(plugin: CancipPlugin): Extensio
       this.modelInFlight = true;
       let candidates: string[] = [];
       try {
-        if (!force && !prefetchedRoots.length) {
-          prefetchedRoots = await plugin.awaitEditorAutocompleteBranchPrefetch(snapshot.prefix, path);
-        }
         if (prefetchedRoots.length) {
           candidates = prefetchedRoots;
         } else {
@@ -7721,6 +7782,18 @@ export default class CancipPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "sort-pinned-files-current-folder",
+      name: this.t("commandSortPinnedFiles"),
+      checkCallback: (checking) => {
+        const file = this.app.workspace.getActiveFile();
+        if (!file) return false;
+        if (!checking) void this.startFilePinSortMode(vaultPathParent(file.path))
+          .catch((error) => this.recordFilePinError("sort active folder", error, true));
+        return true;
+      }
+    });
+
+    this.addCommand({
       id: "open-automation-settings",
       name: this.t("automationOpenSettingsCommand"),
       callback: async () => {
@@ -8020,6 +8093,7 @@ export default class CancipPlugin extends Plugin {
       this.installUiButtonRuleObserver();
       this.installNoteCodeWrapObserver();
       this.installNativeFilePinSortPatch();
+      this.installFilePinObserver();
       this.scheduleUiButtonRulesApply(120);
       void this.loadFilePinState().then(() => this.requestNativeFileExplorerSort());
       this.installRightSidebarTabToolbar();
@@ -14801,17 +14875,26 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     return getActiveApiProfile(this.settings);
   }
 
+  apiProfileForModel(model: string, profileId = ""): ApiProfile {
+    const selectedModel = model.trim() || this.settings.model;
+    const requestedProfileId = profileId.trim()
+      || this.settings.modelSourceByModel[selectedModel]
+      || this.settings.activeApiProfileId;
+    const selectedProfileId = resolveApiProfileId(requestedProfileId, this.settings.apiProfiles);
+    const source = this.settings.apiProfiles.find((profile) => profile.id === selectedProfileId)
+      ?? this.settings.apiProfiles.find((profile) => profile.id === this.settings.activeApiProfileId)
+      ?? this.settings.apiProfiles[0]
+      ?? getDefaultApiProfile();
+    return { ...source, model: selectedModel };
+  }
+
   autocompleteApiProfile(): ApiProfile {
-    const selectedId = this.settings.composerAutocompleteApiProfileId.trim();
-    const selected = selectedId
-      ? this.settings.apiProfiles.find((profile) => profile.id === selectedId)
-      : null;
-    if (selected?.apiUrl && selected.apiKey && selected.model) return selected;
-    return this.activeApiProfile();
+    const selectedModel = this.settings.composerAutocompleteModel.trim() || this.settings.model;
+    return this.apiProfileForModel(selectedModel, this.settings.composerAutocompleteApiProfileId);
   }
 
   editorAutocompleteModelConfigured(): boolean {
-    if (!this.settings.composerAutocompleteEnabled || !this.settings.composerAutocompletePrefetchEnabled) return false;
+    if (!this.settings.composerAutocompleteEnabled) return false;
     const profile = this.autocompleteApiProfile();
     return Boolean(profile.apiUrl.trim() && profile.apiKey.trim() && profile.model.trim());
   }
@@ -14838,13 +14921,26 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
   autocompleteApiProfileOptions(): Array<{ value: string; label: string }> {
     const selectedId = this.settings.composerAutocompleteApiProfileId.trim();
     return [
-      { value: "", label: this.t("autocompleteFollowCurrentModel") },
+      { value: "", label: `${this.t("autocompleteFollowDefaultSource")} · ${this.autocompleteDefaultSourceName()}` },
       ...this.settings.apiProfiles
-        .filter((profile) => profile.id === selectedId || Boolean(profile.apiUrl.trim() && profile.apiKey.trim() && profile.model.trim()))
+        .filter((profile) => profile.id === selectedId || Boolean(profile.apiUrl.trim()))
         .map((profile) => ({
           value: profile.id,
-          label: `${profile.model || this.t("settingsModel")} · ${profile.name || profile.id}`
+          label: apiProfileDisplayLabel(profile, this.language())
         }))
+    ];
+  }
+
+  private autocompleteDefaultSourceName(): string {
+    const model = this.settings.composerAutocompleteModel.trim() || this.settings.model;
+    return this.apiProfileForModel(model).name;
+  }
+
+  autocompleteModelOptions(): Array<{ value: string; label: string }> {
+    const selectedModel = this.settings.composerAutocompleteModel.trim();
+    return [
+      { value: "", label: `${this.t("autocompleteFollowCurrentModel")} · ${this.settings.model}` },
+      ...normalizeModelOptions(this.settings.modelOptions, selectedModel || this.settings.model).map((model) => ({ value: model, label: model }))
     ];
   }
 
@@ -14879,6 +14975,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     const profile = this.autocompleteApiProfile();
     return stableTextHash([
       this.settings.composerAutocompleteApiProfileId.trim(),
+      this.settings.composerAutocompleteModel.trim(),
       String(this.settings.composerAutocompletePrefetchEnabled),
       String(this.editorAutocompleteCandidateCount()),
       profile.id,
@@ -14891,13 +14988,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
 
   async callLightweightAutocompleteModel(profile: ApiProfile, inputText: string, system: string, maxTokens: number): Promise<string> {
     if (!profile.apiUrl || !profile.apiKey || !profile.model) return "";
-    if (this.editorAutocompleteActivityCount > 0) return "";
-    const finishActivity = this.beginEditorAutocompleteActivity();
-    try {
-      return await this.callLightweightAutocompleteModelCore(profile, inputText, system, maxTokens);
-    } finally {
-      finishActivity();
-    }
+    return await this.callLightweightAutocompleteModelCore(profile, inputText, system, maxTokens);
   }
 
   private async callLightweightAutocompleteModelCore(profile: ApiProfile, inputText: string, system: string, maxTokens: number): Promise<string> {
@@ -14974,7 +15065,12 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
   }
 
   private async runEditorAutocompleteNetworkRequest<T>(request: () => Promise<T>, timeoutMs: number): Promise<T> {
-    return await withTimeout(request(), Math.max(1, timeoutMs), "editor autocomplete network timed out");
+    const finishActivity = this.beginEditorAutocompleteActivity();
+    try {
+      return await withTimeout(request(), Math.max(1, timeoutMs), "editor autocomplete network timed out");
+    } finally {
+      finishActivity();
+    }
   }
 
   private syncEditorAutocompleteMemorySettingsState(force = false): void {
@@ -15298,9 +15394,22 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
   }
 
   async selectAutocompleteApiProfile(id: string): Promise<void> {
-    this.settings.composerAutocompleteApiProfileId = id && this.settings.apiProfiles.some((profile) => profile.id === id)
-      ? id
+    const resolvedId = resolveApiProfileId(id, this.settings.apiProfiles);
+    this.settings.composerAutocompleteApiProfileId = resolvedId && this.settings.apiProfiles.some((profile) => profile.id === resolvedId)
+      ? resolvedId
       : "";
+    this.syncAutocompleteProfileState(true);
+    await this.saveSettings();
+  }
+
+  async selectAutocompleteModel(model: string): Promise<void> {
+    this.settings.composerAutocompleteModel = model.trim();
+    if (this.settings.composerAutocompleteModel) {
+      this.settings.modelOptions = normalizeModelOptions(
+        [this.settings.composerAutocompleteModel, ...this.settings.modelOptions],
+        this.settings.composerAutocompleteModel
+      );
+    }
     this.syncAutocompleteProfileState(true);
     await this.saveSettings();
   }
@@ -15382,18 +15491,47 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
   }
 
   automationApiProfile(task: Pick<AutomationTask, "apiProfileId" | "model">, fallbackPrompt = ""): ApiProfile {
-    const base = task.apiProfileId
-      ? this.settings.apiProfiles.find((profile) => profile.id === task.apiProfileId) ?? this.activeApiProfile()
-      : this.activeApiProfile();
     const model = task.model?.trim();
-    if (task.apiProfileId || model) return model ? { ...base, model } : base;
+    if (task.apiProfileId || model) return this.apiProfileForModel(model || this.settings.model, task.apiProfileId);
     void fallbackPrompt;
-    return base;
+    return this.activeApiProfile();
   }
 
   async selectApiProfile(id: string): Promise<void> {
-    if (!this.settings.apiProfiles.some((profile) => profile.id === id)) return;
-    this.settings.activeApiProfileId = id;
+    const resolvedId = resolveApiProfileId(id, this.settings.apiProfiles);
+    if (!this.settings.apiProfiles.some((profile) => profile.id === resolvedId)) return;
+    this.settings.activeApiProfileId = resolvedId;
+    this.settings.apiProfiles = this.settings.apiProfiles.map((profile) =>
+      profile.id === resolvedId ? normalizeApiProfile({ ...profile, model: this.settings.model }, profile) : profile
+    );
+    this.settings.modelSourceByModel = {
+      ...this.settings.modelSourceByModel,
+      [this.settings.model]: resolvedId
+    };
+    await this.saveSettings();
+  }
+
+  async selectModel(model: string, profileId = ""): Promise<void> {
+    const selectedModel = model.trim();
+    if (!selectedModel) return;
+    const explicitProfileId = resolveApiProfileId(profileId.trim(), this.settings.apiProfiles);
+    const boundProfileId = explicitProfileId
+      || this.settings.modelSourceByModel[selectedModel]
+      || defaultModelSourceIdForModel(selectedModel);
+    const resolvedProfileId = resolveApiProfileId(boundProfileId, this.settings.apiProfiles);
+    const targetProfileId = this.settings.apiProfiles.some((profile) => profile.id === resolvedProfileId)
+      ? resolvedProfileId
+      : this.settings.activeApiProfileId;
+    this.settings.model = selectedModel;
+    this.settings.activeApiProfileId = targetProfileId;
+    this.settings.apiProfiles = this.settings.apiProfiles.map((profile) =>
+      profile.id === targetProfileId ? normalizeApiProfile({ ...profile, model: selectedModel }, profile) : profile
+    );
+    this.settings.modelOptions = normalizeModelOptions([selectedModel, ...this.settings.modelOptions], selectedModel);
+    this.settings.modelSourceByModel = {
+      ...this.settings.modelSourceByModel,
+      [selectedModel]: targetProfileId
+    };
     await this.saveSettings();
   }
 
@@ -15845,10 +15983,12 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     );
     this.settings.activeApiProfileId = active.id;
     if (typeof patch.model === "string" && patch.model.trim()) {
-      this.settings.modelOptions = normalizeModelOptions([patch.model.trim(), ...this.settings.modelOptions], patch.model.trim());
+      const selectedModel = patch.model.trim();
+      this.settings.model = selectedModel;
+      this.settings.modelOptions = normalizeModelOptions([selectedModel, ...this.settings.modelOptions], selectedModel);
       this.settings.modelSourceByModel = {
         ...this.settings.modelSourceByModel,
-        [patch.model.trim()]: active.id
+        [selectedModel]: active.id
       };
     }
     await this.saveSettings();
@@ -15856,7 +15996,9 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
 
   async addApiProfile(): Promise<ApiProfile> {
     const id = `profile-${Date.now().toString(36)}`;
-    const template = API_PROFILE_PRESETS.find((preset) => !this.settings.apiProfiles.some((profile) => profile.id === preset.id))
+    const template = API_PROFILE_PRESETS.find((preset) => !this.settings.apiProfiles.some((profile) =>
+      profile.id === preset.id || apiEndpointIdentity(profile.apiUrl) === apiEndpointIdentity(preset.apiUrl)
+    ))
       ?? {
         id,
         name: `${this.t("settingsApiProfile")} ${this.settings.apiProfiles.length + 1}`,
@@ -16273,12 +16415,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     const requestKey = this.editorAutocompleteCandidatesRequestKey(prefix, nearbyContext, path, options);
     const pending = this.editorAutocompleteRequestFlights.get(requestKey);
     if (pending) {
-      options.onNetworkRequestStart?.();
-      try {
-        return await pending;
-      } finally {
-        options.onNetworkRequestEnd?.();
-      }
+      return await pending;
     }
     const request = this.editorAutocompleteCandidatesInternal(prefix, nearbyContext, path, options);
     this.editorAutocompleteRequestFlights.set(requestKey, request);
@@ -16928,6 +17065,33 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
           }
         });
     });
+    if (pinnedPaths.length >= 2) {
+      menu.addItem((item) => {
+        item
+          .setSection("cancip-file-pins")
+          .setTitle(this.t("filePinSort"))
+          .setIcon("arrow-up-down")
+          .onClick(() => {
+            void this.startFilePinSortMode(folderPath)
+              .catch((error) => this.recordFilePinError("menu sort", error, true));
+          });
+      });
+    }
+    if (file instanceof TFolder) {
+      const childPinnedPaths = this.pinnedFilePaths(path);
+      if (childPinnedPaths.length >= 2) {
+        menu.addItem((item) => {
+          item
+            .setSection("cancip-file-pins")
+            .setTitle(this.t("filePinSort"))
+            .setIcon("arrow-up-down")
+            .onClick(() => {
+              void this.startFilePinSortMode(path)
+                .catch((error) => this.recordFilePinError("menu child sort", error, true));
+            });
+        });
+      }
+    }
     if (!pinned || pinnedPaths.length < 2) return;
     if (index > 0) {
       menu.addItem((item) => {
@@ -17304,6 +17468,8 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       const pinned = Boolean(path && order.includes(path));
       this.setFilePinRowState(row, path, pinned, order);
     }
+    this.applyFilePinOrder(rows, state);
+    this.renderFilePinSortToolbar(doc);
     doc.querySelectorAll(".obcc-file-pins-panel").forEach((element) => element.remove());
   }
 
@@ -17312,8 +17478,78 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     return leaf?.dataset.type === "file-explorer" || Boolean(row.closest(".nav-files-container"));
   }
 
-  private applyFilePinOrder(_rows: HTMLElement[], _state: FilePinState): void {
-    // Kept for source/runtime inventory compatibility; native sorting owns ordering.
+  private applyFilePinOrder(rows: HTMLElement[], state: FilePinState): void {
+    const groups = new Map<HTMLElement, Array<{ item: HTMLElement; row: HTMLElement; path: string; folder: string }>>();
+    for (const row of rows) {
+      const path = normalizeFilePinPath(row.dataset.path ?? "");
+      if (!path) continue;
+      const item = this.filePinTreeItemForRow(row);
+      const container = item?.parentElement;
+      if (!item || !container) continue;
+      const folder = vaultPathParent(path);
+      const group = groups.get(container) ?? [];
+      if (!groups.has(container)) groups.set(container, group);
+      group.push({ item, row, path, folder });
+    }
+    for (const entries of groups.values()) {
+      const folders = new Map<string, Array<{ item: HTMLElement; row: HTMLElement; path: string; folder: string }>>();
+      for (const entry of entries) {
+        const byFolder = folders.get(entry.folder) ?? [];
+        if (!folders.has(entry.folder)) folders.set(entry.folder, byFolder);
+        byFolder.push(entry);
+      }
+      for (const [folder, folderEntries] of folders) {
+        const configured = this.filePinSortSession?.folderPath === folder
+          ? this.filePinSortSession.draftOrder
+          : state.folders[folder] ?? [];
+        const byPath = new Map(folderEntries.map((entry) => [entry.path, entry]));
+        const baseOrder = this.nativeFilePinFolderOrder(folder, folderEntries.map((entry) => entry.path));
+        const pinnedPaths = configured.filter((path) => byPath.has(path));
+        const pinnedSet = new Set(pinnedPaths);
+        for (const entry of folderEntries) entry.item.toggleClass("is-cancip-file-pin-ordered", pinnedSet.has(entry.path));
+        const sortedPaths = [...pinnedPaths, ...baseOrder.filter((path) => !pinnedSet.has(path))];
+        const sorted = sortedPaths.map((path) => byPath.get(path)).filter((entry): entry is { item: HTMLElement; row: HTMLElement; path: string; folder: string } => Boolean(entry));
+        for (const entry of folderEntries) {
+          if (!sorted.includes(entry)) sorted.push(entry);
+        }
+        if (sameStringArray(sorted.map((entry) => entry.path), folderEntries.map((entry) => entry.path))) continue;
+        const container = folderEntries[0]?.item.parentElement;
+        if (!container) continue;
+        const reference = folderEntries[folderEntries.length - 1]?.item.nextSibling ?? null;
+        const fragment = container.ownerDocument.createDocumentFragment();
+        for (const entry of sorted) {
+          fragment.appendChild(entry.item);
+        }
+        container.insertBefore(fragment, reference);
+      }
+    }
+  }
+
+  private nativeFilePinFolderOrder(folderPath: string, visiblePaths: string[]): string[] {
+    const folder = normalizeFilePinFolderPath(folderPath);
+    const folderFile = folder ? this.app.vault.getAbstractFileByPath(folder) : this.app.vault.getRoot();
+    if (!(folderFile instanceof TFolder)) return visiblePaths;
+    const visible = new Set(visiblePaths);
+    for (const [view, patch] of this.fileExplorerSortPatches) {
+      try {
+        const nativeItems: FileExplorerItemLike[] = patch.original.call(view, folderFile);
+        const ordered = uniqueStrings(
+          nativeItems
+            .map((item: FileExplorerItemLike) => normalizeFilePinPath(item.file?.path ?? ""))
+            .filter((path: string) => path && visible.has(path))
+        );
+        if (ordered.length) return [...ordered, ...visiblePaths.filter((path) => !ordered.includes(path))];
+      } catch {
+        // Fall back to the current DOM order if the host file explorer is mid-refresh.
+      }
+    }
+    return visiblePaths;
+  }
+
+  private filePinTreeItemForRow(row: HTMLElement): HTMLElement | null {
+    const parent = row.parentElement;
+    if (parent?.hasClass("tree-item")) return parent;
+    return row.closest<HTMLElement>(".tree-item.nav-file, .tree-item.nav-folder");
   }
 
   private setFilePinRowState(row: HTMLElement, path: string, pinned: boolean, order: string[]): void {
@@ -17321,9 +17557,10 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     row.dataset.cancipFilePinSeen = "true";
     row.toggleClass("is-cancip-file-pinned", pinned);
     wrapper?.toggleClass("is-cancip-file-pinned", pinned);
-    if (pinned) {
+    if (path) {
       row.dataset.cancipFilePinned = "true";
-      this.ensureFilePinRowControls(row, path, order);
+      if (!pinned) delete row.dataset.cancipFilePinned;
+      this.ensureFilePinRowControls(row, path, order, pinned);
     } else {
       delete row.dataset.cancipFilePinned;
       row.querySelectorAll(":scope > .obcc-file-pin-row-controls, :scope > .obcc-file-pin-sort-handle, :scope > .obcc-file-pin-sort-button").forEach((element) => element.remove());
@@ -17334,42 +17571,68 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     else row.querySelectorAll(":scope > .obcc-file-pin-sort-handle, :scope > .obcc-file-pin-sort-button").forEach((element) => element.remove());
   }
 
-  private ensureFilePinRowControls(row: HTMLElement, path: string, order: string[]): void {
+  private ensureFilePinRowControls(row: HTMLElement, path: string, order: string[], pinned: boolean): void {
     let controls = row.querySelector<HTMLElement>(":scope > .obcc-file-pin-row-controls");
-    if (controls?.dataset.cancipFilePinPath !== path) {
+    const pinnedKey = pinned ? "true" : "false";
+    if (controls?.dataset.cancipFilePinPath !== path || controls?.dataset.cancipFilePinned !== pinnedKey) {
       controls?.remove();
       controls = null;
     }
     if (!controls) {
-      controls = row.createDiv({ cls: "obcc-file-pin-row-controls", attr: { "data-cancip-file-pin-path": path } });
+      controls = row.createDiv({
+        cls: "obcc-file-pin-row-controls",
+        attr: { "data-cancip-file-pin-path": path, "data-cancip-file-pinned": pinnedKey }
+      });
       const addButton = (className: string, icon: string, label: string, action: () => void): HTMLButtonElement => {
         const button = controls!.createEl("button", {
           cls: `clickable-icon obcc-file-pin-row-button ${className}`,
           attr: { type: "button", title: label, "aria-label": label }
         });
         setIcon(button, icon);
+        let pointerActivatedAt = 0;
         button.addEventListener("pointerdown", (event) => {
           event.preventDefault();
           event.stopPropagation();
         });
+        button.addEventListener("pointerup", (event) => {
+          if (event.pointerType === "mouse" || event.isPrimary === false) return;
+          event.preventDefault();
+          event.stopPropagation();
+          pointerActivatedAt = Date.now();
+          if (!button.disabled) action();
+        });
         button.addEventListener("click", (event) => {
+          if (pointerActivatedAt && Date.now() - pointerActivatedAt <= 900) {
+            event.preventDefault();
+            event.stopPropagation();
+            pointerActivatedAt = 0;
+            return;
+          }
           event.preventDefault();
           event.stopPropagation();
           if (!button.disabled) action();
         });
         return button;
       };
-      addButton("is-up", "chevron-up", this.t("filePinMoveUp"), () => {
-        void this.movePinnedFile(path, -1).catch((error) => this.recordFilePinError("row move up", error, true));
-      });
-      addButton("is-down", "chevron-down", this.t("filePinMoveDown"), () => {
-        void this.movePinnedFile(path, 1).catch((error) => this.recordFilePinError("row move down", error, true));
-      });
-      addButton("is-unpin obcc-file-pin-indicator", "pin", this.t("filePinUnpin"), () => {
-        void this.setFilePinned(path, false)
-          .then(() => new Notice(this.t("filePinUnpinned", { path })))
-          .catch((error) => this.recordFilePinError("row unpin", error, true));
-      });
+      if (pinned) {
+        addButton("is-up", "chevron-up", this.t("filePinMoveUp"), () => {
+          void this.movePinnedFile(path, -1).catch((error) => this.recordFilePinError("row move up", error, true));
+        });
+        addButton("is-down", "chevron-down", this.t("filePinMoveDown"), () => {
+          void this.movePinnedFile(path, 1).catch((error) => this.recordFilePinError("row move down", error, true));
+        });
+        addButton("is-unpin obcc-file-pin-indicator", "pin-off", this.t("filePinUnpin"), () => {
+          void this.setFilePinned(path, false)
+            .then(() => new Notice(this.t("filePinUnpinned", { path })))
+            .catch((error) => this.recordFilePinError("row unpin", error, true));
+        });
+      } else {
+        addButton("is-pin obcc-file-pin-indicator", "pin", this.t("filePinPin"), () => {
+          void this.setFilePinned(path, true)
+            .then(() => new Notice(this.t("filePinPinned", { path })))
+            .catch((error) => this.recordFilePinError("row pin", error, true));
+        });
+      }
     }
     const index = order.indexOf(path);
     const up = controls.querySelector<HTMLButtonElement>(".obcc-file-pin-row-button.is-up");
@@ -19167,8 +19430,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
         );
         let tasks = parsed.tasks.map(normalizeAutomationTask).filter((task): task is AutomationTask => task !== null);
         if (Number(parsed.schemaVersion) < AUTOMATION_SCHEMA_VERSION) {
-          const choices = await this.automationSessionChoices();
-          tasks = tasks.map((task) => this.withRecommendedAutomationSession(task, choices));
+          tasks = tasks.map((task) => automationWithDedicatedSession(task, true));
           await adapter.write(AUTOMATION_STATE_PATH, `${JSON.stringify({
             schemaVersion: AUTOMATION_SCHEMA_VERSION,
             updatedAt: new Date().toISOString(),
@@ -19218,7 +19480,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       const templatesById = new Map(templates.map((template) => [template.id, template]));
       const nextTasks = activeTasks.map((task) => {
         const template = templatesById.get(task.id);
-        return template ? localizeUntouchedAutomationTask(task, template) : task;
+        return template ? automationWithDedicatedSession(localizeUntouchedAutomationTask(task, template)) : task;
       });
       let migrated = activeTasks.length !== tasks.length || nextTasks.some((task, index) => task !== activeTasks[index]);
       const existingIds = new Set(nextTasks.map((task) => task.id));
@@ -19240,14 +19502,12 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
           newFilePattern: template.newFilePattern,
           newFileDebounceSeconds: template.newFileDebounceSeconds,
           notifyMode: template.notifyMode,
+          sessionMode: "session",
+          sessionId: automationDedicatedSessionId(template.id),
           createdAt: now,
           updatedAt: now
         }))
         .filter((task): task is AutomationTask => task !== null);
-      if (additions.length) {
-        const choices = await this.automationSessionChoices();
-        additions = additions.map((task) => this.withRecommendedAutomationSession(task, choices));
-      }
       if (!additions.length && !migrated) return;
       await this.saveAutomations([...additions, ...nextTasks].sort((a, b) => a.title.localeCompare(b.title)));
     } catch (error) {
@@ -19265,19 +19525,14 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     const fallbackPrompt = existing?.prompt ?? action.prompt?.trim() ?? "";
     const fallbackCommand = existing?.command ?? action.command?.trim() ?? "";
     if (!fallbackPrompt && !fallbackCommand) throw new Error("automation requires prompt or command");
-    const shouldRecommendSession = !existing
-      && (!isAutomationSessionMode(action.sessionMode) || action.sessionMode === "session")
+    const shouldUseDedicatedSession = !existing
+      && action.sessionMode !== "current"
       && !action.sessionId?.trim();
-    const recommendedSession = shouldRecommendSession
-      ? this.recommendedAutomationSession(
-          { title: action.title?.trim() || fallbackTitle, prompt: action.prompt?.trim() || fallbackPrompt, command: action.command?.trim() || fallbackCommand },
-          await this.automationSessionChoices()
-        )
-      : null;
+    const newTaskId = existing?.id ?? action.id?.trim() ?? `auto-${Date.now().toString(36)}`;
 
     const normalizedTask = normalizeAutomationTask({
       ...(existing ?? {}),
-      id: existing?.id ?? action.id?.trim() ?? `auto-${Date.now().toString(36)}`,
+      id: newTaskId,
       title: action.title?.trim() || fallbackTitle,
       prompt: action.prompt?.trim() || fallbackPrompt,
       command: action.command?.trim() || fallbackCommand || undefined,
@@ -19289,10 +19544,14 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       intervalMinutes: typeof action.intervalMinutes === "number" ? action.intervalMinutes : existing?.intervalMinutes ?? 60,
       hour: typeof action.hour === "number" ? action.hour : existing?.hour ?? 9,
       minute: typeof action.minute === "number" ? action.minute : existing?.minute ?? 0,
-      sessionMode: isAutomationSessionMode(action.sessionMode) ? action.sessionMode : existing?.sessionMode ?? (recommendedSession ? "session" : "current"),
+      sessionMode: shouldUseDedicatedSession
+        ? "session"
+        : isAutomationSessionMode(action.sessionMode)
+          ? action.sessionMode
+          : existing?.sessionMode ?? "session",
       sessionId: typeof action.sessionId === "string" && action.sessionId.trim()
         ? action.sessionId.trim()
-        : existing?.sessionId ?? recommendedSession?.id,
+        : existing?.sessionId ?? (shouldUseDedicatedSession ? automationDedicatedSessionId(newTaskId) : undefined),
       condition: typeof action.condition === "string" ? action.condition.trim() : existing?.condition,
       watchNewFiles: typeof action.watchNewFiles === "boolean" ? action.watchNewFiles : existing?.watchNewFiles ?? false,
       newFilePattern: typeof action.newFilePattern === "string" ? action.newFilePattern.trim() || undefined : existing?.newFilePattern,
@@ -20187,12 +20446,15 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     if (previousSkillRoots !== this.settings.skillRoots.map((item) => normalizePath(item)).join("\n")) {
       this.invalidateSkillCaches();
     }
-    try {
-      this.settingTab?.refreshSettings();
-    } catch (error) {
-      console.warn("Cancip settings tab refresh failed", error);
+    const changed = before !== after;
+    if (changed) {
+      try {
+        this.settingTab?.refreshSettings();
+      } catch (error) {
+        console.warn("Cancip settings tab refresh failed", error);
+      }
     }
-    return before !== after;
+    return changed;
   }
 
   private scheduleCancipStatePolling(): void {
@@ -21138,6 +21400,7 @@ class CancipDocumentWorkbenchView extends FileView {
   private noteDrawStrokes: DocumentDrawingStroke[] = [];
   private noteDrawTextStrokes: DocumentDrawingTextStroke[] = [];
   private htmlPreviewCleanup: (() => void) | null = null;
+  private htmlPreviewFrame: HTMLIFrameElement | null = null;
   private noteDrawDraftOverlay: HTMLElement | null = null;
   private noteDrawDraftObserver: MutationObserver | null = null;
   private noteDrawMarkdownEditMode = false;
@@ -21297,8 +21560,7 @@ class CancipDocumentWorkbenchView extends FileView {
   private async render(): Promise<void> {
     const snapshot = this.snapshot;
     const root = this.contentEl;
-    this.clearNoteDrawMarkdownEditBridge();
-    this.clearHtmlPreviewBridge();
+    this.clearNoteDrawOverlay();
     root.empty();
     this.applyRootSettings();
     root.setAttr("lang", this.plugin.language());
@@ -21333,6 +21595,11 @@ class CancipDocumentWorkbenchView extends FileView {
     this.addIconButton(actions, "volume-2", this.plugin.t("documentSpeak"), () => {
       this.speakCurrentDocument();
     });
+    const noteDrawButton = this.addIconButton(actions, "wand-sparkles", this.plugin.t("documentDrawWithNoteDraw"), () => {
+      void this.activateNoteDraw("draw");
+    });
+    noteDrawButton.addClass("is-notedraw");
+    noteDrawButton.setAttr("aria-pressed", "false");
     this.addIconButton(actions, "file-code-2", this.plugin.t("documentExportHtml"), () => {
       void this.exportConversion("html");
     });
@@ -21562,7 +21829,9 @@ class CancipDocumentWorkbenchView extends FileView {
       editor.scrollTop = Math.max(0, line * lineHeight - editor.clientHeight / 3);
       return;
     }
-    const htmlFrame = body.querySelector<HTMLIFrameElement>(".obcc-document-html-preview");
+    const htmlFrame = this.htmlPreviewFrame?.isConnected
+      ? this.htmlPreviewFrame
+      : body.querySelector<HTMLIFrameElement>(".obcc-document-html-preview");
     if (htmlFrame) {
       htmlFrame.contentWindow?.postMessage({
         channel: DOCUMENT_HTML_PREVIEW_CHANNEL,
@@ -21614,7 +21883,9 @@ class CancipDocumentWorkbenchView extends FileView {
     const body = this.contentEl.querySelector<HTMLElement>(".obcc-document-body");
     const selection = this.contentEl.ownerDocument.defaultView?.getSelection();
     if (selection && body && selection.rangeCount && body.contains(selection.anchorNode)) selection.removeAllRanges();
-    const frame = body?.querySelector<HTMLIFrameElement>(".obcc-document-html-preview");
+    const frame = this.htmlPreviewFrame?.isConnected
+      ? this.htmlPreviewFrame
+      : body?.querySelector<HTMLIFrameElement>(".obcc-document-html-preview");
     frame?.contentWindow?.postMessage({ channel: DOCUMENT_HTML_PREVIEW_CHANNEL, action: "find", query: "" }, "*");
   }
 
@@ -21635,6 +21906,7 @@ class CancipDocumentWorkbenchView extends FileView {
     this.noteDrawMode = !this.noteDrawMode;
     if (this.noteDrawMode) this.noteDrawTextMode = false;
     this.syncNoteDrawMode();
+    if (this.noteDrawMode) this.scheduleNoteDrawCanvasResize();
     const label = this.noteDrawMode ? this.plugin.t("documentDrawWithNoteDrawActive") : this.plugin.t("documentDrawWithNoteDraw");
     const button = this.contentEl.querySelector<HTMLButtonElement>(".obcc-document-action.is-notedraw");
     if (button) {
@@ -21657,6 +21929,8 @@ class CancipDocumentWorkbenchView extends FileView {
       if (!opened) new Notice(this.plugin.t("documentNoteDrawUnavailable"));
       return;
     }
+    const stage = this.contentEl.querySelector<HTMLElement>(".obcc-document-stage");
+    if (stage && !this.noteDrawCanvas) await this.renderNoteDrawOverlay(stage, snapshot.file);
     if (kind === "text") this.toggleNoteDrawTextMode();
     else this.toggleNoteDrawMode();
   }
@@ -21698,6 +21972,7 @@ class CancipDocumentWorkbenchView extends FileView {
   private clearHtmlPreviewBridge(): void {
     this.htmlPreviewCleanup?.();
     this.htmlPreviewCleanup = null;
+    this.htmlPreviewFrame = null;
   }
 
   private installNoteDrawMarkdownEditModeBridge(stage: HTMLElement, onModeChange?: (enabled: boolean) => void): void {
@@ -21782,13 +22057,13 @@ class CancipDocumentWorkbenchView extends FileView {
   private async renderPreview(parent: HTMLElement): Promise<void> {
     const snapshot = this.snapshot;
     if (!snapshot) return;
-    const surfaceUrl = documentWorkbenchSurfaceUrl(snapshot.file.path);
-    this.contentEl.dataset.url = surfaceUrl;
+    delete this.contentEl.dataset.url;
     this.contentEl.dataset.noteDrawSourcePath = snapshot.file.path;
-    const stage = parent.createDiv({ cls: "obcc-document-stage mwv-embed", attr: { "data-url": surfaceUrl, "data-note-draw-source-path": snapshot.file.path } });
+    const stage = this.createDocumentWorkbenchStage(parent, snapshot);
     if (this.dirty) {
       await MarkdownRenderer.render(this.app, this.currentMarkdown(), stage, snapshot.file.path, this);
       this.installNoteDrawDraftBridge(stage, snapshot);
+      await this.renderFallbackNoteDrawOverlayIfActive(stage, snapshot);
       return;
     }
     const resourcePath = this.app.vault.getResourcePath(snapshot.file);
@@ -21797,31 +22072,22 @@ class CancipDocumentWorkbenchView extends FileView {
       const previewHtml = this.dirty
         ? documentMarkdownToPreviewHtml(this.currentMarkdown(), snapshot.file.basename)
         : snapshot.previewHtml;
-      const iframe = stage.createEl("iframe", {
-        cls: "obcc-document-html-preview",
-        attr: {
-          title: snapshot.file.name,
-          sandbox: "allow-scripts allow-forms allow-pointer-lock",
-          "data-url": surfaceUrl,
-          "data-note-draw-source-path": snapshot.file.path
-        }
-      });
+      const iframe = this.createIsolatedWorkbenchFrame(stage, "obcc-document-html-preview", snapshot.file.name);
+      iframe.setAttr("sandbox", "allow-scripts allow-forms allow-pointer-lock");
+      iframe.setAttr("data-note-draw-source-path", snapshot.file.path);
+      this.htmlPreviewFrame = iframe;
       this.installHtmlPreviewBridge(stage, iframe, snapshot);
       iframe.srcdoc = previewHtml;
+      await this.renderFallbackNoteDrawOverlayIfActive(stage, snapshot);
       return;
     }
     if (snapshot.previewKind === "pdf") {
       parent.addClass("is-native-preview");
-      stage.createEl("iframe", {
-        cls: "obcc-document-native-preview",
-        attr: {
-          src: resourcePath,
-          title: snapshot.file.name,
-          "data-url": surfaceUrl,
-          "data-note-draw-source-path": snapshot.file.path
-        }
-      });
+      const iframe = this.createIsolatedWorkbenchFrame(stage, "obcc-document-native-preview", snapshot.file.name);
+      iframe.setAttr("src", resourcePath);
+      iframe.setAttr("data-note-draw-source-path", snapshot.file.path);
       this.installNoteDrawDraftBridge(stage, snapshot);
+      await this.renderFallbackNoteDrawOverlayIfActive(stage, snapshot);
       return;
     }
     if (snapshot.previewKind === "image") {
@@ -21830,11 +22096,11 @@ class CancipDocumentWorkbenchView extends FileView {
         attr: {
           src: resourcePath,
           alt: snapshot.file.basename,
-          "data-url": surfaceUrl,
           "data-note-draw-source-path": snapshot.file.path
         }
       });
       this.installNoteDrawDraftBridge(stage, snapshot);
+      await this.renderFallbackNoteDrawOverlayIfActive(stage, snapshot);
       return;
     }
     if (snapshot.previewKind === "audio") {
@@ -21844,11 +22110,11 @@ class CancipDocumentWorkbenchView extends FileView {
           src: resourcePath,
           controls: "true",
           preload: "metadata",
-          "data-url": surfaceUrl,
           "data-note-draw-source-path": snapshot.file.path
         }
       });
       this.installNoteDrawDraftBridge(stage, snapshot);
+      await this.renderFallbackNoteDrawOverlayIfActive(stage, snapshot);
       return;
     }
     if (snapshot.previewKind === "video") {
@@ -21858,15 +22124,49 @@ class CancipDocumentWorkbenchView extends FileView {
           src: resourcePath,
           controls: "true",
           preload: "metadata",
-          "data-url": surfaceUrl,
           "data-note-draw-source-path": snapshot.file.path
         }
       });
       this.installNoteDrawDraftBridge(stage, snapshot);
+      await this.renderFallbackNoteDrawOverlayIfActive(stage, snapshot);
       return;
     }
     await MarkdownRenderer.render(this.app, this.currentMarkdown(), stage, snapshot.file.path, this);
     this.installNoteDrawDraftBridge(stage, snapshot);
+    await this.renderFallbackNoteDrawOverlayIfActive(stage, snapshot);
+  }
+
+  private createDocumentWorkbenchStage(parent: HTMLElement, snapshot: DocumentSnapshot): HTMLElement {
+    const stage = parent.createDiv({
+      cls: "obcc-document-stage",
+      attr: { "data-note-draw-source-path": snapshot.file.path }
+    });
+    return stage;
+  }
+
+  private createIsolatedWorkbenchFrame(stage: HTMLElement, className: string, title: string): HTMLIFrameElement {
+    const host = stage.createDiv({ cls: `obcc-document-preview-host ${className}-host` });
+    const shadow = host.attachShadow({ mode: "open" });
+    const iframe = stage.ownerDocument.createElement("iframe");
+    iframe.className = className;
+    iframe.setAttr("title", title);
+    iframe.setCssProps({
+      display: "block",
+      width: "100%",
+      height: "100%",
+      minHeight: "inherit",
+      border: "0",
+      background: "var(--background-primary)"
+    });
+    shadow.appendChild(iframe);
+    return iframe;
+  }
+
+  private async renderFallbackNoteDrawOverlayIfActive(stage: HTMLElement, snapshot: DocumentSnapshot): Promise<void> {
+    if (!this.noteDrawMode && !this.noteDrawTextMode) return;
+    if (!this.noteDrawCanvas || this.noteDrawStage !== stage || !this.noteDrawCanvas.isConnected) {
+      await this.renderNoteDrawOverlay(stage, snapshot.file);
+    }
   }
 
   private installNoteDrawDraftBridge(stage: HTMLElement, snapshot: DocumentSnapshot): void {
@@ -21907,7 +22207,7 @@ class CancipDocumentWorkbenchView extends FileView {
       if (this.noteDrawDraftOverlay || !this.noteDrawMarkdownEditMode) return;
       const overlay = stage.createDiv({
         cls: "obcc-document-note-draw-edit-surface",
-        attr: { "data-note-draw-source-path": snapshot.file.path, "data-url": documentWorkbenchSurfaceUrl(snapshot.file.path) }
+        attr: { "data-note-draw-source-path": snapshot.file.path }
       });
       this.noteDrawDraftOverlay = overlay;
       await MarkdownRenderer.render(this.app, this.currentMarkdown(), overlay, snapshot.file.path, this);
@@ -21959,7 +22259,9 @@ class CancipDocumentWorkbenchView extends FileView {
       if (event.data.type === "height") {
         const height = Math.round(Number(event.data.height));
         if (Number.isFinite(height) && height >= 120 && height <= 200_000) {
+          stage.setCssProps({ "--obcc-document-html-height": `${height}px` });
           iframe.setCssProps({ "--obcc-document-html-height": `${height}px` });
+          this.scheduleNoteDrawCanvasResize();
         }
         return;
       }
@@ -22116,8 +22418,8 @@ class CancipDocumentWorkbenchView extends FileView {
 
   private noteDrawApi(): NoteDrawApi | null {
     const runtime = ((this.app as App & { plugins?: { plugins?: Record<string, unknown> } }).plugins?.plugins ?? {})["notedraw"];
-    if (!isRecord(runtime) || !isRecord(runtime.api)) return null;
-    return runtime.api;
+    if (!isRecord(runtime)) return null;
+    return isRecord(runtime.api) ? runtime.api as NoteDrawApi : null;
   }
 
   private async readNoteDrawStrokes(file: TFile): Promise<DocumentDrawingStroke[]> {
@@ -22169,6 +22471,7 @@ class CancipDocumentWorkbenchView extends FileView {
       : null;
     this.noteDrawResizeObserver?.observe(stage);
     this.resizeNoteDrawCanvas();
+    this.scheduleNoteDrawCanvasResize();
     const onPointerDown = (event: PointerEvent) => {
       if (!this.noteDrawMode || event.button !== 0) return;
       event.preventDefault();
@@ -22224,6 +22527,16 @@ class CancipDocumentWorkbenchView extends FileView {
     this.syncNoteDrawMode();
   }
 
+  private scheduleNoteDrawCanvasResize(): void {
+    const stage = this.noteDrawStage;
+    if (!stage?.isConnected) return;
+    const hostWindow = stage.ownerDocument.defaultView ?? activeWindow;
+    hostWindow.requestAnimationFrame(() => this.resizeNoteDrawCanvas());
+    for (const delay of [80, 240, 600]) {
+      hostWindow.setTimeout(() => this.resizeNoteDrawCanvas(), delay);
+    }
+  }
+
   private async refreshNoteDrawOverlay(file: TFile): Promise<void> {
     if (!this.noteDrawCanvas || !this.noteDrawStage || !this.matchesFile(file.path)) return;
     this.noteDrawStrokes = await this.readNoteDrawStrokes(file);
@@ -22241,7 +22554,6 @@ class CancipDocumentWorkbenchView extends FileView {
     if (canvas.width !== Math.ceil(width * ratio) || canvas.height !== Math.ceil(height * ratio)) {
       canvas.width = Math.ceil(width * ratio);
       canvas.height = Math.ceil(height * ratio);
-      canvas.setCssProps({ width: `${width}px`, height: `${height}px` });
     }
     const context = canvas.getContext("2d");
     if (!context) return;
@@ -25433,7 +25745,7 @@ class CancipView extends ItemView {
     const trailing = value.slice(selectionEnd);
     if (trailing.trim()) return null;
     const prefix = value.slice(0, selectionStart);
-    if (prefix.trim().length < AUTOCOMPLETE_MIN_INPUT_CHARS && !this.messages.length) return null;
+    if (prefix.trim().length < AUTOCOMPLETE_MIN_INPUT_CHARS) return null;
     if (this.detectActiveMention()) return null;
     return prefix;
   }
@@ -25710,7 +26022,7 @@ class CancipView extends ItemView {
     const path = this.composerAutocompletePath();
     const nearbyContext = this.composerAutocompleteNearbyContext();
     const candidateCount = this.plugin.editorAutocompleteCandidateCount();
-    const prefetched = force ? [] : await this.plugin.awaitEditorAutocompleteBranchPrefetch(prefix, path);
+    const prefetched = force ? [] : this.plugin.editorPrefetchedAutocompleteCandidates(prefix, path);
     if (requestId !== this.autocompleteRequestId || this.autocompleteEligiblePrefix() !== prefix) return;
     try {
       let candidates = prefetched;
@@ -25904,10 +26216,9 @@ class CancipView extends ItemView {
     const selectedIndex = this.autocompleteCandidateIndex;
     const selectedTotal = this.autocompleteCandidates.length || 1;
     const path = this.composerAutocompletePath();
-    const preloadedNextBranch = this.plugin.editorPrefetchedAutocompleteCandidates(
-      `${prefix}${selected}`,
-      path
-    ).length >= this.plugin.editorAutocompleteCandidateCount();
+    const completedPrefix = `${prefix}${selected}`;
+    const preloadedNextCandidates = this.plugin.editorPrefetchedAutocompleteCandidates(completedPrefix, path);
+    const preloadedNextBranch = preloadedNextCandidates.length >= this.plugin.editorAutocompleteCandidateCount();
     this.finalizeAutocompleteUsage("closed", {
       used: true,
       selectedText: selected,
@@ -25926,6 +26237,14 @@ class CancipView extends ItemView {
     this.clearAutocompleteSuggestion();
     this.inputEl.value = next;
     this.inputEl.setSelectionRange(nextCursor, nextCursor);
+    if (preloadedNextCandidates.length) {
+      const normalized = this.plugin.rememberEditorAutocompleteCandidateAlias(completedPrefix, path, preloadedNextCandidates);
+      if (normalized.length) {
+        this.autocompleteCandidateBatchCache.set(this.autocompleteCacheKey(completedPrefix), normalized);
+        this.setAutocompleteCandidateBatch(completedPrefix, normalized);
+        this.scheduleComposerBranchPrefetch(completedPrefix, this.composerAutocompleteNearbyContext(), path, normalized);
+      }
+    }
     this.handleComposerInputChanged();
     this.focusInput();
   }
@@ -26074,13 +26393,27 @@ class CancipView extends ItemView {
     const modelLabel = popover.createEl("label", { cls: "obcc-autocomplete-model-row" });
     modelLabel.createSpan({ text: this.t("settingsAutocompleteModel") });
     const modelSelect = modelLabel.createEl("select");
-    for (const option of this.plugin.autocompleteApiProfileOptions()) {
+    for (const option of this.plugin.autocompleteModelOptions()) {
       modelSelect.createEl("option", { text: option.label, attr: { value: option.value } });
     }
-    modelSelect.value = this.plugin.settings.composerAutocompleteApiProfileId;
+    modelSelect.value = this.plugin.settings.composerAutocompleteModel;
     modelSelect.addEventListener("change", () => {
-      void this.plugin.selectAutocompleteApiProfile(modelSelect.value).then(() => {
-        modelSelect.value = this.plugin.settings.composerAutocompleteApiProfileId;
+      void this.plugin.selectAutocompleteModel(modelSelect.value).then(() => {
+        modelSelect.value = this.plugin.settings.composerAutocompleteModel;
+        this.placeAutocompletePopover();
+      });
+    });
+
+    const sourceLabel = popover.createEl("label", { cls: "obcc-autocomplete-model-row" });
+    sourceLabel.createSpan({ text: this.t("settingsAutocompleteSource") });
+    const sourceSelect = sourceLabel.createEl("select");
+    for (const option of this.plugin.autocompleteApiProfileOptions()) {
+      sourceSelect.createEl("option", { text: option.label, attr: { value: option.value } });
+    }
+    sourceSelect.value = this.plugin.settings.composerAutocompleteApiProfileId;
+    sourceSelect.addEventListener("change", () => {
+      void this.plugin.selectAutocompleteApiProfile(sourceSelect.value).then(() => {
+        sourceSelect.value = this.plugin.settings.composerAutocompleteApiProfileId;
         this.placeAutocompletePopover();
       });
     });
@@ -26583,7 +26916,27 @@ class CancipView extends ItemView {
     });
     button.disabled = disabled;
     setIcon(button, icon);
+    let pointerActivatedAt = 0;
+    button.addEventListener("pointerdown", (event) => {
+      if (event.pointerType === "mouse" && event.button !== 0) return;
+      if (event.isPrimary === false) return;
+      event.preventDefault();
+      event.stopPropagation();
+    });
+    button.addEventListener("pointerup", (event) => {
+      if (event.pointerType === "mouse" || event.isPrimary === false) return;
+      event.preventDefault();
+      event.stopPropagation();
+      pointerActivatedAt = Date.now();
+      if (!button.disabled) onClick();
+    });
     button.addEventListener("click", (event) => {
+      if (pointerActivatedAt && Date.now() - pointerActivatedAt <= 900) {
+        event.preventDefault();
+        event.stopPropagation();
+        pointerActivatedAt = 0;
+        return;
+      }
       event.preventDefault();
       event.stopPropagation();
       if (!button.disabled) onClick();
@@ -26600,16 +26953,17 @@ class CancipView extends ItemView {
 
   private modelProfileForMenuModel(model: string, fallback: ApiProfile = this.plugin.activeApiProfile()): ApiProfile {
     const profileId = this.plugin.settings.modelSourceByModel?.[model]?.trim();
-    return this.plugin.settings.apiProfiles.find((profile) => profile.id === profileId)
+    const resolvedProfileId = resolveApiProfileId(profileId || defaultModelSourceIdForModel(model), this.plugin.settings.apiProfiles);
+    return this.plugin.settings.apiProfiles.find((profile) => profile.id === resolvedProfileId)
       ?? this.plugin.settings.apiProfiles.find((profile) => profile.model === model)
-      ?? this.plugin.settings.apiProfiles.find((profile) => profile.id === defaultModelSourceIdForModel(model))
       ?? fallback;
   }
 
   private async setModelFromMenu(model: string, profileId?: string): Promise<void> {
     const active = this.plugin.activeApiProfile();
-    const targetProfile = profileId && this.plugin.settings.apiProfiles.some((profile) => profile.id === profileId)
-      ? profileId
+    const resolvedProfileId = resolveApiProfileId(profileId ?? "", this.plugin.settings.apiProfiles);
+    const targetProfile = resolvedProfileId && this.plugin.settings.apiProfiles.some((profile) => profile.id === resolvedProfileId)
+      ? resolvedProfileId
       : active.id;
     if (targetProfile === active.id && model === active.model) {
       this.closeCommandMenu();
@@ -26618,6 +26972,7 @@ class CancipView extends ItemView {
       return;
     }
     this.plugin.settings.activeApiProfileId = targetProfile;
+    this.plugin.settings.model = model;
     this.plugin.settings.apiProfiles = this.plugin.settings.apiProfiles.map((profile) =>
       profile.id === targetProfile ? normalizeApiProfile({ ...profile, model }, profile) : profile
     );
@@ -26696,6 +27051,7 @@ class CancipView extends ItemView {
     this.plugin.settings.modelSourceByModel = nextSourceByModel;
     if (this.plugin.activeApiProfile().model === model) {
       this.plugin.settings.activeApiProfileId = result.profileId;
+      this.plugin.settings.model = next;
       this.plugin.settings.apiProfiles = this.plugin.settings.apiProfiles.map((profile) =>
         profile.id === result.profileId ? normalizeApiProfile({ ...profile, model: next }, profile) : profile
       );
@@ -26848,7 +27204,7 @@ class CancipView extends ItemView {
     if (!win || !target?.instanceOf(win.Element)) return;
     const element = target;
     if (element.closest("input, textarea, select, option, label")) return;
-    if (element.closest(".obcc-autocomplete-apply, .obcc-editor-autocomplete-apply, .obcc-tts-drag-handle, .obcc-document-stage, .obcc-review-resize-handle, [draggable='true']")) return;
+    if (element.closest(".obcc-autocomplete-apply, .obcc-editor-autocomplete-apply, .obcc-model-menu-action, .obcc-tts-drag-handle, .obcc-document-stage, .obcc-review-resize-handle, [draggable='true']")) return;
     const actionable = element.closest<HTMLElement>("button, summary, [role='button']");
     if (!actionable || actionable.matches(":disabled") || actionable.getAttribute("aria-disabled") === "true") return;
     const owned = this.contentEl.contains(actionable)
@@ -28846,6 +29202,29 @@ class CancipView extends ItemView {
     return loaded;
   }
 
+  private async createDedicatedAutomationSession(task: AutomationTask, sessionId: string): Promise<SessionHistoryEntry> {
+    const now = new Date().toISOString();
+    await this.newChat({ force: true, skipSaveCurrent: this.isBackgroundAutomationRunner(), focus: false });
+    this.sessionId = sessionId;
+    this.sessionCreatedAt = now;
+    this.sessionStartedAt = "";
+    this.sessionCompletedAt = "";
+    this.sessionStoppedAt = "";
+    this.sessionFailedAt = "";
+    this.currentSessionStatus = "idle";
+    this.currentSessionCompletedNotice = false;
+    this.sessionTitleOverride = task.title;
+    this.messages = [];
+    this.draftContext = [];
+    this.manualTodos = [];
+    this.taskControl = null;
+    this.includeCurrentFileForSession = false;
+    await this.saveCurrentSession();
+    const entry = (await this.readSessionHistoryIndex({ force: true, mergeFiles: false })).find((item) => item.id === sessionId && !item.eventOnly);
+    if (!entry) throw new Error(`Automation session create failed: ${sessionId}`);
+    return entry;
+  }
+
   async prepareAutomationSession(task: AutomationTask, currentSessionId = ""): Promise<void> {
     if (this.activeRequest) return;
     if (task.sessionMode === "new") {
@@ -28858,7 +29237,10 @@ class CancipView extends ItemView {
       return;
     }
     if (!targetId || (targetId === this.sessionId && !this.isBackgroundAutomationRunner())) return;
-    const entry = (await this.readSessionHistoryIndex({ force: true, mergeFiles: false })).find((item) => item.id === targetId && !item.eventOnly);
+    let entry = (await this.readSessionHistoryIndex({ force: true, mergeFiles: false })).find((item) => item.id === targetId && !item.eventOnly);
+    if (!entry && task.sessionMode === "session" && shouldCreateMissingAutomationSession(task, targetId)) {
+      entry = await this.createDedicatedAutomationSession(task, targetId);
+    }
     if (!entry) throw new Error(`Automation session not found: ${targetId}`);
     await this.loadSessionHistoryEntry(entry, { saveCurrent: false, focusInput: false, markRead: false });
   }
@@ -28914,7 +29296,7 @@ class CancipView extends ItemView {
   }
 
   private async setModel(model: string): Promise<void> {
-    await this.plugin.updateActiveApiProfile({ model });
+    await this.plugin.selectModel(model);
     this.render();
     this.setStatus(this.t("modelChanged", { model }));
     this.focusInput();
@@ -39466,7 +39848,7 @@ class CancipView extends ItemView {
     }
 
     if (normalized === "cancip.automation.addNewsBrief") {
-      const templates = cancipAutomationTemplates(this.plugin.language()).filter((item) => item.id === "auto-news-brief-morning" || item.id === "auto-news-brief-evening");
+      const templates = newsBriefAutomationTemplates(this.plugin.language());
       const tasks: AutomationTask[] = [];
       for (const template of templates) {
         tasks.push(await this.plugin.upsertAutomationFromAction({
@@ -44136,6 +44518,9 @@ class CancipSettingTab extends PluginSettingTab {
   private activeSettingsPage = "common";
   private restoreSettingsAnchorOnNextDisplay = true;
   private settingsPageTabsScrollLeft = 0;
+  private deferredSettingsRefresh = false;
+  private settingsFocusOutHandler: ((event: FocusEvent) => void) | null = null;
+  private deferredSettingsRefreshTimer: number | null = null;
 
   constructor(
     app: App,
@@ -44155,7 +44540,59 @@ class CancipSettingTab extends PluginSettingTab {
   }
 
   refreshSettings(): void {
-    if (this.containerEl.isConnected) this.renderSettings();
+    if (!this.containerEl.isConnected || this.renderingSettings) return;
+    if (this.hasFocusedSettingsControl()) {
+      this.deferSettingsRefreshUntilBlur();
+      return;
+    }
+    this.renderSettings();
+  }
+
+  private hasFocusedSettingsControl(): boolean {
+    const active = this.containerEl.ownerDocument.activeElement;
+    return Boolean(
+      active
+      && this.containerEl.contains(active)
+      && active.matches("input, textarea, select, [contenteditable='true']")
+    );
+  }
+
+  private deferSettingsRefreshUntilBlur(): void {
+    this.deferredSettingsRefresh = true;
+    if (!this.settingsFocusOutHandler) {
+      this.settingsFocusOutHandler = () => this.scheduleDeferredSettingsRefreshCheck(0);
+      this.containerEl.addEventListener("focusout", this.settingsFocusOutHandler, true);
+      this.containerEl.addEventListener("blur", this.settingsFocusOutHandler, true);
+    }
+    this.scheduleDeferredSettingsRefreshCheck(120);
+  }
+
+  private scheduleDeferredSettingsRefreshCheck(delay: number): void {
+    if (this.deferredSettingsRefreshTimer !== null) return;
+    const win = this.containerEl.ownerDocument.defaultView ?? window;
+    this.deferredSettingsRefreshTimer = win.setTimeout(() => {
+      this.deferredSettingsRefreshTimer = null;
+      if (!this.deferredSettingsRefresh) return;
+      if (this.hasFocusedSettingsControl()) {
+        this.scheduleDeferredSettingsRefreshCheck(120);
+        return;
+      }
+      this.clearDeferredSettingsRefresh();
+      if (this.containerEl.isConnected) this.renderSettings();
+    }, Math.max(0, delay));
+  }
+
+  private clearDeferredSettingsRefresh(): void {
+    this.deferredSettingsRefresh = false;
+    if (this.deferredSettingsRefreshTimer !== null) {
+      const win = this.containerEl.ownerDocument.defaultView ?? window;
+      win.clearTimeout(this.deferredSettingsRefreshTimer);
+      this.deferredSettingsRefreshTimer = null;
+    }
+    if (!this.settingsFocusOutHandler) return;
+    this.containerEl.removeEventListener("focusout", this.settingsFocusOutHandler, true);
+    this.containerEl.removeEventListener("blur", this.settingsFocusOutHandler, true);
+    this.settingsFocusOutHandler = null;
   }
 
   private rememberSettingsPageTabsScroll(tabs: HTMLElement | null): void {
@@ -44171,6 +44608,7 @@ class CancipSettingTab extends PluginSettingTab {
   }
 
   private renderSettings(): void {
+    this.clearDeferredSettingsRefresh();
     const { containerEl } = this;
     const existingTabs = containerEl.querySelector<HTMLElement>(":scope > .obcc-settings-page-tabs");
     this.rememberSettingsPageTabsScroll(existingTabs);
@@ -44196,20 +44634,17 @@ class CancipSettingTab extends PluginSettingTab {
 
       const pages: Array<{ id: string; label: string; render: (parent: HTMLElement) => void }> = [
         { id: "common", label: this.plugin.t("settingsGroupCommon"), render: (parent) => this.displayCommonSettings(parent) },
-        { id: "interface", label: this.plugin.t("settingsGroupInterface"), render: (parent) => this.displayInterfaceSettings(parent) },
         { id: "workbench", label: this.plugin.t("settingsGroupWorkbench"), render: (parent) => this.displayDocumentWorkbenchSettings(parent) },
         { id: "buttons", label: this.plugin.t("settingsGroupButtonEditing"), render: (parent) => this.displayButtonEditingSettings(parent) },
+        { id: "review", label: this.plugin.t("settingsGroupReviewSystem"), render: (parent) => this.displayReviewSystemSettings(parent) },
+        { id: "file-pins", label: this.plugin.t("settingsGroupFilePins"), render: (parent) => this.displayFilePinSettings(parent) },
         { id: "autocomplete", label: this.plugin.t("settingsGroupAutocomplete"), render: (parent) => this.displayAutocompleteSettings(parent) },
-        { id: "context", label: this.plugin.t("settingsGroupContext"), render: (parent) => this.displayContextSettings(parent) },
         { id: "skills", label: this.plugin.t("settingsGroupSkills"), render: (parent) => this.displaySkillSettings(parent) },
         { id: "plan", label: this.plugin.t("settingsGroupPlan"), render: (parent) => this.displayPlanSettings(parent) },
-        { id: "commands", label: this.plugin.t("settingsGroupCommandBus"), render: (parent) => this.displayCommandBusSettings(parent) },
-        { id: "versions", label: this.plugin.t("settingsGroupVersioning"), render: (parent) => this.displayVersioningSettings(parent) },
         { id: "automation", label: this.plugin.t("settingsGroupAutomation"), render: (parent) => this.displayAutomationSettings(parent) },
         { id: "notifications", label: this.plugin.t("settingsGroupNotifications"), render: (parent) => this.displayNotificationSettings(parent) },
         { id: "tts", label: this.plugin.t("settingsGroupTts"), render: (parent) => this.displayTtsSettings(parent) },
-        { id: "export", label: this.plugin.t("settingsGroupExport"), render: (parent) => this.displayExportSettings(parent) },
-        { id: "model", label: this.plugin.t("settingsGroupModelAdvanced"), render: (parent) => this.displayModelAdvancedSettings(parent) }
+        { id: "export", label: this.plugin.t("settingsGroupExport"), render: (parent) => this.displayExportSettings(parent) }
       ];
       if (!pages.some((page) => page.id === this.activeSettingsPage)) this.activeSettingsPage = "common";
       const tabs = containerEl.createDiv({ cls: "obcc-settings-page-tabs", attr: { role: "tablist" } });
@@ -44272,7 +44707,9 @@ class CancipSettingTab extends PluginSettingTab {
           });
       });
 
+    this.displayDefaultModelSettings(parent);
     this.displayApiProfileSettings(parent);
+    this.displayModelAdvancedSettings(parent);
 
     new Setting(parent)
       .setName(this.plugin.t("settingsSystemPrompt"))
@@ -44280,14 +44717,70 @@ class CancipSettingTab extends PluginSettingTab {
       .addTextArea((text) => {
         text.inputEl.rows = 8;
         text
-          .setValue(this.plugin.settings.systemPrompt)
-          .onChange(async (value) => {
-            this.plugin.settings.systemPrompt = value;
-            await this.plugin.saveSettings();
-          });
+          .setValue(this.plugin.settings.systemPrompt);
+        this.bindSettingsCommit(text.inputEl, () => text.getValue(), async (value) => {
+          this.plugin.settings.systemPrompt = value;
+          await this.plugin.saveSettings();
+        }, false);
       });
 
+    this.displayInterfaceSettings(parent);
     this.renderSupportCodes(parent);
+  }
+
+  private displayDefaultModelSettings(parent: HTMLElement): void {
+    const active = this.plugin.activeApiProfile();
+    const sourceOptions: Record<string, string> = {};
+    for (const profile of this.plugin.settings.apiProfiles) {
+      sourceOptions[profile.id] = apiProfileDisplayLabel(profile, this.plugin.language());
+    }
+    const selectedModel = this.plugin.settings.model || active.model;
+    const selectedSourceId = resolveApiProfileId(
+      this.plugin.settings.modelSourceByModel[selectedModel] || this.plugin.settings.activeApiProfileId,
+      this.plugin.settings.apiProfiles
+    ) || active.id;
+    new Setting(parent)
+      .setName(this.plugin.t("settingsDefaultModelSource"))
+      .setDesc(this.plugin.t("settingsDefaultModelSourceDesc"))
+      .addDropdown((dropdown) => {
+        dropdown
+          .addOptions(sourceOptions)
+          .setValue(selectedSourceId)
+          .onChange(async (value) => {
+            await this.plugin.selectModel(selectedModel, value);
+            this.plugin.refreshOpenViews();
+            this.refreshSettings();
+          });
+      });
+    const modelOptions: Record<string, string> = Object.fromEntries(
+      normalizeModelOptions(this.plugin.settings.modelOptions, selectedModel).map((model) => {
+        const profile = this.plugin.apiProfileForModel(model);
+        return [model, `${profile.name || profile.id} · ${model}`];
+      })
+    );
+    new Setting(parent)
+      .setName(this.plugin.t("settingsDefaultModel"))
+      .setDesc(this.plugin.t("settingsDefaultModelDesc"))
+      .addDropdown((dropdown) => {
+        dropdown
+          .addOptions(modelOptions)
+          .setValue(selectedModel)
+          .onChange(async (value) => {
+            await this.plugin.selectModel(value, this.plugin.settings.modelSourceByModel[value] || selectedSourceId);
+            this.plugin.refreshOpenViews();
+            this.refreshSettings();
+          });
+      })
+      .addText((text) => {
+        text
+          .setPlaceholder(DEFAULT_SETTINGS.model)
+          .setValue(selectedModel);
+        this.bindSettingsCommit(text.inputEl, () => text.getValue(), async (value) => {
+          await this.plugin.selectModel(value.trim(), selectedSourceId);
+          this.plugin.refreshOpenViews();
+          this.refreshSettings();
+        });
+      });
   }
 
   private captureScrollSnapshots(): Array<{ element: HTMLElement; top: number; left: number; anchorIndex?: number; anchorOffset?: number; anchorIdentity?: string; anchorOccurrence?: number }> {
@@ -44417,6 +44910,29 @@ class CancipSettingTab extends PluginSettingTab {
     });
   }
 
+  private bindSettingsCommit(
+    control: HTMLInputElement | HTMLTextAreaElement,
+    read: () => string,
+    onCommit: (value: string) => void | Promise<void>,
+    enterBlurs = true
+  ): void {
+    let savedValue = read();
+    const commit = async (): Promise<void> => {
+      const nextValue = read();
+      if (nextValue === savedValue) return;
+      savedValue = nextValue;
+      await onCommit(nextValue);
+    };
+    control.addEventListener("change", () => void commit());
+    control.addEventListener("blur", () => void commit());
+    control.addEventListener("keydown", (event) => {
+      const keyEvent = event as KeyboardEvent;
+      if (!enterBlurs || keyEvent.key !== "Enter") return;
+      if (control.tagName === "TEXTAREA" && !keyEvent.ctrlKey && !keyEvent.metaKey) return;
+      control.blur();
+    });
+  }
+
   private addTextSetting(
     parent: HTMLElement,
     nameKey: I18nKey,
@@ -44430,10 +44946,8 @@ class CancipSettingTab extends PluginSettingTab {
     setting.addText((text) => {
       text
         .setPlaceholder(placeholder)
-        .setValue(value)
-        .onChange(async (next) => {
-          await onChange(next);
-        });
+        .setValue(value);
+      this.bindSettingsCommit(text.inputEl, () => text.getValue(), onChange);
     });
   }
 
@@ -44456,13 +44970,23 @@ class CancipSettingTab extends PluginSettingTab {
       text.inputEl.step = "1";
       text
         .setPlaceholder(placeholder)
-        .setValue(String(value))
-        .onChange(async (next) => {
-          const parsed = Number.parseInt(next, 10);
-          if (Number.isFinite(parsed)) {
-            await onChange(Math.max(min, Math.min(max, parsed)));
-          }
-        });
+        .setValue(String(value));
+      let savedValue = String(value);
+      const commit = async () => {
+        const parsed = Number.parseInt(text.getValue(), 10);
+        if (!Number.isFinite(parsed)) return;
+        const next = Math.max(min, Math.min(max, parsed));
+        const nextText = String(next);
+        if (nextText === savedValue) return;
+        savedValue = nextText;
+        text.setValue(nextText);
+        await onChange(next);
+      };
+      text.inputEl.addEventListener("change", () => void commit());
+      text.inputEl.addEventListener("blur", () => void commit());
+      text.inputEl.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") text.inputEl.blur();
+      });
     });
   }
 
@@ -44495,12 +45019,6 @@ class CancipSettingTab extends PluginSettingTab {
       this.plugin.invalidatePersonalizationFreshness();
       this.plugin.schedulePersonalizationRefresh(0);
     }, "settingsPersonalizationWeatherLocationDesc");
-    this.addToggleSetting(parent, "settingsForceStatusBarVisible", this.plugin.settings.forceStatusBarVisible, async (value) => {
-      this.plugin.settings.forceStatusBarVisible = value;
-      await this.plugin.saveSettings();
-      this.plugin.applyStatusBarVisibility();
-      this.plugin.scheduleUiButtonRulesApply(0);
-    }, "settingsForceStatusBarVisibleDesc");
   }
 
   private displayDocumentWorkbenchSettings(parent: HTMLElement): void {
@@ -44564,6 +45082,12 @@ class CancipSettingTab extends PluginSettingTab {
     this.addToggleSetting(parent, "settingsUiButtonManagement", this.plugin.settings.uiButtonManagementEnabled, async (value) => {
       await this.plugin.setUiButtonManagementEnabled(value);
     }, "settingsUiButtonManagementDesc");
+    this.addToggleSetting(parent, "settingsForceStatusBarVisible", this.plugin.settings.forceStatusBarVisible, async (value) => {
+      this.plugin.settings.forceStatusBarVisible = value;
+      await this.plugin.saveSettings();
+      this.plugin.applyStatusBarVisibility();
+      this.plugin.scheduleUiButtonRulesApply(0);
+    }, "settingsForceStatusBarVisibleDesc");
     this.displayUiButtonRuleResetList(parent);
   }
 
@@ -44614,6 +45138,17 @@ class CancipSettingTab extends PluginSettingTab {
       .setName(this.plugin.t("settingsAutocompleteModel"))
       .setDesc(this.plugin.t("settingsAutocompleteModelDesc"))
       .addDropdown((dropdown) => {
+        for (const option of this.plugin.autocompleteModelOptions()) dropdown.addOption(option.value, option.label);
+        dropdown
+          .setValue(this.plugin.settings.composerAutocompleteModel)
+          .onChange(async (value) => {
+            await this.plugin.selectAutocompleteModel(value);
+          });
+      });
+    new Setting(parent)
+      .setName(this.plugin.t("settingsAutocompleteSource"))
+      .setDesc(this.plugin.t("settingsAutocompleteSourceDesc"))
+      .addDropdown((dropdown) => {
         for (const option of this.plugin.autocompleteApiProfileOptions()) dropdown.addOption(option.value, option.label);
         dropdown
           .setValue(this.plugin.settings.composerAutocompleteApiProfileId)
@@ -44650,8 +45185,7 @@ class CancipSettingTab extends PluginSettingTab {
 
   private displayUiButtonRuleResetList(parent: HTMLElement): void {
     const rules = this.plugin.modifiedUiButtonRules();
-    const details = this.createPersistentDetails(parent, "ui-button-rules", "obcc-ui-button-rules-list", this.plugin.t("settingsUiButtonRulesList"), false);
-    const wrapper = details.createDiv({ cls: "obcc-ui-button-rules-body" });
+    const wrapper = parent.createDiv({ cls: "obcc-ui-button-rules-list" });
     const header = wrapper.createDiv({ cls: "obcc-ui-button-rules-header" });
     const title = header.createDiv({ cls: "obcc-ui-button-rules-title" });
     title.createDiv({ cls: "obcc-ui-button-rules-name", text: `${this.plugin.t("settingsUiButtonRulesList")} (${rules.length})` });
@@ -44688,6 +45222,8 @@ class CancipSettingTab extends PluginSettingTab {
           : this.plugin.t("buttonEditScopeGlobal");
       const detailText = [scopeLabel, rule.commandName || rule.commandId || "", rule.selector].filter(Boolean).join(" · ");
       main.createDiv({ cls: "obcc-ui-button-rule-detail", text: detailText });
+      const time = formatSessionHistoryTime(rule.updatedAt || rule.createdAt || "");
+      if (time) main.createDiv({ cls: "obcc-ui-button-rule-date", text: this.plugin.t("settingsUiButtonRuleUpdatedAt", { time }) });
       const tags = main.createDiv({ cls: "obcc-ui-button-rule-tags" });
       for (const label of this.plugin.uiButtonRuleChangeLabels(rule)) {
         tags.createSpan({ text: label });
@@ -44703,6 +45239,111 @@ class CancipSettingTab extends PluginSettingTab {
           this.renderSettings();
         });
       });
+    }
+  }
+
+  private displayReviewSystemSettings(parent: HTMLElement): void {
+    const summary = parent.createDiv({ cls: "obcc-settings-async-summary" });
+    new Setting(parent)
+      .setName(this.plugin.t("reviewGate"))
+      .setDesc(this.plugin.t("settingsReviewSystemDesc"))
+      .addButton((button) => {
+        button
+          .setButtonText(this.plugin.t("settingsReviewOpenPending"))
+          .onClick(async () => {
+            const path = await this.plugin.firstPendingReviewGate(50);
+            if (!path) {
+              new Notice(this.plugin.t("reviewGatePanelEmpty"));
+              await this.plugin.activateReviewView();
+              return;
+            }
+            await this.plugin.activateReviewView(path);
+          });
+      })
+      .addButton((button) => {
+        button
+          .setButtonText(this.plugin.t("settingsReviewOpenLatest"))
+          .onClick(async () => {
+            const path = (await this.plugin.listReviewGates(1))[0] ?? "";
+            if (!path) {
+              new Notice(this.plugin.t("reviewGatePanelEmpty"));
+              return;
+            }
+            await this.plugin.activateReviewView(path);
+          });
+      })
+      .addButton((button) => {
+        button
+          .setButtonText(this.plugin.t("settingsReviewRebuildState"))
+          .onClick(async () => {
+            try {
+              const state = await this.plugin.rebuildReviewGateCanonicalState();
+              new Notice(this.plugin.t("settingsReviewStateRebuilt", { count: state.pendingPaths.length }));
+              await this.renderReviewSystemSummary(summary);
+            } catch (error) {
+              const reason = error instanceof Error ? error.message : String(error);
+              new Notice(this.plugin.t("actionFailed", { reason }));
+            }
+          });
+      });
+    void this.renderReviewSystemSummary(summary);
+  }
+
+  private async renderReviewSystemSummary(parent: HTMLElement): Promise<void> {
+    parent.empty();
+    try {
+      const count = await this.plugin.pendingReviewGateAttentionCount(50);
+      parent.createDiv({ cls: "obcc-settings-summary-line", text: this.plugin.t("settingsReviewPendingCount", { count }) });
+      const packages = await this.plugin.listReviewGates(8);
+      if (!packages.length) {
+        parent.createDiv({ cls: "obcc-settings-summary-muted", text: this.plugin.t("reviewGatePanelEmpty") });
+        return;
+      }
+      const list = parent.createEl("ul", { cls: "obcc-settings-summary-list" });
+      for (const path of packages) list.createEl("li", { text: path });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      parent.createDiv({ cls: "obcc-settings-summary-muted", text: this.plugin.t("actionFailed", { reason }) });
+    }
+  }
+
+  private displayFilePinSettings(parent: HTMLElement): void {
+    const summary = parent.createDiv({ cls: "obcc-settings-async-summary" });
+    new Setting(parent)
+      .setName(this.plugin.t("settingsFilePinsSummary"))
+      .setDesc(this.plugin.t("settingsFilePinsDesc"))
+      .addButton((button) => {
+        button
+          .setButtonText(this.plugin.t("settingsFilePinsRefresh"))
+          .onClick(async () => {
+            await this.plugin.loadFilePinState(true);
+            this.plugin.scheduleFilePinsApply(0);
+            await this.renderFilePinSettingsSummary(summary);
+          });
+      })
+      .addButton((button) => {
+        button
+          .setButtonText(this.plugin.t("settingsFilePinsSortActiveFolder"))
+          .onClick(async () => {
+            const activeFile = this.app.workspace.getActiveFile();
+            if (!activeFile) {
+              new Notice(this.plugin.t("settingsFilePinsNoActiveFolder"));
+              return;
+            }
+            await this.plugin.startFilePinSortMode(vaultPathParent(activeFile.path));
+          });
+      });
+    void this.renderFilePinSettingsSummary(summary);
+  }
+
+  private async renderFilePinSettingsSummary(parent: HTMLElement): Promise<void> {
+    parent.empty();
+    try {
+      const text = await this.plugin.filePinsSummary();
+      parent.createDiv({ cls: "obcc-settings-summary-pre", text });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      parent.createDiv({ cls: "obcc-settings-summary-muted", text: this.plugin.t("actionFailed", { reason }) });
     }
   }
 
@@ -45138,10 +45779,10 @@ class CancipSettingTab extends PluginSettingTab {
       .setName(this.plugin.t("automationTask"))
       .addText((text) => {
         text
-          .setValue(task.title)
-          .onChange(async (value) => {
-            await patchTask({ title: value.trim() || task.title });
-          });
+          .setValue(task.title);
+        this.bindSettingsCommit(text.inputEl, () => text.getValue(), async (value) => {
+          await patchTask({ title: value.trim() || task.title });
+        });
       });
 
     new Setting(body)
@@ -45149,10 +45790,10 @@ class CancipSettingTab extends PluginSettingTab {
       .addTextArea((text) => {
         text.inputEl.rows = 4;
         text
-          .setValue(task.prompt)
-          .onChange(async (value) => {
-            await patchTask({ prompt: value });
-          });
+          .setValue(task.prompt);
+        this.bindSettingsCommit(text.inputEl, () => text.getValue(), async (value) => {
+          await patchTask({ prompt: value });
+        }, false);
       });
 
     new Setting(body)
@@ -45160,10 +45801,10 @@ class CancipSettingTab extends PluginSettingTab {
       .addText((text) => {
         text
           .setPlaceholder("cancip.newsBrief")
-          .setValue(task.command ?? "")
-          .onChange(async (value) => {
-            await patchTask({ command: value.trim() || undefined });
-          });
+          .setValue(task.command ?? "");
+        this.bindSettingsCommit(text.inputEl, () => text.getValue(), async (value) => {
+          await patchTask({ command: value.trim() || undefined });
+        });
       });
 
     const activeProfile = this.plugin.activeApiProfile();
@@ -45220,26 +45861,26 @@ class CancipSettingTab extends PluginSettingTab {
       .addText((text) => {
         text
           .setPlaceholder("hour")
-          .setValue(String(task.hour))
-          .onChange(async (value) => {
-            await patchTask({ hour: clampInt(value, task.hour, 0, 23) });
-          });
+          .setValue(String(task.hour));
+        this.bindSettingsCommit(text.inputEl, () => text.getValue(), async (value) => {
+          await patchTask({ hour: clampInt(value, task.hour, 0, 23) });
+        });
       })
       .addText((text) => {
         text
           .setPlaceholder("minute")
-          .setValue(String(task.minute))
-          .onChange(async (value) => {
-            await patchTask({ minute: clampInt(value, task.minute, 0, 59) });
-          });
+          .setValue(String(task.minute));
+        this.bindSettingsCommit(text.inputEl, () => text.getValue(), async (value) => {
+          await patchTask({ minute: clampInt(value, task.minute, 0, 59) });
+        });
       })
       .addText((text) => {
         text
           .setPlaceholder("interval")
-          .setValue(String(task.intervalMinutes))
-          .onChange(async (value) => {
-            await patchTask({ intervalMinutes: clampInt(value, task.intervalMinutes, 1, 1440) });
-          });
+          .setValue(String(task.intervalMinutes));
+        this.bindSettingsCommit(text.inputEl, () => text.getValue(), async (value) => {
+          await patchTask({ intervalMinutes: clampInt(value, task.intervalMinutes, 1, 1440) });
+        });
       });
 
     const fixedSessionOptions: Record<string, string> = { "": this.plugin.t("automationSessionId") };
@@ -45275,10 +45916,10 @@ class CancipSettingTab extends PluginSettingTab {
       .addText((text) => {
         text
           .setPlaceholder(this.plugin.t("automationOptional"))
-          .setValue(task.condition ?? "")
-          .onChange(async (value) => {
-            await patchTask({ condition: value.trim() || undefined });
-          });
+          .setValue(task.condition ?? "");
+        this.bindSettingsCommit(text.inputEl, () => text.getValue(), async (value) => {
+          await patchTask({ condition: value.trim() || undefined });
+        });
       });
 
     new Setting(body)
@@ -45296,18 +45937,18 @@ class CancipSettingTab extends PluginSettingTab {
       .addText((text) => {
         text
           .setPlaceholder("**/*.md")
-          .setValue(task.newFilePattern ?? "")
-          .onChange(async (value) => {
-            await patchTask({ newFilePattern: value.trim() || undefined });
-          });
+          .setValue(task.newFilePattern ?? "");
+        this.bindSettingsCommit(text.inputEl, () => text.getValue(), async (value) => {
+          await patchTask({ newFilePattern: value.trim() || undefined });
+        });
       })
       .addText((text) => {
         text
           .setPlaceholder(this.plugin.t("automationNewFileDebounce"))
-          .setValue(String(task.newFileDebounceSeconds))
-          .onChange(async (value) => {
-            await patchTask({ newFileDebounceSeconds: clampInt(value, task.newFileDebounceSeconds, 1, 3600) });
-          });
+          .setValue(String(task.newFileDebounceSeconds));
+        this.bindSettingsCommit(text.inputEl, () => text.getValue(), async (value) => {
+          await patchTask({ newFileDebounceSeconds: clampInt(value, task.newFileDebounceSeconds, 1, 3600) });
+        });
       });
 
     new Setting(body)
@@ -45530,14 +46171,13 @@ class CancipSettingTab extends PluginSettingTab {
       .addText((text) => {
         text
           .setPlaceholder("0.2")
-          .setValue(String(this.plugin.settings.temperature))
-          .onChange(async (value) => {
-            const parsed = Number(value);
-            if (!Number.isNaN(parsed)) {
-              this.plugin.settings.temperature = Math.max(0, Math.min(2, parsed));
-              await this.plugin.saveSettings();
-            }
-          });
+          .setValue(String(this.plugin.settings.temperature));
+        this.bindSettingsCommit(text.inputEl, () => text.getValue(), async (value) => {
+          const parsed = Number(value);
+          if (Number.isNaN(parsed)) return;
+          this.plugin.settings.temperature = Math.max(0, Math.min(2, parsed));
+          await this.plugin.saveSettings();
+        });
       });
     this.addNumberSetting(parent, "settingsMaxOutputTokens", this.plugin.settings.maxOutputTokens, "2048", 16, 32000, async (value) => {
       this.plugin.settings.maxOutputTokens = value;
@@ -45550,8 +46190,8 @@ class CancipSettingTab extends PluginSettingTab {
         text.inputEl.rows = 8;
         text
           .setPlaceholder(MODEL_PRESETS.join("\n"))
-          .setValue(this.plugin.settings.modelOptions.join("\n"))
-          .onChange(async (value) => {
+          .setValue(this.plugin.settings.modelOptions.join("\n"));
+        this.bindSettingsCommit(text.inputEl, () => text.getValue(), async (value) => {
             this.plugin.settings.modelOptions = normalizeModelOptions(value, this.plugin.activeApiProfile().model);
             this.plugin.settings.modelSourceByModel = normalizeModelSourceByModel(
               this.plugin.settings.modelSourceByModel,
@@ -45561,7 +46201,7 @@ class CancipSettingTab extends PluginSettingTab {
             );
             await this.plugin.saveSettings();
             this.plugin.refreshOpenViews();
-          });
+          }, false);
       })
       .addButton((button) => {
         button
@@ -45607,7 +46247,9 @@ class CancipSettingTab extends PluginSettingTab {
   }
 
   private supportCodeResourcePath(path: string): string {
-    if (/^(https?:|app:|file:)/i.test(path)) return path;
+    if (/^(data:|https?:|app:|file:)/i.test(path)) return path;
+    const normalized = normalizePath(path);
+    if (DEFAULT_SUPPORT_CODE_DATA_URLS[normalized]) return DEFAULT_SUPPORT_CODE_DATA_URLS[normalized];
     const pluginDir = this.plugin.manifest.dir || `${this.app.vault.configDir}/plugins/${this.plugin.manifest.id}`;
     return this.app.vault.adapter.getResourcePath(normalizePath(`${pluginDir}/${path}`));
   }
@@ -45658,8 +46300,8 @@ class CancipSettingTab extends PluginSettingTab {
       .addText((text) => {
         text
           .setPlaceholder(this.plugin.t("defaultApiProfileName"))
-          .setValue(active.name)
-          .onChange(async (value) => {
+          .setValue(active.name);
+        this.bindSettingsCommit(text.inputEl, () => text.getValue(), async (value) => {
             await this.plugin.updateActiveApiProfile({ name: value.trim() || this.plugin.t("defaultApiProfileName") });
           });
       });
@@ -45670,8 +46312,8 @@ class CancipSettingTab extends PluginSettingTab {
       .addText((text) => {
         text
           .setPlaceholder("https://api.openai.com/v1")
-          .setValue(active.apiUrl)
-          .onChange(async (value) => {
+          .setValue(active.apiUrl);
+        this.bindSettingsCommit(text.inputEl, () => text.getValue(), async (value) => {
             await this.plugin.updateActiveApiProfile({ apiUrl: value.trim() });
           });
       });
@@ -45699,8 +46341,8 @@ class CancipSettingTab extends PluginSettingTab {
         text.inputEl.type = "password";
         text
           .setPlaceholder("sk-...")
-          .setValue(active.apiKey)
-          .onChange(async (value) => {
+          .setValue(active.apiKey);
+        this.bindSettingsCommit(text.inputEl, () => text.getValue(), async (value) => {
             await this.plugin.updateActiveApiProfile({ apiKey: value.trim() });
           });
       });
@@ -45716,18 +46358,18 @@ class CancipSettingTab extends PluginSettingTab {
           .addOptions(modelOptions)
           .setValue(active.model)
           .onChange(async (value) => {
-            await this.plugin.updateActiveApiProfile({ model: value });
+            await this.plugin.selectModel(value, active.id);
             this.plugin.refreshOpenViews();
           });
       })
       .addText((text) => {
         text
           .setPlaceholder("gpt-5.6-sol")
-          .setValue(active.model)
-          .onChange(async (value) => {
-            await this.plugin.updateActiveApiProfile({ model: value.trim() });
-            this.plugin.refreshOpenViews();
-          });
+          .setValue(active.model);
+        this.bindSettingsCommit(text.inputEl, () => text.getValue(), async (value) => {
+          await this.plugin.selectModel(value.trim(), active.id);
+          this.plugin.refreshOpenViews();
+        });
       });
   }
 }
@@ -46247,6 +46889,39 @@ function localizeUntouchedAutomationTask(task: AutomationTask, template: Automat
   return title === task.title && prompt === task.prompt ? task : { ...task, title, prompt };
 }
 
+function newsBriefAutomationTemplates(language: Language = "en"): AutomationTemplate[] {
+  const local = (zh: string, en: string): string => isChineseLanguage(language) ? zh : en;
+  const promptLanguage = isChineseLanguage(language)
+    ? "最终输出使用中文。"
+    : `Return the final output in ${LANGUAGE_LABELS[language]}.`;
+  return [
+    {
+      id: "auto-news-brief-morning",
+      title: local("早间国内外大事动向", "Morning world briefing"),
+      description: local("抓取公开新闻源，由当前模型生成带来源链接的精简早报。", "Fetch public feeds and generate a concise morning brief with source links."),
+      prompt: `${buildNewsBriefPrompt("morning")}\n\n${promptLanguage}`,
+      command: "cancip.newsBrief",
+      args: { period: "morning" },
+      schedule: "daily",
+      enabled: true,
+      hour: 8,
+      minute: 15
+    },
+    {
+      id: "auto-news-brief-evening",
+      title: local("晚间国内外大事动向", "Evening world briefing"),
+      description: local("抓取公开新闻源，由当前模型生成带来源链接的精简晚报。", "Fetch public feeds and generate a concise evening brief with source links."),
+      prompt: `${buildNewsBriefPrompt("evening")}\n\n${promptLanguage}`,
+      command: "cancip.newsBrief",
+      args: { period: "evening" },
+      schedule: "daily",
+      enabled: true,
+      hour: 21,
+      minute: 15
+    }
+  ];
+}
+
 function cancipAutomationTemplates(language: Language = "en"): AutomationTemplate[] {
   const local = (zh: string, en: string): string => isChineseLanguage(language) ? zh : en;
   const promptLanguage = isChineseLanguage(language)
@@ -46272,30 +46947,6 @@ function cancipAutomationTemplates(language: Language = "en"): AutomationTemplat
       schedule: "daily",
       enabled: false,
       hour: 4
-    },
-    {
-      id: "auto-news-brief-morning",
-      title: local("早间国内外大事动向", "Morning world briefing"),
-      description: local("抓取公开新闻源，由当前模型生成带来源链接的精简早报。", "Fetch public feeds and generate a concise morning brief with source links."),
-      prompt: `${buildNewsBriefPrompt("morning")}\n\n${promptLanguage}`,
-      command: "cancip.newsBrief",
-      args: { period: "morning" },
-      schedule: "daily",
-      enabled: true,
-      hour: 8,
-      minute: 15
-    },
-    {
-      id: "auto-news-brief-evening",
-      title: local("晚间国内外大事动向", "Evening world briefing"),
-      description: local("抓取公开新闻源，由当前模型生成带来源链接的精简晚报。", "Fetch public feeds and generate a concise evening brief with source links."),
-      prompt: `${buildNewsBriefPrompt("evening")}\n\n${promptLanguage}`,
-      command: "cancip.newsBrief",
-      args: { period: "evening" },
-      schedule: "daily",
-      enabled: true,
-      hour: 21,
-      minute: 15
     },
     {
       id: VAULT_DAILY_REPORT_AUTOMATION_ID,
@@ -47261,6 +47912,36 @@ function formatAutomationSchedule(task: AutomationTask): string {
   if (task.schedule === "hourly") return `hourly/${task.intervalMinutes}m`;
   if (task.schedule === "daily") return `daily ${String(task.hour).padStart(2, "0")}:${String(task.minute).padStart(2, "0")}`;
   return task.schedule;
+}
+
+function automationDedicatedSessionId(taskId: string): string {
+  const slug = taskId
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 72);
+  return `automation-${slug || stableTextHash(taskId).slice(0, 12)}`;
+}
+
+function automationWithDedicatedSession(task: AutomationTask, force = false): AutomationTask {
+  const existing = task.sessionMode === "session" ? task.sessionId?.trim() ?? "" : "";
+  if (!force && existing) {
+    return existing === task.sessionId ? task : { ...task, sessionId: existing };
+  }
+  const dedicatedId = automationDedicatedSessionId(task.id);
+  if (task.sessionMode === "session" && task.sessionId?.trim() === dedicatedId) return task;
+  return {
+    ...task,
+    sessionMode: "session",
+    sessionId: dedicatedId
+  };
+}
+
+function shouldCreateMissingAutomationSession(task: AutomationTask, sessionId: string): boolean {
+  if (!sessionId) return false;
+  if (sessionId === automationDedicatedSessionId(task.id)) return true;
+  return sessionId.startsWith("automation-");
 }
 
 function localVersionCommitId(iso: string): string {
@@ -48290,7 +48971,8 @@ function reviewConfigPathLabel(
     composerAutocompleteNetworkTimeoutSeconds: "settingsAutocompleteNetworkTimeoutSeconds",
     composerAutocompleteRotationSeconds: "settingsAutocompleteRotationSeconds",
     composerAutocompleteCandidateCount: "settingsAutocompleteCandidateCount",
-    composerAutocompleteApiProfileId: "settingsAutocompleteModel",
+    composerAutocompleteApiProfileId: "settingsAutocompleteSource",
+    composerAutocompleteModel: "settingsAutocompleteModel",
     documentWorkbenchDefaultMode: "settingsDocumentWorkbenchDefaultMode",
     documentWorkbenchCompactHeader: "settingsDocumentWorkbenchCompactHeader",
     documentWorkbenchShowMetadata: "settingsDocumentWorkbenchShowMetadata",
@@ -51781,14 +52463,59 @@ function normalizeApiProfiles(raw: unknown, legacy: ApiProfile): ApiProfile[] {
 }
 
 function mergeApiProfilePresets(profiles: ApiProfile[]): ApiProfile[] {
-  const ids = new Set(profiles.map((profile) => profile.id));
-  const next = [...profiles];
+  const configuredByEndpoint = new Map<string, ApiProfile>();
+  for (const profile of profiles) {
+    const endpoint = apiEndpointIdentity(profile.apiUrl);
+    if (endpoint && profile.apiKey.trim() && !configuredByEndpoint.has(endpoint)) configuredByEndpoint.set(endpoint, profile);
+  }
+  const next = profiles.filter((profile) => {
+    const preset = API_PROFILE_PRESETS.find((item) => item.id === profile.id);
+    if (!preset || profile.apiKey.trim()) return true;
+    const presetEndpoint = apiEndpointIdentity(preset.apiUrl);
+    return apiEndpointIdentity(profile.apiUrl) !== presetEndpoint || !configuredByEndpoint.has(presetEndpoint);
+  });
+  const ids = new Set(next.map((profile) => profile.id));
   for (const preset of API_PROFILE_PRESETS) {
     if (ids.has(preset.id)) continue;
+    const endpoint = apiEndpointIdentity(preset.apiUrl);
+    if (endpoint && configuredByEndpoint.has(endpoint)) continue;
     ids.add(preset.id);
     next.push({ ...preset });
   }
   return next.slice(0, 40);
+}
+
+function apiEndpointIdentity(rawUrl: string): string {
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return "";
+  try {
+    const url = new URL(trimmed);
+    const pathname = url.pathname.replace(/\/+$/, "") || "/";
+    return `${url.protocol.toLowerCase()}//${url.host.toLowerCase()}${pathname.toLowerCase()}`;
+  } catch {
+    return trimmed.replace(/\/+$/, "").toLowerCase();
+  }
+}
+
+function resolveApiProfileId(rawId: string, profiles: ApiProfile[]): string {
+  const id = rawId.trim();
+  if (!id) return "";
+  if (profiles.some((profile) => profile.id === id)) return id;
+  const lower = id.toLowerCase();
+  const sameId = profiles.find((profile) => profile.id.toLowerCase() === lower);
+  if (sameId) return sameId.id;
+  const sameName = profiles.find((profile) => (profile.name || profile.id).trim().toLowerCase() === lower);
+  if (sameName) return sameName.id;
+  const preset = API_PROFILE_PRESETS.find((profile) => profile.id.toLowerCase() === id.toLowerCase());
+  if (!preset) return id;
+  const endpoint = apiEndpointIdentity(preset.apiUrl);
+  return profiles.find((profile) => profile.apiKey.trim() && apiEndpointIdentity(profile.apiUrl) === endpoint)?.id ?? preset.id;
+}
+
+function apiProfileDisplayLabel(profile: ApiProfile, language: Language): string {
+  const name = profile.name || profile.id;
+  if (profile.apiKey.trim()) return name;
+  return `${name} · ${isChineseLanguage(language) ? "未配置密钥" : "API key missing"}`;
 }
 
 function normalizeModelOptions(raw: unknown, activeModel?: string): string[] {
@@ -51848,7 +52575,7 @@ function normalizeModelSourceByModel(raw: unknown, models: string[], profiles: A
   if (isRecord(raw)) {
     for (const [model, profileId] of Object.entries(raw)) {
       const cleanModel = model.trim();
-      const cleanProfileId = typeof profileId === "string" ? profileId.trim() : "";
+      const cleanProfileId = typeof profileId === "string" ? resolveApiProfileId(profileId, profiles) : "";
       if (!cleanModel || !modelSet.has(cleanModel) || !profileIds.has(cleanProfileId)) continue;
       result[cleanModel] = cleanProfileId;
     }
@@ -51858,7 +52585,7 @@ function normalizeModelSourceByModel(raw: unknown, models: string[], profiles: A
   }
   for (const model of models) {
     if (result[model] && profileIds.has(result[model])) continue;
-    const guessed = defaultModelSourceIdForModel(model);
+    const guessed = resolveApiProfileId(defaultModelSourceIdForModel(model), profiles);
     result[model] = profileIds.has(guessed) ? guessed : fallbackProfileId;
   }
   return result;
@@ -52779,7 +53506,8 @@ function isDiaryWritingRequest(prompt: string, path: string): boolean {
 }
 
 function getActiveApiProfile(settings: Settings): ApiProfile {
-  return settings.apiProfiles.find((profile) => profile.id === settings.activeApiProfileId) ?? settings.apiProfiles[0] ?? getDefaultApiProfile();
+  const activeApiProfileId = resolveApiProfileId(settings.activeApiProfileId, settings.apiProfiles);
+  return settings.apiProfiles.find((profile) => profile.id === activeApiProfileId) ?? settings.apiProfiles[0] ?? getDefaultApiProfile();
 }
 
 function hasLegacyApiProfileFields(settings: Partial<Settings>): boolean {
@@ -52884,28 +53612,52 @@ function normalizeSettings(input: Partial<Settings>): Settings {
     getDefaultApiProfile()
   );
   const apiProfiles = normalizeApiProfiles(input.apiProfiles, legacyProfile);
+  const requestedActiveApiProfileId = typeof merged.activeApiProfileId === "string"
+    ? resolveApiProfileId(merged.activeApiProfileId, apiProfiles)
+    : "";
   const activeApiProfileId =
-    typeof merged.activeApiProfileId === "string" && apiProfiles.some((profile) => profile.id === merged.activeApiProfileId)
-      ? merged.activeApiProfileId
+    requestedActiveApiProfileId && apiProfiles.some((profile) => profile.id === requestedActiveApiProfileId)
+      ? requestedActiveApiProfileId
       : apiProfiles[0].id;
+  const requestedAutocompleteApiProfileId = typeof merged.composerAutocompleteApiProfileId === "string"
+    ? resolveApiProfileId(merged.composerAutocompleteApiProfileId, apiProfiles)
+    : "";
   const composerAutocompleteApiProfileId =
-    typeof merged.composerAutocompleteApiProfileId === "string"
-      && apiProfiles.some((profile) => profile.id === merged.composerAutocompleteApiProfileId.trim())
-      ? merged.composerAutocompleteApiProfileId.trim()
+    requestedAutocompleteApiProfileId
+      && apiProfiles.some((profile) => profile.id === requestedAutocompleteApiProfileId)
+      ? requestedAutocompleteApiProfileId
       : "";
-  const activeProfile = apiProfiles.find((profile) => profile.id === activeApiProfileId) ?? apiProfiles[0];
-  const modelOptions = normalizeModelOptions(merged.modelOptions, activeProfile.model);
-  const modelSourceByModel = normalizeModelSourceByModel((merged as Partial<Settings>).modelSourceByModel, modelOptions, apiProfiles, activeApiProfileId);
+  const activeProfileBase = apiProfiles.find((profile) => profile.id === activeApiProfileId) ?? apiProfiles[0] ?? getDefaultApiProfile();
+  const selectedModel = typeof merged.model === "string" && merged.model.trim()
+    ? merged.model.trim()
+    : activeProfileBase.model;
+  const modelOptions = normalizeModelOptions(merged.modelOptions, selectedModel);
+  let modelSourceByModel = normalizeModelSourceByModel((merged as Partial<Settings>).modelSourceByModel, modelOptions, apiProfiles, activeApiProfileId);
+  const profileIds = new Set(apiProfiles.map((profile) => profile.id));
+  const selectedModelSourceId = resolveApiProfileId(modelSourceByModel[selectedModel] || activeApiProfileId, apiProfiles);
+  const resolvedActiveApiProfileId = profileIds.has(selectedModelSourceId) ? selectedModelSourceId : activeApiProfileId;
+  const apiProfilesWithSelectedModel = apiProfiles.map((profile) =>
+    profile.id === resolvedActiveApiProfileId ? normalizeApiProfile({ ...profile, model: selectedModel }, profile) : profile
+  );
+  modelSourceByModel = normalizeModelSourceByModel(
+    { ...modelSourceByModel, [selectedModel]: resolvedActiveApiProfileId },
+    modelOptions,
+    apiProfilesWithSelectedModel,
+    resolvedActiveApiProfileId
+  );
+  const activeProfile = apiProfilesWithSelectedModel.find((profile) => profile.id === resolvedActiveApiProfileId)
+    ?? apiProfilesWithSelectedModel[0]
+    ?? getDefaultApiProfile();
   return {
     ...merged,
     language: isLanguageMode(merged.language) ? merged.language : DEFAULT_SETTINGS.language,
     accessMode: isAccessMode(merged.accessMode) ? merged.accessMode : DEFAULT_SETTINGS.accessMode,
-    activeApiProfileId,
-    apiProfiles,
+    activeApiProfileId: resolvedActiveApiProfileId,
+    apiProfiles: apiProfilesWithSelectedModel,
     apiMode: activeProfile.apiMode,
     apiUrl: activeProfile.apiUrl,
     apiKey: activeProfile.apiKey,
-    model: activeProfile.model,
+    model: selectedModel,
     modelOptions,
     modelSourceByModel,
     temperature: Number.isFinite(temperature) ? Math.max(0, Math.min(2, temperature)) : DEFAULT_SETTINGS.temperature,
@@ -52946,6 +53698,9 @@ function normalizeSettings(input: Partial<Settings>): Settings {
       ? Math.max(EDITOR_AUTOCOMPLETE_CANDIDATE_COUNT_MIN, Math.min(EDITOR_AUTOCOMPLETE_CANDIDATE_COUNT_MAX, composerAutocompleteCandidateCount))
       : DEFAULT_SETTINGS.composerAutocompleteCandidateCount,
     composerAutocompleteApiProfileId,
+    composerAutocompleteModel: typeof merged.composerAutocompleteModel === "string"
+      ? merged.composerAutocompleteModel.trim()
+      : DEFAULT_SETTINGS.composerAutocompleteModel,
     composerAutocompletePrompt: typeof merged.composerAutocompletePrompt === "string" ? trimContext(merged.composerAutocompletePrompt.trim(), 240) : DEFAULT_SETTINGS.composerAutocompletePrompt,
     forceStatusBarVisible: typeof merged.forceStatusBarVisible === "boolean" ? merged.forceStatusBarVisible : DEFAULT_SETTINGS.forceStatusBarVisible,
     autoOpenPlanPanel: typeof merged.autoOpenPlanPanel === "boolean" ? merged.autoOpenPlanPanel : DEFAULT_SETTINGS.autoOpenPlanPanel,
@@ -53054,6 +53809,7 @@ function settingsToCancipConfig(settings: Settings): Record<string, unknown> {
     composerAutocompleteRotationSeconds: settings.composerAutocompleteRotationSeconds,
     composerAutocompleteCandidateCount: settings.composerAutocompleteCandidateCount,
     composerAutocompleteApiProfileId: settings.composerAutocompleteApiProfileId,
+    composerAutocompleteModel: settings.composerAutocompleteModel,
     composerAutocompletePrompt: settings.composerAutocompletePrompt,
     forceStatusBarVisible: settings.forceStatusBarVisible,
     autoOpenPlanPanel: settings.autoOpenPlanPanel,
@@ -53175,6 +53931,7 @@ function parseCancipConfig(raw: unknown): Partial<Settings> {
   if (typeof raw.composerAutocompleteRotationSeconds === "number" || typeof raw.composerAutocompleteRotationSeconds === "string") config.composerAutocompleteRotationSeconds = Number.parseInt(String(raw.composerAutocompleteRotationSeconds), 10);
   if (typeof raw.composerAutocompleteCandidateCount === "number" || typeof raw.composerAutocompleteCandidateCount === "string") config.composerAutocompleteCandidateCount = Number.parseInt(String(raw.composerAutocompleteCandidateCount), 10);
   if (typeof raw.composerAutocompleteApiProfileId === "string") config.composerAutocompleteApiProfileId = raw.composerAutocompleteApiProfileId;
+  if (typeof raw.composerAutocompleteModel === "string") config.composerAutocompleteModel = raw.composerAutocompleteModel;
   if (typeof raw.composerAutocompletePrompt === "string") config.composerAutocompletePrompt = raw.composerAutocompletePrompt;
   if (typeof raw.forceStatusBarVisible === "boolean") config.forceStatusBarVisible = raw.forceStatusBarVisible;
   if (typeof raw.autoOpenPlanPanel === "boolean") config.autoOpenPlanPanel = raw.autoOpenPlanPanel;
@@ -53258,6 +54015,7 @@ const CANCIP_CONFIG_STRING_KEYS = new Set([
   "personalizationFriendlyName",
   "personalizationWeatherLocation",
   "composerAutocompleteApiProfileId",
+  "composerAutocompleteModel",
   "composerAutocompletePrompt",
   "documentWorkbenchDefaultMode",
   "systemPrompt"
@@ -58175,10 +58933,6 @@ function normalizeDocumentWorkbenchExtensions(value: unknown): string[] {
     const extension = normalizeDocumentWorkbenchExtension(item);
     return extension ? [extension] : [];
   }));
-}
-
-function documentWorkbenchSurfaceUrl(path: string): string {
-  return `cancip-document://vault/${encodeURIComponent(normalizePath(path))}`;
 }
 
 function isDocumentSourceEditable(file: TFile): boolean {

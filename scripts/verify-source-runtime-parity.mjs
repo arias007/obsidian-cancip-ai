@@ -24,10 +24,16 @@ const runtimeMethods = namedMethods(runtimeText, ts.ScriptKind.JS, "outputs/canc
 
 const intentionallyRemovedRuntimeMethods = new Set([
   "applyPersonalizedDiaryButtons",
+  "activateNativeNoteDrawSurface",
   "clearPersonalizedDiaryButtons",
+  "createNoteDrawWorkbenchStage",
   "insertPersonalizedDiary",
+  "noteDrawControllerForStage",
+  "noteDrawRuntime",
   "schedulePersonalizedDiaryButtons",
-  "shouldPreferPluginDataSettings"
+  "scheduleNativeNoteDrawSurfaceSync",
+  "shouldPreferPluginDataSettings",
+  "syncNativeNoteDrawSurface"
 ]);
 const removedFromRuntime = [...runtimeMethods]
   .filter((name) => intentionallyRemovedRuntimeMethods.has(name) && !sourceMethods.has(name))

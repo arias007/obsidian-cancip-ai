@@ -48,6 +48,11 @@ await esbuild.build({
   format: "cjs",
   target: "es2020",
   logLevel: "info",
+  loader: {
+    ".jpg": "dataurl",
+    ".jpeg": "dataurl",
+    ".png": "dataurl"
+  },
   sourcemap: prod ? false : "inline",
   treeShaking: true,
   outfile: mainOutput,

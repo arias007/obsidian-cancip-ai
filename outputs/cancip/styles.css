@@ -4795,7 +4795,8 @@ details.obcc-process-step-details:not([open]) > :not(summary),
 
 .obcc-ui-button-rules-desc,
 .obcc-ui-button-rules-empty,
-.obcc-ui-button-rule-detail {
+.obcc-ui-button-rule-detail,
+.obcc-ui-button-rule-date {
   color: var(--text-muted);
   font-size: 12px;
   line-height: 1.35;
@@ -4858,6 +4859,32 @@ details.obcc-process-step-details:not([open]) > :not(summary),
   margin-top: 2px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.obcc-ui-button-rule-date {
+  margin-top: 2px;
+}
+
+.obcc-settings-async-summary {
+  margin: 8px 0 12px;
+}
+
+.obcc-settings-summary-line,
+.obcc-settings-summary-muted,
+.obcc-settings-summary-pre,
+.obcc-settings-summary-list {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.obcc-settings-summary-pre {
+  white-space: pre-wrap;
+}
+
+.obcc-settings-summary-list {
+  margin: 6px 0 0;
+  padding-inline-start: 18px;
 }
 
 .obcc-ui-button-rule-tags {
@@ -8769,13 +8796,25 @@ body.is-phone .obcc-review-leaf.has-review-detail .obcc-review-detail-rail-info,
   height: 12px;
 }
 
-.nav-file-title.is-cancip-file-pinned > .obcc-file-pin-row-controls,
-.nav-folder-title.is-cancip-file-pinned > .obcc-file-pin-row-controls {
+.nav-file-title > .obcc-file-pin-row-controls,
+.nav-folder-title > .obcc-file-pin-row-controls {
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
   gap: 0;
   margin-inline-start: auto;
+}
+
+.nav-file-title:not(.is-cancip-file-pinned) > .obcc-file-pin-row-controls,
+.nav-folder-title:not(.is-cancip-file-pinned) > .obcc-file-pin-row-controls {
+  opacity: 0.46;
+}
+
+.nav-file-title:not(.is-cancip-file-pinned):hover > .obcc-file-pin-row-controls,
+.nav-folder-title:not(.is-cancip-file-pinned):hover > .obcc-file-pin-row-controls,
+.nav-file-title:not(.is-cancip-file-pinned):focus-within > .obcc-file-pin-row-controls,
+.nav-folder-title:not(.is-cancip-file-pinned):focus-within > .obcc-file-pin-row-controls {
+  opacity: 1;
 }
 
 .obcc-file-pin-row-button {
@@ -8806,6 +8845,11 @@ body.is-phone .obcc-review-leaf.has-review-detail .obcc-review-detail-rail-info,
 .obcc-file-pin-row-button.obcc-file-pin-indicator {
   color: var(--interactive-accent);
   pointer-events: auto;
+}
+
+.nav-file-title:not(.is-cancip-file-pinned) .obcc-file-pin-row-button.obcc-file-pin-indicator,
+.nav-folder-title:not(.is-cancip-file-pinned) .obcc-file-pin-row-button.obcc-file-pin-indicator {
+  color: var(--text-muted);
 }
 
 .obcc-file-pin-row-button > svg {
@@ -9173,17 +9217,15 @@ body.is-phone.obcc-force-statusbar-visible .view-content.obcc-document-workbench
   min-height: 0;
 }
 
-/* NoteDraw uses this stable webview surface; keep the marker class layout-neutral. */
-.obcc-document-stage.mwv-embed {
-  display: block;
-  margin: 0;
-  padding: 0;
-  overflow: visible;
-  isolation: isolate;
-}
-
 .obcc-document-drawing-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
   pointer-events: none;
+  touch-action: none;
 }
 
 .obcc-document-drawing-overlay.is-active {
@@ -9222,6 +9264,7 @@ body.is-phone.obcc-force-statusbar-visible .view-content.obcc-document-workbench
   outline-offset: 2px;
 }
 
+.obcc-document-stage > .obcc-document-preview-host,
 .obcc-document-stage > .obcc-document-html-preview,
 .obcc-document-stage > .obcc-document-native-preview {
   position: relative;
@@ -9345,6 +9388,7 @@ body.is-phone.obcc-force-statusbar-visible .view-content.obcc-document-workbench
   letter-spacing: 0;
 }
 
+.obcc-document-preview-host,
 .obcc-document-html-preview,
 .obcc-document-native-preview {
   display: block;
@@ -9380,6 +9424,7 @@ body.is-phone.obcc-force-statusbar-visible .view-content.obcc-document-workbench
   min-height: 100%;
 }
 
+.obcc-document-body.is-native-preview.is-html-preview .obcc-document-preview-host,
 .obcc-document-body.is-native-preview.is-html-preview .obcc-document-html-preview {
   height: var(--obcc-document-html-height, 100%);
   min-height: 100%;
@@ -9507,6 +9552,8 @@ body.is-phone .obcc-document-note-draw-edit-surface {
   padding-bottom: var(--obcc-document-bottom-clearance);
 }
 
+body.is-mobile .obcc-document-preview-host,
+body.is-phone .obcc-document-preview-host,
 body.is-mobile .obcc-document-html-preview,
 body.is-phone .obcc-document-html-preview,
 body.is-mobile .obcc-document-native-preview,
