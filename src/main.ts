@@ -28,6 +28,7 @@ import {
   WorkspaceLeaf
 } from "obsidian";
 import html2canvas from "html2canvas";
+import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import { StateEffect, StateField, type Extension } from "@codemirror/state";
 import { Decoration, EditorView, keymap, ViewPlugin, type ViewUpdate, WidgetType } from "@codemirror/view";
 import { DEFAULT_SYSTEM_PROMPT, LEGACY_SYSTEM_PROMPT, PLUGIN_NAME, VIEW_TYPE } from "./constants";
@@ -271,7 +272,7 @@ type ToolRunLineDelta = LineDeltaSummary & {
 };
 type HeaderMenuKind = "history" | "events" | "outline" | "plan" | "live-files" | "audit" | "git" | "more" | "skills" | "automation";
 type ComposerSubmitMode = "queue" | "direct" | "hold";
-type CancipVaultSyncKind = "review" | "sessions" | "config" | "automations" | "skills" | "memory" | "personalization" | "versions" | "file-pins";
+type CancipVaultSyncKind = "review" | "sessions" | "config" | "automations" | "skills" | "memory" | "personalization" | "versions" | "file-pins" | "documents";
 
 type ApiProfile = {
   id: string;
@@ -756,6 +757,20 @@ type DocumentSnapshot = {
   warnings: string[];
 };
 
+type DocumentPersistentTextEdit = {
+  originalText: string;
+  editedText: string;
+  updatedAt: string;
+};
+
+type DocumentPersistentEditState = {
+  schemaVersion: 1;
+  sourcePath: string;
+  sourceMtime: number;
+  updatedAt: string;
+  edits: DocumentPersistentTextEdit[];
+};
+
 type DocumentDrawingAnchor = {
   v: 1;
   basis: "note-content-v1";
@@ -796,6 +811,10 @@ type NoteDrawApi = {
 
 type NoteDrawWorkbenchController = {
   destroy?: () => void;
+  toolbar?: HTMLElement;
+  toolMode?: string;
+  setBrushMode?: (mode: string) => void;
+  setToolFromApi?: (tool: string) => boolean;
 };
 
 type NoteDrawRuntime = {
@@ -1297,6 +1316,7 @@ type SessionHistoryEntry = {
   createdAt: string;
   startedAt?: string;
   updatedAt: string;
+  metadataUpdatedAt?: string;
   completedAt?: string;
   stoppedAt?: string;
   failedAt?: string;
@@ -1334,7 +1354,7 @@ type SessionTimeline = {
   status?: SessionHistoryEntry["status"];
 };
 
-type SessionHistoryEntryPatch = Partial<Pick<SessionHistoryEntry, "title" | "unread" | "completedNotice" | "pinned" | "archived" | "coldArchived" | "archivedAt" | "lastOpenedAt" | "manualTitle" | "manualOrder" | "updatedAt" | "startedAt" | "completedAt" | "stoppedAt" | "failedAt" | "status" | "parentSessionId" | "parentSessionTitle" | "subagentIds" | "subagentRole" | "subagentGoal" | "subagentProgress">>;
+type SessionHistoryEntryPatch = Partial<Pick<SessionHistoryEntry, "title" | "unread" | "completedNotice" | "pinned" | "archived" | "coldArchived" | "archivedAt" | "lastOpenedAt" | "manualTitle" | "manualOrder" | "updatedAt" | "metadataUpdatedAt" | "startedAt" | "completedAt" | "stoppedAt" | "failedAt" | "status" | "parentSessionId" | "parentSessionTitle" | "subagentIds" | "subagentRole" | "subagentGoal" | "subagentProgress">>;
 
 type CancipArchiveKind = "session" | "session-events" | "experience" | "memory";
 
@@ -2746,6 +2766,7 @@ const DEFAULT_SETTINGS: Settings = {
 const CANCIP_CONFIG_DIR = ".cancip";
 const CANCIP_CONFIG_PATH = `${CANCIP_CONFIG_DIR}/config.json`;
 const CANCIP_FILE_PINS_PATH = `${CANCIP_CONFIG_DIR}/file-pins.json`;
+const DOCUMENT_PERSISTENT_EDITS_DIR = `${CANCIP_CONFIG_DIR}/document-edits`;
 const CANCIP_FILE_PINS_SCHEMA_VERSION = 1;
 const CANCIP_CONFIG_SCHEMA_VERSION = 1;
 const CANCIP_CONFIG_BACKUP_DIR = `${CANCIP_CONFIG_DIR}/config-backups`;
@@ -7484,11 +7505,15 @@ export default class CancipPlugin extends Plugin {
   private cancipStatePollFingerprints = new Map<string, string>();
   private reviewGatePollPendingHashes = new Map<string, { signature: string; hash: string }>();
   private cancipStatePollRunning = false;
+  private cancipResumeRefreshTimer: number | null = null;
+  private cancipResumeRefreshRunning = false;
+  private lastCancipResumeRefreshAt = 0;
   private automationFirstRunTimer: number | null = null;
   private automationIntervalTimer: number | null = null;
   private automationScheduleCleanupRegistered = false;
   private automationStateCache: { at: number; tasks: AutomationTask[] } | null = null;
   private automationStateReadPromise: Promise<AutomationTask[]> | null = null;
+  private automationStateWriteQueue: Promise<void> = Promise.resolve();
   private dismissedAutomationTemplateIds = new Set<string>();
   private automationNewFilePaths = new Map<string, Set<string>>();
   private automationNewFileTimers = new Map<string, number>();
@@ -7590,7 +7615,9 @@ export default class CancipPlugin extends Plugin {
   private filePinWriteQueue: Promise<void> = Promise.resolve();
   private filePinObserverHandle: UiButtonRuleObserverHandle | null = null;
   private filePinApplyTimer: UiButtonRuleTimer | null = null;
+  private filePinSettleTimer: number | null = null;
   private filePinApplying = false;
+  private filePinApplyPromise: Promise<void> | null = null;
   private filePinSortSession: FilePinSortSession | null = null;
   private fileExplorerSortPatches = new Map<FileExplorerViewLike, FileExplorerSortPatch>();
   private buttonEditLongPressTimer: number | null = null;
@@ -8074,6 +8101,8 @@ export default class CancipPlugin extends Plugin {
         this.schedulePersonalizationRefresh(0);
       }
     }, 10 * 60 * 1000));
+    this.scheduleCancipStatePolling();
+    this.installCancipResumeStateRefresh();
     this.scheduleStartupMaintenance();
   }
 
@@ -12409,10 +12438,6 @@ export default class CancipPlugin extends Plugin {
     const configSettings = await this.loadCancipConfig();
     if (configSettings) {
       const combined: Partial<Settings> = { ...nextSettings, ...configSettings };
-      combined.uiButtonRules = mergeUiButtonRules(
-        normalizeUiButtonRules(saved?.uiButtonRules),
-        normalizeUiButtonRules(configSettings.uiButtonRules)
-      );
       if (!configSettings.apiProfiles && hasLegacyApiProfileFields(configSettings)) {
         delete combined.apiProfiles;
         delete combined.activeApiProfileId;
@@ -12485,6 +12510,7 @@ export default class CancipPlugin extends Plugin {
         await adapter.mkdir(CANCIP_CONFIG_DIR);
       }
       const content = `${JSON.stringify(settingsToCancipConfig(this.settings), null, 2)}\n`;
+      if (await adapter.exists(CANCIP_CONFIG_PATH) && await adapter.read(CANCIP_CONFIG_PATH) === content) return;
       await backupConfigBeforeCancipWrite(adapter, CANCIP_CONFIG_PATH, content);
       await adapter.write(CANCIP_CONFIG_PATH, content);
       await recordCancipConfigWrite(adapter, CANCIP_CONFIG_PATH, content);
@@ -17181,6 +17207,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     this.filePinStateCache = normalized;
     this.filePinStateReadPromise = null;
     this.requestNativeFileExplorerSort();
+    await this.applyFilePins();
   }
 
   private async mutateFilePinState(mutator: (state: FilePinState) => FilePinState): Promise<FilePinState> {
@@ -17372,6 +17399,11 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       }
     }
     this.scheduleFilePinsApply(0);
+    if (this.filePinSettleTimer !== null) window.clearTimeout(this.filePinSettleTimer);
+    this.filePinSettleTimer = window.setTimeout(() => {
+      this.filePinSettleTimer = null;
+      this.scheduleFilePinsApply(0);
+    }, 120);
   }
 
   private clearFilePinApplyTimer(): void {
@@ -17448,23 +17480,34 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     this.register(() => {
       handle.disconnect();
       this.clearFilePinApplyTimer();
+      if (this.filePinSettleTimer !== null) window.clearTimeout(this.filePinSettleTimer);
+      this.filePinSettleTimer = null;
       if (this.filePinObserverHandle === handle) this.filePinObserverHandle = null;
     });
   }
 
   private async applyFilePins(): Promise<void> {
-    if (this.filePinApplying) return;
-    this.filePinApplying = true;
+    const previous = this.filePinApplyPromise;
+    const operation = (async (): Promise<void> => {
+      if (previous) await previous;
+      this.filePinApplying = true;
+      try {
+        const baseState = await this.loadFilePinState();
+        const state = cloneFilePinState(baseState);
+        const sortSession = this.filePinSortSession;
+        if (sortSession) state.folders[sortSession.folderPath] = [...sortSession.draftOrder];
+        for (const doc of this.filePinDocuments()) this.applyFilePinStateToDocument(doc, state);
+      } catch (error) {
+        this.recordFilePinError("DOM apply", error);
+      } finally {
+        this.filePinApplying = false;
+      }
+    })();
+    this.filePinApplyPromise = operation;
     try {
-      const baseState = await this.loadFilePinState();
-      const state = cloneFilePinState(baseState);
-      const sortSession = this.filePinSortSession;
-      if (sortSession) state.folders[sortSession.folderPath] = [...sortSession.draftOrder];
-      for (const doc of this.filePinDocuments()) this.applyFilePinStateToDocument(doc, state);
-    } catch (error) {
-      this.recordFilePinError("DOM apply", error);
+      await operation;
     } finally {
-      this.filePinApplying = false;
+      if (this.filePinApplyPromise === operation) this.filePinApplyPromise = null;
     }
   }
 
@@ -19464,16 +19507,20 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
   }
 
   async saveAutomations(tasks: AutomationTask[]): Promise<void> {
-    await ensureFolder(this.app.vault.adapter, CANCIP_CONFIG_DIR);
-    const payload = {
-      schemaVersion: AUTOMATION_SCHEMA_VERSION,
-      updatedAt: new Date().toISOString(),
-      dismissedTemplateIds: [...this.dismissedAutomationTemplateIds],
-      tasks
-    };
-    await this.app.vault.adapter.write(AUTOMATION_STATE_PATH, `${JSON.stringify(payload, null, 2)}\n`);
-    this.automationStateCache = { at: Date.now(), tasks };
-    this.automationStateReadPromise = null;
+    const operation = this.automationStateWriteQueue.then(async () => {
+      await ensureFolder(this.app.vault.adapter, CANCIP_CONFIG_DIR);
+      const payload = {
+        schemaVersion: AUTOMATION_SCHEMA_VERSION,
+        updatedAt: new Date().toISOString(),
+        dismissedTemplateIds: [...this.dismissedAutomationTemplateIds],
+        tasks
+      };
+      await this.app.vault.adapter.write(AUTOMATION_STATE_PATH, `${JSON.stringify(payload, null, 2)}\n`);
+      this.automationStateCache = { at: Date.now(), tasks };
+      this.automationStateReadPromise = null;
+    });
+    this.automationStateWriteQueue = operation.catch(() => undefined);
+    await operation;
   }
 
   memoryDreamWorkflowPrompt(): string {
@@ -20404,18 +20451,31 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       this.invalidateSkillCaches();
     }
     if (kinds.has("file-pins")) {
-      await this.filePinWriteQueue;
-      const state = await this.loadFilePinState(true);
+      const refresh = this.filePinWriteQueue.then(() => this.loadFilePinState(true));
+      this.filePinWriteQueue = refresh.then(() => undefined, () => undefined);
+      const state = await refresh;
       const session = this.filePinSortSession;
       if (session && !sameStringArray(state.folders[session.folderPath] ?? [], session.draftOrder)) {
         this.stopFilePinSortMode(false);
       }
       this.requestNativeFileExplorerSort();
+      await this.applyFilePins();
+    }
+    if (kinds.has("automations")) {
+      const refresh = this.automationStateWriteQueue.then(() => this.loadAutomations(true));
+      this.automationStateWriteQueue = refresh.then(() => undefined, () => undefined);
+      await refresh;
+      this.scheduleAutomations();
     }
     if (kinds.has("personalization")) {
-      await this.personalizationUsageMutationQueue.catch(() => undefined);
-      await Promise.all([this.loadPersonalizationCache(true), this.loadPersonalizationUsage(true)]);
+      const usageRefresh = this.personalizationUsageMutationQueue.then(() => this.loadPersonalizationUsage(true));
+      this.personalizationUsageMutationQueue = usageRefresh.then(() => undefined, () => undefined);
+      await Promise.all([this.loadPersonalizationCache(true), usageRefresh]);
       this.refreshPersonalizedSurfaces();
+    }
+    if (kinds.has("documents")) {
+      this.documentSnapshotCache.clear();
+      this.refreshDocumentWorkbenchViews();
     }
     const viewRefreshes: Promise<void>[] = [];
     for (const leaf of this.chatLeaves()) {
@@ -20425,18 +20485,9 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     }
     if (viewRefreshes.length) await Promise.allSettled(viewRefreshes);
     if (kinds.has("review")) {
-      const shouldRebuildCanonicalState = paths.some((path) => {
-        const normalized = normalizePath(path.replace(/\\/g, "/"));
-        return isReviewGateRelatedPath(normalized) && normalized !== REVIEW_GATE_CANONICAL_STATE_PATH;
-      });
-      if (shouldRebuildCanonicalState) {
-        await this.rebuildReviewGateCanonicalState().catch((error) => {
-          console.warn("Cancip synchronized review state rebuild failed", error);
-          this.invalidateReviewGateSnapshot();
-        });
-      } else {
-        this.invalidateReviewGateSnapshot();
-      }
+      // The synced canonical file is authoritative. Rebuilding from partially arrived
+      // package files makes different devices publish different pending counts.
+      this.invalidateReviewGateSnapshot();
       for (const leaf of this.app.workspace.getLeavesOfType(CANCIP_REVIEW_VIEW_TYPE)) {
         if (leaf.view instanceof CancipReviewLeafView) {
           void leaf.view.refreshReviewState();
@@ -20505,6 +20556,66 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     });
   }
 
+  private installCancipResumeStateRefresh(): void {
+    const doc = this.app.workspace.containerEl?.ownerDocument ?? activeDocument;
+    const win = doc.defaultView ?? activeWindow;
+    const refresh = (): void => this.scheduleCancipResumeStateRefresh();
+    const onVisibility = (): void => {
+      if (doc.visibilityState !== "hidden") refresh();
+    };
+    win.addEventListener("focus", refresh);
+    doc.addEventListener("visibilitychange", onVisibility);
+    this.register(() => {
+      win.removeEventListener("focus", refresh);
+      doc.removeEventListener("visibilitychange", onVisibility);
+      if (this.cancipResumeRefreshTimer !== null) window.clearTimeout(this.cancipResumeRefreshTimer);
+      this.cancipResumeRefreshTimer = null;
+    });
+  }
+
+  private scheduleCancipResumeStateRefresh(delayMs = 180): void {
+    if (this.cancipResumeRefreshTimer !== null) window.clearTimeout(this.cancipResumeRefreshTimer);
+    this.cancipResumeRefreshTimer = window.setTimeout(() => {
+      this.cancipResumeRefreshTimer = null;
+      void this.refreshAllSyncedVaultState();
+    }, delayMs);
+  }
+
+  async refreshAllSyncedVaultState(force = false): Promise<void> {
+    const now = Date.now();
+    if (this.cancipResumeRefreshRunning || (!force && now - this.lastCancipResumeRefreshAt < 1200)) return;
+    this.cancipResumeRefreshRunning = true;
+    this.lastCancipResumeRefreshAt = now;
+    try {
+      this.automationStateCache = null;
+      this.automationStateReadPromise = null;
+      this.filePinStateCache = null;
+      this.filePinStateReadPromise = null;
+      this.personalizationCache = null;
+      this.personalizationUsageLoaded = false;
+      this.invalidateReviewGateSnapshot();
+      this.documentSnapshotCache.clear();
+      const kinds = new Set<CancipVaultSyncKind>([
+        "review", "sessions", "config", "automations", "skills", "memory",
+        "personalization", "versions", "file-pins", "documents"
+      ]);
+      await this.refreshOpenCancipVaultState(kinds, [
+        REVIEW_GATE_CANONICAL_STATE_PATH,
+        SESSION_HISTORY_DIR,
+        SESSION_HISTORY_INDEX_PATH,
+        CANCIP_FILE_PINS_PATH,
+        AUTOMATION_STATE_PATH,
+        PERSONALIZATION_CACHE_PATH,
+        PERSONALIZATION_USAGE_PATH,
+        DOCUMENT_PERSISTENT_EDITS_DIR,
+        CANCIP_CONFIG_PATH
+      ]);
+      await this.scanCancipVaultStateForChanges(true);
+    } finally {
+      this.cancipResumeRefreshRunning = false;
+    }
+  }
+
   private cancipStatePollTargets(): string[] {
     const targets = [
       CANCIP_CONFIG_PATH,
@@ -20520,6 +20631,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       SESSION_EVENTS_PATH,
       PERSONALIZATION_CACHE_PATH,
       PERSONALIZATION_USAGE_PATH,
+      DOCUMENT_PERSISTENT_EDITS_DIR,
       AUTOMATION_STATE_PATH,
       AUTOMATION_DIR,
       LOCAL_VERSION_DIR,
@@ -21201,7 +21313,8 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     const key = `${file.path}:${file.stat.mtime}:${file.stat.size}`;
     const cached = this.documentSnapshotCache.get(key);
     if (cached) return cached;
-    const snapshot = await buildDocumentSnapshot(this.app, file);
+    const parsedSnapshot = await buildDocumentSnapshot(this.app, file);
+    const snapshot = await this.applyPersistentDocumentEdits(parsedSnapshot);
     this.invalidateDocumentSnapshot(file.path);
     this.documentSnapshotCache.set(key, snapshot);
     while (this.documentSnapshotCache.size > 12) {
@@ -21238,6 +21351,131 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     const verified = decodeDocumentText(new Uint8Array(await adapter.readBinary(file.path)), true);
     if (!verified.available || verified.text !== text) throw new Error(`Document raw save verification failed: ${file.path}`);
     this.invalidateDocumentSnapshot(file.path);
+  }
+
+  private async documentPersistentEditPath(sourcePath: string): Promise<string> {
+    const digest = await sha256Text(normalizePath(sourcePath));
+    return `${DOCUMENT_PERSISTENT_EDITS_DIR}/${digest}.json`;
+  }
+
+  private async readPersistentDocumentEdits(file: TFile): Promise<DocumentPersistentEditState | null> {
+    try {
+      const path = await this.documentPersistentEditPath(file.path);
+      const adapter = this.app.vault.adapter;
+      if (!(await adapter.exists(path))) return null;
+      const parsed = JSON.parse(await adapter.read(path)) as unknown;
+      if (!isRecord(parsed) || normalizePath(String(parsed.sourcePath ?? "")) !== normalizePath(file.path) || !Array.isArray(parsed.edits)) return null;
+      const edits = parsed.edits.flatMap((value): DocumentPersistentTextEdit[] => {
+        if (!isRecord(value) || typeof value.originalText !== "string" || typeof value.editedText !== "string") return [];
+        if (!value.originalText.trim() || value.originalText === value.editedText) return [];
+        return [{
+          originalText: value.originalText,
+          editedText: value.editedText,
+          updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : ""
+        }];
+      });
+      return {
+        schemaVersion: 1,
+        sourcePath: file.path,
+        sourceMtime: Number(parsed.sourceMtime) || 0,
+        updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : "",
+        edits
+      };
+    } catch (error) {
+      console.warn("Cancip persistent document edits read failed", error);
+      return null;
+    }
+  }
+
+  private async applyPersistentDocumentEdits(snapshot: DocumentSnapshot): Promise<DocumentSnapshot> {
+    const state = await this.readPersistentDocumentEdits(snapshot.file);
+    if (!state?.edits.length) return snapshot;
+    let markdown = snapshot.markdown;
+    for (const edit of state.edits) {
+      const next = replaceUniqueDocumentTextValue(markdown, edit.originalText, edit.editedText);
+      if (next !== null) markdown = next;
+    }
+    if (markdown === snapshot.markdown) return snapshot;
+    const previewHtml = snapshot.kind === "docx" || snapshot.kind === "xlsx" || snapshot.kind === "pptx"
+      ? documentMarkdownToPreviewHtml(markdown, snapshot.file.basename)
+      : snapshot.previewHtml;
+    return { ...snapshot, markdown, previewHtml };
+  }
+
+  async persistDocumentPreviewTextEdit(snapshot: DocumentSnapshot, originalText: string, editedText: string): Promise<"source" | "overlay"> {
+    if (!originalText.trim() || originalText === editedText) return "source";
+    if (snapshot.editableSource) {
+      const next = replaceUniqueDocumentTextValue(snapshot.rawSourceText, originalText, editedText, snapshot.kind === "html");
+      if (next === null) throw new Error("The selected source text could not be matched safely");
+      await this.saveDocumentRawSource(snapshot.file, next, snapshot.rawSourceEncoding, snapshot.rawSourceHasBom);
+      return "source";
+    }
+    if (["docx", "xlsx", "pptx"].includes(snapshot.kind)) {
+      try {
+        if (await this.replaceOfficeDocumentText(snapshot.file, snapshot.kind, originalText, editedText)) return "source";
+      } catch (error) {
+        console.warn("Cancip Office preview text writeback fell back to persistent edit state", error);
+      }
+    }
+    await this.writePersistentDocumentEdit(snapshot, originalText, editedText);
+    return "overlay";
+  }
+
+  private async writePersistentDocumentEdit(snapshot: DocumentSnapshot, originalText: string, editedText: string): Promise<void> {
+    const adapter = this.app.vault.adapter;
+    const path = await this.documentPersistentEditPath(snapshot.file.path);
+    const existing = await this.readPersistentDocumentEdits(snapshot.file);
+    const edits = [...(existing?.edits ?? [])];
+    const chainedIndex = edits.findIndex((entry) => entry.originalText === originalText || entry.editedText === originalText);
+    const nextEntry: DocumentPersistentTextEdit = {
+      originalText: chainedIndex >= 0 ? edits[chainedIndex].originalText : originalText,
+      editedText,
+      updatedAt: new Date().toISOString()
+    };
+    if (chainedIndex >= 0) edits.splice(chainedIndex, 1, nextEntry);
+    else edits.push(nextEntry);
+    const state: DocumentPersistentEditState = {
+      schemaVersion: 1,
+      sourcePath: snapshot.file.path,
+      sourceMtime: snapshot.file.stat.mtime,
+      updatedAt: nextEntry.updatedAt,
+      edits: edits.slice(-200)
+    };
+    await ensureFolder(adapter, DOCUMENT_PERSISTENT_EDITS_DIR);
+    const content = `${JSON.stringify(state, null, 2)}\n`;
+    await adapter.write(path, content);
+    if (await adapter.read(path) !== content) throw new Error(`Document edit verification failed: ${path}`);
+    this.invalidateDocumentSnapshot(snapshot.file.path);
+  }
+
+  private async replaceOfficeDocumentText(file: TFile, kind: DocumentFormatKind, originalText: string, editedText: string): Promise<boolean> {
+    if (kind !== "docx" && kind !== "xlsx" && kind !== "pptx") return false;
+    const adapter = this.app.vault.adapter as DataAdapter & {
+      readBinary?: (path: string) => Promise<ArrayBuffer>;
+      writeBinary?: (path: string, data: ArrayBuffer) => Promise<void>;
+    };
+    if (typeof adapter.readBinary !== "function" || typeof adapter.writeBinary !== "function") return false;
+    const originalBuffer = await adapter.readBinary(file.path);
+    const originalBytes = new Uint8Array(originalBuffer);
+    const archive = unzipSync(originalBytes);
+    const replacement = replaceOfficeArchiveVisibleText(archive, kind, originalText, editedText);
+    if (!replacement.changed) return false;
+    const output = zipSync(replacement.archive, { level: 6 });
+    const payload = output.buffer.slice(output.byteOffset, output.byteOffset + output.byteLength) as ArrayBuffer;
+    try {
+      await adapter.writeBinary(file.path, payload);
+      this.invalidateDocumentSnapshot(file.path);
+      const verified = await buildDocumentSnapshot(this.app, file);
+      if (!normalizedDocumentTextIncludes(verified.markdown, editedText)) {
+        throw new Error(`Office text writeback verification failed: ${file.path}`);
+      }
+      return true;
+    } catch (error) {
+      const rollback = originalBytes.buffer.slice(originalBytes.byteOffset, originalBytes.byteOffset + originalBytes.byteLength) as ArrayBuffer;
+      await adapter.writeBinary(file.path, rollback).catch(() => undefined);
+      this.invalidateDocumentSnapshot(file.path);
+      throw error;
+    }
   }
 
   async exportDocumentConversion(file: TFile, markdown: string, format: "md" | "html"): Promise<string> {
@@ -21467,7 +21705,7 @@ class CancipDocumentWorkbenchView extends FileView {
   }
 
   getState(): DocumentWorkbenchState & Record<string, unknown> {
-    return { ...super.getState(), filePath: this.filePath, mode: this.mode };
+    return { ...super.getState(), file: this.filePath, filePath: this.filePath, mode: this.mode };
   }
 
   canAcceptExtension(extension: string): boolean {
@@ -21504,7 +21742,7 @@ class CancipDocumentWorkbenchView extends FileView {
   }
 
   async onUnloadFile(file: TFile): Promise<void> {
-    if (!this.matchesFile(file.path)) return;
+    void file;
     this.clearNoteDrawOverlay();
     this.noteDrawMarkdownEditMode = false;
     delete this.contentEl.dataset.url;
@@ -21538,6 +21776,20 @@ class CancipDocumentWorkbenchView extends FileView {
   async openFile(file: TFile, mode: DocumentWorkbenchMode = this.plugin.settings.documentWorkbenchDefaultMode): Promise<void> {
     const changed = this.filePath !== file.path;
     if (changed) this.noteDrawMarkdownEditMode = false;
+    if (this.file?.path !== file.path) {
+      const viewState = this.leaf.getViewState();
+      await this.leaf.setViewState({
+        ...viewState,
+        type: CANCIP_DOCUMENT_VIEW_TYPE,
+        state: {
+          ...(isRecord(viewState.state) ? viewState.state : {}),
+          file: file.path,
+          filePath: file.path,
+          mode
+        }
+      });
+      return;
+    }
     this.filePath = file.path;
     this.mode = mode;
     if (changed || !this.snapshot || this.snapshot.sourceMtime !== file.stat.mtime || this.snapshot.sourceSize !== file.stat.size) {
@@ -22061,10 +22313,17 @@ class CancipDocumentWorkbenchView extends FileView {
       return /(?:edit\s*md|编辑\s*md|編輯\s*md|md\s*(?:edit|编辑|編輯)|md\s*bearbeiten|modifier\s*md|editar\s*md)/i.test(label)
         || Boolean(button.querySelector("svg.lucide-file-pen-line, .lucide-file-pen-line"));
     };
-    const notify = (): void => onModeChange?.(this.noteDrawMarkdownEditMode);
-    const enforce = (): void => {
-      stage.toggleClass("is-edit-md-mode", this.noteDrawMarkdownEditMode);
-      notify();
+    const controllerOwnsToolbar = (toolbar: HTMLElement): boolean => {
+      if (stage.contains(toolbar)) return true;
+      return controller()?.toolbar === toolbar;
+    };
+    const syncFromController = (): void => {
+      const notedraw = controller();
+      const enabled = stage.hasClass("is-edit-md-mode") || notedraw?.toolMode === "edit-md";
+      if (enabled === this.noteDrawMarkdownEditMode) return;
+      this.noteDrawMarkdownEditMode = enabled;
+      stage.toggleClass("is-edit-md-mode", enabled);
+      onModeChange?.(enabled);
     };
     const onClick = (event: MouseEvent): void => {
       const target = event.target;
@@ -22072,7 +22331,7 @@ class CancipDocumentWorkbenchView extends FileView {
       const button = targetElement?.closest<HTMLButtonElement>(".notedraw-toolbar button");
       if (!button || !isEditMarkdownButton(button)) return;
       const toolbar = button.closest<HTMLElement>(".notedraw-toolbar");
-      if (!toolbar || !stage.contains(toolbar)) return;
+      if (!toolbar || !controllerOwnsToolbar(toolbar)) return;
       if (this.noteDrawMarkdownEditMode) {
         event.preventDefault();
         event.stopImmediatePropagation();
@@ -22082,18 +22341,16 @@ class CancipDocumentWorkbenchView extends FileView {
         } catch {
           // The CSS/state guard below still prevents Cancip text editing if NoteDraw is unavailable.
         }
-        enforce();
-        hostWindow.setTimeout(enforce, 0);
+        stage.removeClass("is-edit-md-mode");
+        onModeChange?.(false);
+        hostWindow.setTimeout(syncFromController, 0);
         return;
       }
-      this.noteDrawMarkdownEditMode = true;
-      hostWindow.setTimeout(enforce, 0);
+      hostWindow.setTimeout(syncFromController, 0);
     };
-    const existingClassState = stage.hasClass("is-edit-md-mode");
-    if (existingClassState) this.noteDrawMarkdownEditMode = true;
     hostWindow.addEventListener("click", onClick, true);
     this.noteDrawMarkdownEditObserver = typeof MutationObserver === "function" ? new MutationObserver(() => {
-      if (stage.hasClass("is-edit-md-mode") !== this.noteDrawMarkdownEditMode) enforce();
+      syncFromController();
     }) : null;
     this.noteDrawMarkdownEditObserver?.observe(stage, { attributes: true, attributeFilter: ["class"] });
     this.noteDrawMarkdownEditCleanup = () => {
@@ -22101,7 +22358,7 @@ class CancipDocumentWorkbenchView extends FileView {
       this.noteDrawMarkdownEditObserver?.disconnect();
       this.noteDrawMarkdownEditObserver = null;
     };
-    enforce();
+    hostWindow.setTimeout(syncFromController, 0);
   }
 
   private renderEditor(parent: HTMLElement): void {
@@ -22265,22 +22522,10 @@ class CancipDocumentWorkbenchView extends FileView {
         element.removeAttribute("contenteditable");
         delete element.dataset.cancipNoteDrawOriginal;
         if (!original || original === edited) return;
-        const base = snapshot.editableSource ? this.editBuffer : this.currentMarkdown();
-        const next = this.replaceUniqueDocumentText(base, original, edited);
-        if (next === null) {
-          new Notice(this.plugin.t("documentLoadFailed", { reason: "The selected preview text could not be matched safely" }));
-          return;
-        }
-        this.editBuffer = next;
-        if (snapshot.editableSource) {
-          await this.plugin.saveDocumentRawSource(snapshot.file, next, snapshot.rawSourceEncoding, snapshot.rawSourceHasBom);
-          this.dirty = false;
-          const refreshed = await this.loadAndRender(false);
-          if (!refreshed) await this.render();
-        } else {
-          this.dirty = true;
-          await this.render();
-        }
+        await this.plugin.persistDocumentPreviewTextEdit(snapshot, original, edited);
+        this.dirty = false;
+        const refreshed = await this.loadAndRender(false);
+        if (!refreshed) await this.render();
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
         new Notice(this.plugin.t("documentLoadFailed", { reason }));
@@ -22334,11 +22579,21 @@ class CancipDocumentWorkbenchView extends FileView {
 
   private installHtmlPreviewBridge(stage: HTMLElement, iframe: HTMLIFrameElement, snapshot: DocumentSnapshot): void {
     const hostWindow = iframe.ownerDocument.defaultView ?? activeWindow;
+    const syncEditMode = (): void => {
+      iframe.contentWindow?.postMessage({
+        channel: DOCUMENT_HTML_PREVIEW_CHANNEL,
+        action: this.noteDrawMarkdownEditMode ? "edit-on" : "edit-off"
+      }, "*");
+    };
     this.installNoteDrawMarkdownEditModeBridge(stage, (enabled) => {
-      if (!enabled) iframe.contentWindow?.postMessage({ channel: DOCUMENT_HTML_PREVIEW_CHANNEL, action: "edit-off" }, "*");
+      iframe.contentWindow?.postMessage({ channel: DOCUMENT_HTML_PREVIEW_CHANNEL, action: enabled ? "edit-on" : "edit-off" }, "*");
     });
     const onMessage = (event: MessageEvent): void => {
       if (event.source !== iframe.contentWindow || !isRecord(event.data) || event.data.channel !== DOCUMENT_HTML_PREVIEW_CHANNEL) return;
+      if (event.data.type === "edit-mode") {
+        iframe.dataset.cancipEditMode = event.data.enabled === true ? "true" : "false";
+        return;
+      }
       if (event.data.type === "height") {
         const height = Math.round(Number(event.data.height));
         if (Number.isFinite(height) && height >= 120 && height <= 200_000) {
@@ -22354,29 +22609,11 @@ class CancipDocumentWorkbenchView extends FileView {
       if (!originalText || originalText === editedText) return;
       void this.commitHtmlPreviewText(snapshot, originalText, editedText);
     };
-    const onPointerDown = (event: PointerEvent): void => {
-      if (!this.noteDrawMarkdownEditMode || !stage.hasClass("is-edit-md-mode")) return;
-      const target = event.target;
-      const hostElementCtor = (hostWindow as Window & { Element?: typeof Element }).Element ?? Element;
-      const targetElement = target && (target as Element).instanceOf?.(hostElementCtor) ? target as Element : null;
-      if (targetElement?.closest(".notedraw-toolbar, .notedraw-palette-panel, .notedraw-text-panel, .notedraw-selection-menu")) return;
-      const rect = iframe.getBoundingClientRect();
-      if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      iframe.focus();
-      iframe.contentWindow?.postMessage({
-        channel: DOCUMENT_HTML_PREVIEW_CHANNEL,
-        action: "edit-at",
-        x: event.clientX - rect.left,
-        y: event.clientY - rect.top
-      }, "*");
-    };
+    iframe.addEventListener("load", syncEditMode);
     hostWindow.addEventListener("message", onMessage);
-    stage.addEventListener("pointerdown", onPointerDown, true);
     this.htmlPreviewCleanup = () => {
+      iframe.removeEventListener("load", syncEditMode);
       hostWindow.removeEventListener("message", onMessage);
-      stage.removeEventListener("pointerdown", onPointerDown, true);
     };
   }
 
@@ -22406,12 +22643,11 @@ class CancipDocumentWorkbenchView extends FileView {
         }
         return;
       }
-      const current = this.currentMarkdown();
-      const next = this.replaceUniqueDocumentText(current, originalText, editedText);
-      if (next === null) throw new Error("The selected preview text could not be matched safely");
-      this.editBuffer = next;
-      this.dirty = true;
-      await this.render();
+      await this.plugin.persistDocumentPreviewTextEdit(snapshot, originalText, editedText);
+      persisted = true;
+      this.dirty = false;
+      const refreshed = await this.loadAndRender(false);
+      if (!refreshed) await this.render();
       return;
     } catch (error) {
       if (persisted) {
@@ -22449,38 +22685,7 @@ class CancipDocumentWorkbenchView extends FileView {
   }
 
   private replaceUniqueDocumentText(source: string, originalText: string, editedText: string, htmlEntities = false): string | null {
-    const candidates = htmlEntities
-      ? uniqueStrings([originalText, escapeHtml(originalText)]).filter(Boolean)
-      : uniqueStrings([
-          originalText,
-          originalText.replace(/\r?\n/g, "\r\n"),
-          originalText.replace(/\r\n/g, "\n")
-        ]).filter(Boolean);
-    for (const candidate of candidates) {
-      const index = source.indexOf(candidate);
-      if (index < 0 || source.indexOf(candidate, index + candidate.length) >= 0) continue;
-      const replacement = htmlEntities && candidate !== originalText
-        ? escapeHtml(editedText)
-        : candidate.includes("\r\n")
-          ? editedText.replace(/\r?\n/g, "\r\n")
-          : editedText.replace(/\r\n/g, "\n");
-      return `${source.slice(0, index)}${replacement}${source.slice(index + candidate.length)}`;
-    }
-    if (!htmlEntities) {
-      const normalizedOriginal = originalText.replace(/\s+/g, " ").trim();
-      if (normalizedOriginal) {
-        const lines = source.split(/(\r?\n)/);
-        for (let index = 0, offset = 0; index < lines.length; index += 2) {
-          const line = lines[index] ?? "";
-          const heading = line.match(/^(#{1,6}\s+)/);
-          if (heading && line.slice(heading[0].length).replace(/\s+/g, " ").trim() === normalizedOriginal) {
-            return `${source.slice(0, offset)}${heading[1]}${editedText}${source.slice(offset + line.length)}`;
-          }
-          offset += line.length + (lines[index + 1]?.length ?? 0);
-        }
-      }
-    }
-    return null;
+    return replaceUniqueDocumentTextValue(source, originalText, editedText, htmlEntities);
   }
 
   private async openNativeMarkdownMode(mode: "reading" | "markdown"): Promise<void> {
@@ -24006,6 +24211,7 @@ class CancipView extends ItemView {
   private sessionHistoryCache: { at: number; mergeFiles: boolean; entries: SessionHistoryEntry[] } | null = null;
   private sessionHistoryReadPromise: { mergeFiles: boolean; promise: Promise<SessionHistoryEntry[]> } | null = null;
   private syncedSessionHistoryPaths = new Set<string>();
+  private sessionHistoryRefreshIndexedFiles = false;
   private historyMenuRefreshTimer: number | null = null;
   private experienceHarvestTimer: number | null = null;
   private experienceRecordedSessionIds = new Set<string>();
@@ -24126,6 +24332,7 @@ class CancipView extends ItemView {
       this.sessionHistoryReadPromise = null;
       for (const path of paths) {
         const normalized = normalizePath(path.replace(/\\/g, "/"));
+        if (normalized === SESSION_HISTORY_DIR) this.sessionHistoryRefreshIndexedFiles = true;
         if (
           normalized.startsWith(`${SESSION_HISTORY_DIR}/`)
           && normalized.endsWith(".json")
@@ -27395,7 +27602,7 @@ class CancipView extends ItemView {
     await sleep(0);
     if (loadId !== this.headerMenuLoadId || this.activeHeaderMenu !== "history" || !this.headerMenuEl || this.headerMenuEl.hasClass("is-hidden")) return;
     const [hotEntries, coldEntries] = await Promise.all([
-      this.readSessionHistoryIndex({ force: true, mergeFiles: false }),
+      this.readSessionHistoryIndex({ force: true, refreshFiles: true }),
       this.plugin.coldArchivedSessionEntries()
     ]);
     const hotIds = new Set(hotEntries.map((entry) => entry.id));
@@ -27682,15 +27889,16 @@ class CancipView extends ItemView {
     orderedIds.splice(toIndex, 0, moved);
     try {
       const manualOrderById = new Map(orderedIds.map((id, index) => [id, index + 1]));
-      const index = (await this.readSessionHistoryIndex({ force: true, mergeFiles: false })).filter((item) => !item.eventOnly);
+      const metadataUpdatedAt = new Date().toISOString();
+      const index = (await this.readSessionHistoryIndex({ force: true, refreshFiles: true })).filter((item) => !item.eventOnly);
       const nextEntries = index.map((entry): SessionHistoryEntry => {
         const manualOrder = manualOrderById.get(entry.id);
-        return typeof manualOrder === "number" ? { ...entry, manualOrder } : entry;
+        return typeof manualOrder === "number" ? { ...entry, manualOrder, metadataUpdatedAt } : entry;
       });
       await this.writeSessionHistoryEntries(nextEntries);
       for (const entry of nextEntries) {
         if (!manualOrderById.has(entry.id)) continue;
-        await this.syncSessionHistorySnapshotPatch(entry, { manualOrder: entry.manualOrder });
+        await this.syncSessionHistorySnapshotPatch(entry, { manualOrder: entry.manualOrder, metadataUpdatedAt });
       }
       if (this.activeHeaderMenu === "history" && this.headerMenuEl && !this.headerMenuEl.hasClass("is-hidden")) {
         await this.openHistoryMenu();
@@ -27703,19 +27911,21 @@ class CancipView extends ItemView {
 
   private async updateSessionHistoryEntry(id: string, patch: SessionHistoryEntryPatch): Promise<void> {
     try {
-      const index = (await this.readSessionHistoryIndex({ force: true })).filter((item) => !item.eventOnly);
+      const index = (await this.readSessionHistoryIndex({ force: true, refreshFiles: true })).filter((item) => !item.eventOnly);
       const existing = index.find((entry) => entry.id === id);
       if (!existing) return;
+      const metadataUpdatedAt = patch.metadataUpdatedAt ?? new Date().toISOString();
       const next: SessionHistoryEntry = {
         ...existing,
         ...patch,
-        updatedAt: patch.updatedAt ?? existing.updatedAt
+        updatedAt: patch.updatedAt ?? existing.updatedAt,
+        metadataUpdatedAt
       };
       const entries = [next, ...index.filter((entry) => entry.id !== id)]
         .sort(compareSessionHistoryEntries)
         .slice(0, SESSION_HISTORY_LIMIT);
       await this.writeSessionHistoryEntries(entries);
-      await this.syncSessionHistorySnapshotPatch(next, patch);
+      await this.syncSessionHistorySnapshotPatch(next, { ...patch, metadataUpdatedAt });
       if (id === this.sessionId) {
         if (typeof patch.title === "string") this.sessionTitleOverride = patch.title;
         if (typeof patch.completedNotice === "boolean") this.currentSessionCompletedNotice = patch.completedNotice;
@@ -27733,15 +27943,17 @@ class CancipView extends ItemView {
 
   private async markAllSessionHistoryRead(): Promise<void> {
     try {
-      const index = (await this.readSessionHistoryIndex()).filter((item) => !item.eventOnly);
+      const index = (await this.readSessionHistoryIndex({ force: true, refreshFiles: true })).filter((item) => !item.eventOnly);
+      const metadataUpdatedAt = new Date().toISOString();
       const entries = index.map((entry): SessionHistoryEntry => ({
         ...entry,
         unread: false,
-        completedNotice: false
+        completedNotice: false,
+        metadataUpdatedAt
       }));
       await this.writeSessionHistoryEntries(entries);
       for (const entry of entries) {
-        await this.syncSessionHistorySnapshotPatch(entry, { unread: false, completedNotice: false });
+        await this.syncSessionHistorySnapshotPatch(entry, { unread: false, completedNotice: false, metadataUpdatedAt });
       }
       if (entries.some((entry) => entry.id === this.sessionId)) {
         this.currentSessionCompletedNotice = false;
@@ -27772,6 +27984,7 @@ class CancipView extends ItemView {
       if (typeof patch.completedNotice === "boolean") snapshot.completedNotice = patch.completedNotice;
       if (typeof patch.status === "string") snapshot.status = patch.status;
       if (typeof patch.updatedAt === "string") snapshot.updatedAt = patch.updatedAt;
+      if (typeof patch.metadataUpdatedAt === "string") snapshot.metadataUpdatedAt = patch.metadataUpdatedAt;
       if (typeof patch.startedAt === "string") snapshot.startedAt = patch.startedAt;
       if (typeof patch.completedAt === "string") snapshot.completedAt = patch.completedAt;
       if (typeof patch.stoppedAt === "string") snapshot.stoppedAt = patch.stoppedAt;
@@ -31760,6 +31973,7 @@ class CancipView extends ItemView {
       snapshot.manualTitle = previous?.manualTitle ?? manualTitle;
       snapshot.startedAt = timeline.startedAt || undefined;
       snapshot.updatedAt = cancipLatestTimestamp(timeline.updatedAt, now.toISOString());
+      snapshot.metadataUpdatedAt = currentTerminal ? now.toISOString() : previous?.metadataUpdatedAt;
       snapshot.completedAt = timeline.completedAt || undefined;
       snapshot.stoppedAt = timeline.stoppedAt || undefined;
       snapshot.failedAt = timeline.failedAt || undefined;
@@ -31774,6 +31988,7 @@ class CancipView extends ItemView {
         createdAt: timeline.createdAt || sessionCreatedAt,
         startedAt: timeline.startedAt,
         updatedAt: now.toISOString(),
+        metadataUpdatedAt: currentTerminal ? now.toISOString() : previous?.metadataUpdatedAt,
         completedAt: timeline.completedAt,
         stoppedAt: timeline.stoppedAt,
         failedAt: timeline.failedAt,
@@ -32238,6 +32453,7 @@ class CancipView extends ItemView {
     snapshot.status = "failed";
     snapshot.completedNotice = true;
     snapshot.unread = true;
+    snapshot.metadataUpdatedAt = new Date().toISOString();
     snapshot.subagentProgress = this.t("subagentFailed");
     snapshot.resumableTask = { prompt, reason: "failed", at: Date.now(), detail: reason };
     snapshot.updatedAt = new Date().toISOString();
@@ -32382,6 +32598,7 @@ class CancipView extends ItemView {
       createdAt: existing?.createdAt ?? String(snapshot.sessionCreatedAt ?? new Date().toISOString()),
       startedAt: typeof snapshot.startedAt === "string" ? snapshot.startedAt : existing?.startedAt,
       updatedAt: String(snapshot.updatedAt),
+      metadataUpdatedAt: String(snapshot.metadataUpdatedAt),
       completedAt: typeof snapshot.completedAt === "string" ? snapshot.completedAt : existing?.completedAt,
       stoppedAt: typeof snapshot.stoppedAt === "string" ? snapshot.stoppedAt : existing?.stoppedAt,
       failedAt: typeof snapshot.failedAt === "string" ? snapshot.failedAt : existing?.failedAt,
@@ -32534,6 +32751,7 @@ class CancipView extends ItemView {
         createdAt: timeline.createdAt || this.sessionCreatedAt,
         startedAt: timeline.startedAt,
         updatedAt: now,
+        metadataUpdatedAt: now,
         completedAt: timeline.completedAt,
         stoppedAt: timeline.stoppedAt,
         failedAt: timeline.failedAt,
@@ -32570,7 +32788,7 @@ class CancipView extends ItemView {
           status,
           path: existing?.path ?? `${SESSION_HISTORY_DIR}/${this.sessionId}.json`
         },
-        { status, completedNotice, updatedAt: now, lastOpenedAt: now, coldArchived: false, archivedAt: "", startedAt: timeline.startedAt, completedAt: timeline.completedAt, stoppedAt: timeline.stoppedAt, failedAt: timeline.failedAt }
+        { status, completedNotice, updatedAt: now, metadataUpdatedAt: now, lastOpenedAt: now, coldArchived: false, archivedAt: "", startedAt: timeline.startedAt, completedAt: timeline.completedAt, stoppedAt: timeline.stoppedAt, failedAt: timeline.failedAt }
       );
       this.syncSessionChrome();
       if (this.activeHeaderMenu === "history" && this.headerMenuEl && !this.headerMenuEl.hasClass("is-hidden")) {
@@ -32595,20 +32813,20 @@ class CancipView extends ItemView {
     }, delayMs);
   }
 
-  private async readSessionHistoryIndex(options: { force?: boolean; mergeFiles?: boolean } = {}): Promise<SessionHistoryEntry[]> {
+  private async readSessionHistoryIndex(options: { force?: boolean; mergeFiles?: boolean; refreshFiles?: boolean } = {}): Promise<SessionHistoryEntry[]> {
     const maxAgeMs = 3000;
     const mergeFiles = options.mergeFiles !== false;
     const cache = this.sessionHistoryCache;
     const cacheCanServe = cache
       && Date.now() - cache.at < maxAgeMs
       && (cache.mergeFiles || !mergeFiles);
-    if (!options.force && cacheCanServe) {
+    if (!options.force && !options.refreshFiles && cacheCanServe) {
       return cache.entries;
     }
-    if (!options.force && this.sessionHistoryReadPromise && (this.sessionHistoryReadPromise.mergeFiles || !mergeFiles)) {
+    if (!options.force && !options.refreshFiles && this.sessionHistoryReadPromise && (this.sessionHistoryReadPromise.mergeFiles || !mergeFiles)) {
       return await this.sessionHistoryReadPromise.promise;
     }
-    const readPromise = this.readSessionHistoryIndexUncached(mergeFiles);
+    const readPromise = this.readSessionHistoryIndexUncached(mergeFiles, options.refreshFiles === true);
     if (!options.force) this.sessionHistoryReadPromise = { mergeFiles, promise: readPromise };
     try {
       const entries = await readPromise;
@@ -32619,7 +32837,7 @@ class CancipView extends ItemView {
     }
   }
 
-  private async readSessionHistoryIndexUncached(mergeFiles = true): Promise<SessionHistoryEntry[]> {
+  private async readSessionHistoryIndexUncached(mergeFiles = true, refreshIndexedFiles = false): Promise<SessionHistoryEntry[]> {
     try {
       const adapter = this.app.vault.adapter;
       let entries: SessionHistoryEntry[] = [];
@@ -32636,15 +32854,17 @@ class CancipView extends ItemView {
       if (!mergeFiles) return entries.sort(compareSessionHistoryEntries).slice(0, SESSION_HISTORY_LIMIT);
       const syncedPaths = [...this.syncedSessionHistoryPaths];
       this.syncedSessionHistoryPaths.clear();
-      return await this.mergeEventOnlySessionHistory(await this.mergeSessionFilesIntoHistory(entries, syncedPaths));
+      const refreshFiles = refreshIndexedFiles || this.sessionHistoryRefreshIndexedFiles;
+      this.sessionHistoryRefreshIndexedFiles = false;
+      return await this.mergeEventOnlySessionHistory(await this.mergeSessionFilesIntoHistory(entries, syncedPaths, refreshFiles));
     } catch (error) {
       console.warn("Cancip session history index read failed", error);
       return [];
     }
   }
 
-  private async mergeSessionFilesIntoHistory(entries: SessionHistoryEntry[], additionalPaths: string[] = []): Promise<SessionHistoryEntry[]> {
-    return await mergeSessionFilesIntoHistoryWithAdapter(this.app.vault.adapter, entries, additionalPaths);
+  private async mergeSessionFilesIntoHistory(entries: SessionHistoryEntry[], additionalPaths: string[] = [], refreshIndexedFiles = false): Promise<SessionHistoryEntry[]> {
+    return await mergeSessionFilesIntoHistoryWithAdapter(this.app.vault.adapter, entries, additionalPaths, refreshIndexedFiles);
   }
 
   private async mergeEventOnlySessionHistory(entries: SessionHistoryEntry[]): Promise<SessionHistoryEntry[]> {
@@ -48777,6 +48997,7 @@ function cancipVaultSyncKindsForPath(path: string, settings: Settings): Set<Canc
   if (isReviewGateRelatedPath(normalized)) kinds.add("review");
   if (normalized === CANCIP_CONFIG_PATH) kinds.add("config");
   if (normalized === CANCIP_FILE_PINS_PATH) kinds.add("file-pins");
+  if (isPathInVaultFolder(normalized, DOCUMENT_PERSISTENT_EDITS_DIR)) kinds.add("documents");
   if (normalized === PERSONALIZATION_CACHE_PATH || normalized === PERSONALIZATION_USAGE_PATH) kinds.add("personalization");
   if (
     normalized === SESSION_HISTORY_INDEX_PATH ||
@@ -54468,6 +54689,7 @@ function normalizeSessionHistoryEntry(item: Record<string, unknown>): SessionHis
     createdAt: typeof item.createdAt === "string" ? item.createdAt : "",
     startedAt: typeof item.startedAt === "string" ? item.startedAt : undefined,
     updatedAt: typeof item.updatedAt === "string" ? item.updatedAt : "",
+    metadataUpdatedAt: typeof item.metadataUpdatedAt === "string" ? item.metadataUpdatedAt : undefined,
     completedAt: typeof item.completedAt === "string" ? item.completedAt : undefined,
     stoppedAt: typeof item.stoppedAt === "string" ? item.stoppedAt : undefined,
     failedAt: typeof item.failedAt === "string" ? item.failedAt : undefined,
@@ -54515,6 +54737,7 @@ function sessionHistoryEntryFromSnapshot(raw: unknown, path: string): SessionHis
     createdAt: typeof raw.sessionCreatedAt === "string" ? raw.sessionCreatedAt : updatedAt,
     startedAt: typeof raw.startedAt === "string" ? raw.startedAt : undefined,
     updatedAt,
+    metadataUpdatedAt: typeof raw.metadataUpdatedAt === "string" ? raw.metadataUpdatedAt : undefined,
     completedAt: typeof raw.completedAt === "string" ? raw.completedAt : undefined,
     stoppedAt: typeof raw.stoppedAt === "string" ? raw.stoppedAt : undefined,
     failedAt: typeof raw.failedAt === "string" ? raw.failedAt : undefined,
@@ -54548,18 +54771,24 @@ function mergeSessionHistoryEntry(existing: SessionHistoryEntry | undefined, fro
   const fileIsNewer = Number.isFinite(fileTime) && (!Number.isFinite(existingTime) || fileTime >= existingTime);
   const primary = fileIsNewer ? fromFile : existing;
   const secondary = fileIsNewer ? existing : fromFile;
+  const existingMetadataTime = Date.parse(existing.metadataUpdatedAt || existing.updatedAt);
+  const fileMetadataTime = Date.parse(fromFile.metadataUpdatedAt || fromFile.updatedAt);
+  const fileMetadataIsNewer = Number.isFinite(fileMetadataTime)
+    && (!Number.isFinite(existingMetadataTime) || fileMetadataTime >= existingMetadataTime);
+  const metadata = fileMetadataIsNewer ? fromFile : existing;
   return {
     ...primary,
-    title: existing.manualTitle ? existing.title : primary.title || secondary.title,
-    pinned: existing.pinned ?? fromFile.pinned,
-    archived: existing.archived ?? fromFile.archived,
-    coldArchived: existing.coldArchived ?? fromFile.coldArchived,
-    archivedAt: existing.archivedAt || fromFile.archivedAt,
+    title: metadata.manualTitle ? metadata.title : primary.title || secondary.title,
+    metadataUpdatedAt: metadata.metadataUpdatedAt,
+    pinned: metadata.pinned ?? false,
+    archived: metadata.archived ?? false,
+    coldArchived: metadata.coldArchived ?? false,
+    archivedAt: metadata.archivedAt,
     lastOpenedAt: cancipLatestTimestamp(existing.lastOpenedAt, fromFile.lastOpenedAt) || undefined,
-    manualTitle: existing.manualTitle ?? fromFile.manualTitle,
-    manualOrder: existing.manualOrder ?? fromFile.manualOrder,
-    unread: Boolean(existing.unread || fromFile.unread),
-    completedNotice: Boolean(existing.completedNotice || fromFile.completedNotice),
+    manualTitle: metadata.manualTitle ?? false,
+    manualOrder: metadata.manualOrder,
+    unread: metadata.unread ?? false,
+    completedNotice: metadata.completedNotice ?? false,
     parentSessionId: primary.parentSessionId || secondary.parentSessionId,
     parentSessionTitle: primary.parentSessionTitle || secondary.parentSessionTitle,
     subagentIds: uniqueStrings([...(primary.subagentIds ?? []), ...(secondary.subagentIds ?? [])]),
@@ -54574,7 +54803,8 @@ function mergeSessionHistoryEntry(existing: SessionHistoryEntry | undefined, fro
 async function mergeSessionFilesIntoHistoryWithAdapter(
   adapter: DataAdapter,
   entries: SessionHistoryEntry[],
-  additionalPaths: string[] = []
+  additionalPaths: string[] = [],
+  refreshIndexedFiles = false
 ): Promise<SessionHistoryEntry[]> {
   const byId = new Map<string, SessionHistoryEntry>();
   for (const entry of entries) byId.set(entry.id, entry);
@@ -54593,6 +54823,11 @@ async function mergeSessionFilesIntoHistoryWithAdapter(
       ...additionalPaths
         .map((path) => normalizePath(path.replace(/\\/g, "/")))
         .filter((path) => path.startsWith(`${SESSION_HISTORY_DIR}/`) && path.endsWith(".json") && path !== SESSION_HISTORY_INDEX_PATH),
+      ...(refreshIndexedFiles
+        ? entries
+            .map((entry) => normalizePath(entry.path || `${SESSION_HISTORY_DIR}/${entry.id}.json`))
+            .filter((path) => path.startsWith(`${SESSION_HISTORY_DIR}/`) && path.endsWith(".json") && path !== SESSION_HISTORY_INDEX_PATH)
+        : []),
       ...missingFiles
     ]).slice(0, SESSION_HISTORY_LIMIT * 2);
     for (const path of files) {
@@ -59201,6 +59436,124 @@ function documentFormatKind(file: TFile): DocumentFormatKind {
   return "binary";
 }
 
+function replaceUniqueDocumentTextValue(source: string, originalText: string, editedText: string, htmlEntities = false): string | null {
+  const candidates = htmlEntities
+    ? uniqueStrings([originalText, escapeHtml(originalText)]).filter(Boolean)
+    : uniqueStrings([
+        originalText,
+        originalText.replace(/\r?\n/g, "\r\n"),
+        originalText.replace(/\r\n/g, "\n")
+      ]).filter(Boolean);
+  for (const candidate of candidates) {
+    const index = source.indexOf(candidate);
+    if (index < 0 || source.indexOf(candidate, index + candidate.length) >= 0) continue;
+    const replacement = htmlEntities && candidate !== originalText
+      ? escapeHtml(editedText)
+      : candidate.includes("\r\n")
+        ? editedText.replace(/\r?\n/g, "\r\n")
+        : editedText.replace(/\r\n/g, "\n");
+    return `${source.slice(0, index)}${replacement}${source.slice(index + candidate.length)}`;
+  }
+  if (!htmlEntities) {
+    const normalizedOriginal = originalText.replace(/\s+/g, " ").trim();
+    if (normalizedOriginal) {
+      const lines = source.split(/(\r?\n)/);
+      for (let index = 0, offset = 0; index < lines.length; index += 2) {
+        const line = lines[index] ?? "";
+        const heading = line.match(/^(#{1,6}\s+)/);
+        if (heading && line.slice(heading[0].length).replace(/\s+/g, " ").trim() === normalizedOriginal) {
+          return `${source.slice(0, offset)}${heading[1]}${editedText}${source.slice(offset + line.length)}`;
+        }
+        offset += line.length + (lines[index + 1]?.length ?? 0);
+      }
+    }
+  }
+  return null;
+}
+
+function normalizedDocumentTextValue(value: string): string {
+  return decodeXmlEntities(String(value ?? ""))
+    .replace(/<[^>]+>/g, " ")
+    .replace(/[*_~`#>|[\](){}]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizedDocumentTextIncludes(source: string, value: string): boolean {
+  const normalizedValue = normalizedDocumentTextValue(value);
+  return Boolean(normalizedValue && normalizedDocumentTextValue(source).includes(normalizedValue));
+}
+
+function escapeOfficeXmlText(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function officeXmlBlockTags(kind: DocumentFormatKind, path: string): string[] {
+  if (kind === "docx" && /^word\/(?:document|header\d*|footer\d*|footnotes|endnotes)\.xml$/i.test(path)) return ["p"];
+  if (kind === "pptx" && /^ppt\/(?:slides\/slide\d+|notesSlides\/notesSlide\d+)\.xml$/i.test(path)) return ["p"];
+  if (kind === "xlsx" && /^xl\/sharedStrings\.xml$/i.test(path)) return ["si"];
+  if (kind === "xlsx" && /^xl\/worksheets\/sheet\d+\.xml$/i.test(path)) return ["is"];
+  return [];
+}
+
+function officeXmlTextBlockReplacement(block: string, originalText: string, editedText: string): string | null {
+  const textPattern = /(<(?:(?:[A-Za-z_][\w.-]*):)?t\b[^>]*>)([\s\S]*?)(<\/(?:(?:[A-Za-z_][\w.-]*):)?t\s*>)/gi;
+  const parts = [...block.matchAll(textPattern)];
+  if (!parts.length) return null;
+  const visible = parts.map((match) => decodeXmlEntities(match[2] ?? "")).join("");
+  if (normalizedDocumentTextValue(visible) !== normalizedDocumentTextValue(originalText)) return null;
+  let next = block;
+  for (let index = parts.length - 1; index >= 0; index -= 1) {
+    const match = parts[index];
+    if (match.index === undefined) continue;
+    const open = match[1] ?? "";
+    const content = match[2] ?? "";
+    const from = match.index + open.length;
+    const replacement = index === 0 ? escapeOfficeXmlText(editedText) : "";
+    next = `${next.slice(0, from)}${replacement}${next.slice(from + content.length)}`;
+  }
+  return next;
+}
+
+function officeXmlTextReplacements(xml: string, tags: string[], originalText: string, editedText: string): Array<{ start: number; end: number; text: string }> {
+  if (!tags.length) return [];
+  const names = tags.join("|");
+  const blockPattern = new RegExp(`<(?:(?:[A-Za-z_][\\w.-]*):)?(${names})\\b[^>]*>[\\s\\S]*?<\\/(?:(?:[A-Za-z_][\\w.-]*):)?\\1\\s*>`, "gi");
+  const replacements: Array<{ start: number; end: number; text: string }> = [];
+  for (const match of xml.matchAll(blockPattern)) {
+    if (match.index === undefined) continue;
+    const text = officeXmlTextBlockReplacement(match[0], originalText, editedText);
+    if (text === null) continue;
+    replacements.push({ start: match.index, end: match.index + match[0].length, text });
+  }
+  return replacements;
+}
+
+function replaceOfficeArchiveVisibleText(
+  archive: Record<string, Uint8Array>,
+  kind: DocumentFormatKind,
+  originalText: string,
+  editedText: string
+): { archive: Record<string, Uint8Array>; changed: boolean } {
+  const matches: Array<{ path: string; xml: string; replacement: { start: number; end: number; text: string } }> = [];
+  for (const [path, bytes] of Object.entries(archive)) {
+    const tags = officeXmlBlockTags(kind, path);
+    if (!tags.length) continue;
+    const xml = strFromU8(bytes);
+    for (const replacement of officeXmlTextReplacements(xml, tags, originalText, editedText)) {
+      matches.push({ path, xml, replacement });
+    }
+  }
+  if (matches.length !== 1) return { archive, changed: false };
+  const match = matches[0];
+  const nextXml = `${match.xml.slice(0, match.replacement.start)}${match.replacement.text}${match.xml.slice(match.replacement.end)}`;
+  archive[match.path] = strToU8(nextXml);
+  return { archive, changed: true };
+}
+
 async function buildDocumentSnapshot(app: App, file: TFile): Promise<DocumentSnapshot> {
   let kind = documentFormatKind(file);
   const mimeType = mimeTypeForPath(file.path);
@@ -59573,7 +59926,7 @@ function isolatedHtmlPreview(source: string): string {
 
 function documentHtmlPreviewBridgeScript(): string {
   const channel = JSON.stringify(DOCUMENT_HTML_PREVIEW_CHANNEL);
-  return `<script>(()=>{const channel=${channel};let active=null;let originalText="";let heightFrame=0;const sendHeight=()=>{if(heightFrame)return;heightFrame=requestAnimationFrame(()=>{heightFrame=0;const root=document.documentElement;const body=document.body;const height=Math.max(root.scrollHeight,root.offsetHeight,body?body.scrollHeight:0,body?body.offsetHeight:0);parent.postMessage({channel,type:"height",height},"*")})};const finish=(commit)=>{if(!active)return;const element=active;const before=originalText;const after=element.innerText||element.textContent||"";active=null;originalText="";element.removeAttribute("contenteditable");element.removeAttribute("spellcheck");if(commit&&before!==after)parent.postMessage({channel,type:"commit",originalText:before,editedText:after},"*");sendHeight()};const editableAt=(x,y)=>{const target=document.elementFromPoint(x,y);if(!target||target.closest("script,style,noscript,svg,canvas,img,video,audio,input,textarea,select,button"))return null;return target.closest("p,h1,h2,h3,h4,h5,h6,li,td,th,blockquote,pre,code,figcaption,label,summary,span,div,section,article")};addEventListener("message",event=>{if(event.source!==parent||!event.data||event.data.channel!==channel)return;if(event.data.action==="edit-off"){finish(true);return}if(event.data.action==="find"){const query=String(event.data.query||"");if(!query){getSelection()?.removeAllRanges();return}const found=window.find?.(query,false,event.data.backwards===true,true,false,false,false)??false;const node=getSelection()?.focusNode?.parentElement;if(found&&node)node.scrollIntoView({block:"center",inline:"nearest"});parent.postMessage({channel,type:"find-result",found},"*");return}if(event.data.action!=="edit-at")return;finish(true);const element=editableAt(Number(event.data.x)||0,Number(event.data.y)||0);if(!element)return;const text=element.innerText||element.textContent||"";if(!text.trim())return;active=element;originalText=text;element.setAttribute("contenteditable","plaintext-only");element.setAttribute("spellcheck","true");element.focus({preventScroll:true});const selection=getSelection();const range=document.caretRangeFromPoint?document.caretRangeFromPoint(Number(event.data.x)||0,Number(event.data.y)||0):null;if(selection&&range){selection.removeAllRanges();selection.addRange(range)}});addEventListener("keydown",event=>{if(!active)return;if(event.key==="Escape"){event.preventDefault();active.innerText=originalText;finish(false)}else if(event.key==="Enter"&&(event.ctrlKey||event.metaKey)){event.preventDefault();finish(true)}});addEventListener("focusout",()=>setTimeout(()=>{if(active&&!active.contains(document.activeElement))finish(true)},0),true);addEventListener("load",sendHeight);addEventListener("resize",sendHeight);new MutationObserver(sendHeight).observe(document.documentElement,{subtree:true,childList:true,attributes:true,characterData:true});if(typeof ResizeObserver==="function")new ResizeObserver(sendHeight).observe(document.documentElement);sendHeight()})()</script>`;
+  return `<script>(()=>{const channel=${channel};let active=null;let originalText="";let editMode=false;let heightFrame=0;const sendHeight=()=>{if(heightFrame)return;heightFrame=requestAnimationFrame(()=>{heightFrame=0;const root=document.documentElement;const body=document.body;const height=Math.max(root.scrollHeight,root.offsetHeight,body?body.scrollHeight:0,body?body.offsetHeight:0);parent.postMessage({channel,type:"height",height},"*")})};const sendEditMode=()=>parent.postMessage({channel,type:"edit-mode",enabled:editMode},"*");const finish=(commit)=>{if(!active)return;const element=active;const before=originalText;const after=element.innerText||element.textContent||"";active=null;originalText="";element.removeAttribute("contenteditable");element.removeAttribute("spellcheck");if(commit&&before!==after)parent.postMessage({channel,type:"commit",originalText:before,editedText:after},"*");sendHeight()};const editableAt=(x,y)=>{const target=document.elementFromPoint(x,y);if(!target||target.closest("script,style,noscript,svg,canvas,img,video,audio,input,textarea,select,button"))return null;return target.closest("p,h1,h2,h3,h4,h5,h6,li,td,th,blockquote,pre,code,figcaption,label,summary,span,div,section,article")};const begin=(element,x,y)=>{if(!element)return;finish(true);const text=element.innerText||element.textContent||"";if(!text.trim())return;active=element;originalText=text;element.setAttribute("contenteditable","plaintext-only");element.setAttribute("spellcheck","true");element.focus({preventScroll:true});const selection=getSelection();const range=document.caretRangeFromPoint?document.caretRangeFromPoint(x,y):null;if(selection&&range){selection.removeAllRanges();selection.addRange(range)}};addEventListener("message",event=>{if(event.source!==parent||!event.data||event.data.channel!==channel)return;if(event.data.action==="edit-on"){editMode=true;sendEditMode();return}if(event.data.action==="edit-off"){editMode=false;finish(true);sendEditMode();return}if(event.data.action==="find"){const query=String(event.data.query||"");if(!query){getSelection()?.removeAllRanges();return}const found=window.find?.(query,false,event.data.backwards===true,true,false,false,false)??false;const node=getSelection()?.focusNode?.parentElement;if(found&&node)node.scrollIntoView({block:"center",inline:"nearest"});parent.postMessage({channel,type:"find-result",found},"*");return}if(event.data.action!=="edit-at")return;begin(editableAt(Number(event.data.x)||0,Number(event.data.y)||0),Number(event.data.x)||0,Number(event.data.y)||0)});addEventListener("pointerdown",event=>{if(!editMode||active?.contains(event.target))return;const element=event.target?.closest?.("p,h1,h2,h3,h4,h5,h6,li,td,th,blockquote,pre,code,figcaption,label,summary,span,div,section,article");if(!element||element.closest("script,style,noscript,svg,canvas,img,video,audio,input,textarea,select,button"))return;event.preventDefault();event.stopPropagation();begin(element,event.clientX,event.clientY)},true);addEventListener("keydown",event=>{if(!active)return;if(event.key==="Escape"){event.preventDefault();active.innerText=originalText;finish(false)}else if(event.key==="Enter"&&(event.ctrlKey||event.metaKey)){event.preventDefault();finish(true)}});addEventListener("focusout",()=>setTimeout(()=>{if(active&&!active.contains(document.activeElement))finish(true)},0),true);addEventListener("load",()=>{sendHeight();sendEditMode()});addEventListener("resize",sendHeight);new MutationObserver(sendHeight).observe(document.documentElement,{subtree:true,childList:true,attributes:true,characterData:true});if(typeof ResizeObserver==="function")new ResizeObserver(sendHeight).observe(document.documentElement);sendHeight();sendEditMode()})()</script>`;
 }
 
 function htmlToMarkdown(source: string, fallbackTitle: string): string {

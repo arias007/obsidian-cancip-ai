@@ -691,6 +691,51 @@ if (-not $Case -or 'programmatic.review-count-canonical-state'.Contains($Case)) 
   }
 }
 
+if (-not $Case -or 'programmatic.vault-state-convergence'.Contains($Case)) {
+  try {
+    $code = @'
+(async()=>{
+  const started=Date.now(),p=app.plugins.plugins.cancip,adapter=app.vault.adapter;
+  if(!p||typeof p.refreshAllSyncedVaultState!=='function')throw new Error('synced state refresh API missing');
+  const configBefore=await adapter.stat('.cancip/config.json'),configText=await adapter.read('.cancip/config.json');
+  await p.writeCancipConfig();
+  const configAfter=await adapter.stat('.cancip/config.json');
+  let reviewRebuilds=0;
+  const originalRebuild=p.rebuildReviewGateCanonicalState;
+  p.rebuildReviewGateCanonicalState=async()=>{reviewRebuilds+=1;return await originalRebuild.call(p)};
+  try{await p.refreshOpenCancipVaultState(new Set(['review']),['.cancip/review-gates/simulated-remote/manifest.json'])}
+  finally{p.rebuildReviewGateCanonicalState=originalRebuild}
+  await p.refreshAllSyncedVaultState(true);
+  const canonical=await p.readReviewGateCanonicalState(),snapshot=await p.reviewGateSnapshot(true);
+  const pinsFile=JSON.parse(await adapter.read('.cancip/file-pins.json')),pins=await p.loadFilePinState(true);
+  const automationFile=JSON.parse(await adapter.read('.cancip/automations.json')),automations=await p.loadAutomations(true);
+  const view=await p.getOrCreateChatView({reveal:false,focus:false});
+  const indexFile=JSON.parse(await adapter.read('.cancip/sessions/index.json'));
+  const sessions=await view.readSessionHistoryIndex({force:true,refreshFiles:true});
+  return JSON.stringify({
+    id:'programmatic.vault-state-convergence',elapsedMs:Date.now()-started,
+    reviewRebuilds,canonicalPending:canonical?.pendingPaths?.length??-1,snapshotPending:snapshot.pendingCount,
+    sessionIndex:indexFile.entries?.length||0,sessionMerged:sessions.filter((entry)=>!entry.eventOnly).length,
+    pinsSame:JSON.stringify(pinsFile.folders||{})===JSON.stringify(pins.folders||{}),
+    automationsSame:(automationFile.tasks?.length||0)===automations.length,
+    configNoRewrite:configText===await adapter.read('.cancip/config.json')&&configBefore?.mtime===configAfter?.mtime,
+    polling:Boolean(p.cancipStatePollTimer),refreshRecorded:p.lastCancipResumeRefreshAt>0
+  });
+})()
+'@
+    $item = Invoke-CancipEval -Code $code -TimeoutSeconds 60
+    if ([int]$item.reviewRebuilds -ne 0) { throw "remote review packages still rebuild canonical state: $($item.reviewRebuilds)" }
+    if ([int]$item.canonicalPending -ne [int]$item.snapshotPending) { throw "review canonical/snapshot mismatch: $($item.canonicalPending)/$($item.snapshotPending)" }
+    if ([int]$item.sessionMerged -lt [int]$item.sessionIndex) { throw "session merge lost indexed sessions: $($item.sessionIndex)/$($item.sessionMerged)" }
+    foreach ($field in @('pinsSame','automationsSame','configNoRewrite','polling','refreshRecorded')) {
+      if (-not [bool]$item.$field) { throw "vault convergence check failed: $field ($($item | ConvertTo-Json -Compress))" }
+    }
+    Add-CaseResult 'programmaticCases' @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs; pending = $item.canonicalPending; sessions = $item.sessionMerged }
+  } catch {
+    Add-CaseResult 'programmaticCases' @{ id = 'programmatic.vault-state-convergence'; pass = $false; error = $_.Exception.Message }
+  }
+}
+
 if (-not $Case -or 'programmatic.review-auto-advance'.Contains($Case)) {
   try {
     $code = @'
@@ -897,7 +942,7 @@ if (-not $Case -or 'programmatic.native-file-pins'.Contains($Case)) {
 (async()=>{const p=app.plugins.plugins.cancip;if(!p||typeof p.setFilePinned!=='function')throw new Error('native file pin API missing');p.stopFilePinSortMode?.(false);const left=app.workspace.leftSplit,leftWasCollapsed=left?.collapsed!==false,emptyLeavesBefore=app.workspace.getLeavesOfType('empty').length;await app.commands.executeCommandById('file-explorer:open');if(left?.collapsed)left.expand();await new Promise(r=>setTimeout(r,320));const rows=()=>Array.from(activeDocument.querySelectorAll('.nav-file-title[data-path],.nav-folder-title[data-path]')).filter(el=>el.getBoundingClientRect().height>0).sort((a,b)=>a.getBoundingClientRect().top-b.getBoundingClientRect().top);const parent=path=>path.includes('/')?path.slice(0,path.lastIndexOf('/')):'';const original=JSON.parse(JSON.stringify(await p.loadFilePinState(true)));window.__cancipPinSmoke={original,leftWasCollapsed,emptyLeavesBefore};const visible=rows().map(el=>el.dataset.path).filter(Boolean);const rootPins=original.folders['']||[];const rootFolder=visible.find(path=>path&&!path.includes('/')&&!rootPins.includes(path)&&app.vault.getAbstractFileByPath(path)?.children);const stack=[app.vault.getRoot()];let mixed=null;while(stack.length&&!mixed){const folder=stack.shift(),children=Array.from(folder.children||[]),folderChildren=children.filter(item=>Array.isArray(item.children)),fileChildren=children.filter(item=>!Array.isArray(item.children));if(folderChildren.length&&fileChildren.length)mixed={parent:folder.path==='/'?'':folder.path,file:fileChildren[0].path,folder:folderChildren[0].path};stack.push(...folderChildren)}const files={};for(const path of visible.filter(path=>!app.vault.getAbstractFileByPath(path)?.children))(files[parent(path)]??=[]).push(path);const selected=Object.entries(files).find(([,paths])=>paths.length>=2);if(!rootFolder||!mixed||!selected)throw new Error('insufficient file explorer or Vault sibling rows');const plan={rootFolder,mixedFile:mixed.file,mixedFolder:mixed.folder,mixedParent:mixed.parent,folder:selected[0],first:selected[1][0],second:selected[1][1]};window.__cancipPinSmoke.plan=plan;return JSON.stringify({id:'programmatic.native-file-pins-setup',plan})})()
 '@
     $folderResult = Invoke-CancipEval -TimeoutSeconds 35 -Code @'
-(async()=>{const p=app.plugins.plugins.cancip,{rootFolder}=window.__cancipPinSmoke.plan;await p.setFilePinned(rootFolder,true);await new Promise(r=>setTimeout(r,180));const row=Array.from(activeDocument.querySelectorAll('.nav-folder-title[data-path]')).find(el=>el.dataset.path===rootFolder);const pinned=Object.values((await p.loadFilePinState(true)).folders).flat().includes(rootFolder)&&!!row?.querySelector('.obcc-file-pin-indicator');await p.setFilePinned(rootFolder,false);await new Promise(r=>setTimeout(r,180));const unpinned=!Object.values((await p.loadFilePinState(true)).folders).flat().includes(rootFolder)&&!row?.querySelector('.obcc-file-pin-indicator');return JSON.stringify({folderPinSupported:pinned&&unpinned})})()
+(async()=>{const p=app.plugins.plugins.cancip,{rootFolder}=window.__cancipPinSmoke.plan;await p.setFilePinned(rootFolder,true);await new Promise(r=>setTimeout(r,180));const row=Array.from(activeDocument.querySelectorAll('.nav-folder-title[data-path]')).find(el=>el.dataset.path===rootFolder),pinnedState=Object.values((await p.loadFilePinState(true)).folders).flat().includes(rootFolder),pinnedIndicator=!!row?.querySelector('.obcc-file-pin-row-button.is-unpin'),pinnedClass=!!row?.classList.contains('is-cancip-file-pinned');const pinned=pinnedState&&pinnedIndicator;await p.setFilePinned(rootFolder,false);await new Promise(r=>setTimeout(r,180));const unpinnedRow=Array.from(activeDocument.querySelectorAll('.nav-folder-title[data-path]')).find(el=>el.dataset.path===rootFolder),unpinnedState=!Object.values((await p.loadFilePinState(true)).folders).flat().includes(rootFolder),unpinnedIndicator=!!unpinnedRow?.querySelector('.obcc-file-pin-row-button.is-pin')&&!unpinnedRow?.querySelector('.obcc-file-pin-row-button.is-unpin'),unpinnedClass=!unpinnedRow?.classList.contains('is-cancip-file-pinned');const unpinned=unpinnedState&&unpinnedIndicator&&unpinnedClass;return JSON.stringify({folderPinSupported:pinned&&unpinned,rootFolder,rowFound:!!row,unpinnedRowFound:!!unpinnedRow,pinnedState,pinnedIndicator,pinnedClass,unpinnedState,unpinnedIndicator,unpinnedClass,oldRowReplaced:row!==unpinnedRow})})()
 '@
     $mixedResult = Invoke-CancipEval -TimeoutSeconds 40 -Code @'
 (async()=>{const p=app.plugins.plugins.cancip,{mixedFile,mixedFolder,mixedParent}=window.__cancipPinSmoke.plan,view=app.workspace.getLeavesOfType('file-explorer')[0]?.view,folderNode=mixedParent?app.vault.getAbstractFileByPath(mixedParent):app.vault.getRoot();await view?.revealInFolder?.(app.vault.getAbstractFileByPath(mixedFile));await p.setFilePinned(mixedFolder,true);await p.setFilePinned(mixedFile,true);await p.setPinnedFileOrder(mixedParent,[mixedFile,mixedFolder]);await new Promise(r=>setTimeout(r,320));const native=Array.from(view?.getSortedFolderItems?.(folderNode)||[]).map(item=>item.file?.path).filter(Boolean),mixedOrderApplied=native[0]===mixedFile&&native[1]===mixedFolder,noStandalonePanel=!activeDocument.querySelector('.obcc-file-pins-panel,.obcc-file-pin-panel-row,.obcc-file-pin-sort-toolbar');await p.setFilePinned(mixedFile,false);await p.setFilePinned(mixedFolder,false);return JSON.stringify({mixedOrderApplied,noStandalonePanel,native:native.slice(0,4)})})()
@@ -952,7 +997,7 @@ if (-not $Case -or 'programmatic.native-file-pins'.Contains($Case)) {
       deleteClears = [bool]$migrationResult.deleteClears
     }
     foreach ($field in $checks.Keys) {
-      if (-not $checks[$field]) { throw "native file pin check failed: $field" }
+      if (-not $checks[$field]) { throw "native file pin check failed: $field ($($folderResult | ConvertTo-Json -Compress))" }
     }
     Add-CaseResult 'programmaticCases' @{ id = 'programmatic.native-file-pins'; pass = $true; elapsedMs = [int]((Get-Date) - $started).TotalMilliseconds; folder = $fileResult.folder; stateOrder = $fileResult.stateOrder }
   } catch {
@@ -981,15 +1026,15 @@ if (Should-RunProgrammaticCase 'programmatic.personalization-autocomplete') {
 '@
     Write-Host 'personalization stage: local'
     $local = Invoke-CancipEval -TimeoutSeconds 15 -Code @'
-(()=>{const p=app.plugins.plugins.cancip,v=app.workspace.getLeavesOfType('cancip-view')[0]?.view,input=v.inputEl,Win=input.ownerDocument.defaultView,old={enabled:p.settings.composerAutocompleteEnabled,value:input.value,start:input.selectionStart,end:input.selectionEnd,local:v.localAutocompleteCandidates,suggestion:v.autocompleteSuggestion,prefix:v.autocompletePrefix};try{p.settings.composerAutocompleteEnabled=true;v.localAutocompleteCandidates=()=>['继续优化Cancip并核对结果'];const before=v.footerEl.getBoundingClientRect().height;input.value='继续优';input.setSelectionRange(3,3);input.dispatchEvent(new Win.Event('input',{bubbles:true}));const suffix=v.autocompleteSuggestion,ghost=v.inputGhostSuffixEl?.textContent||'',after=v.footerEl.getBoundingClientRect().height;input.dispatchEvent(new Win.KeyboardEvent('keydown',{key:'Tab',bubbles:true,cancelable:true}));return JSON.stringify({localGhost:suffix==='化Cancip并核对结果'&&ghost===suffix,tabApplied:input.value==='继续优化Cancip并核对结果'&&input.selectionStart===input.value.length,footerStable:Math.abs(after-before)<1})}finally{v.autocompleteRequestId++;if(v.autocompleteTimer!==null)Win.clearTimeout(v.autocompleteTimer);v.autocompleteTimer=null;p.settings.composerAutocompleteEnabled=old.enabled;v.localAutocompleteCandidates=old.local;input.value=old.value;input.setSelectionRange(old.start,old.end);v.autocompleteSuggestion=old.suggestion;v.autocompletePrefix=old.prefix;v.resizeInput();v.renderAutocompleteSuggestion()}})()
+(()=>{const p=app.plugins.plugins.cancip,v=app.workspace.getLeavesOfType('cancip-view').map(leaf=>leaf.view).find(view=>view?.inputEl?.isConnected),input=v?.inputEl;if(!p||!v||!input)throw new Error('rendered Cancip view unavailable');const Win=input.ownerDocument.defaultView,old={enabled:p.settings.composerAutocompleteEnabled,value:input.value,start:input.selectionStart,end:input.selectionEnd,local:v.localAutocompleteCandidates,suggestion:v.autocompleteSuggestion,prefix:v.autocompletePrefix,recordChoice:p.recordEditorAutocompleteChoice,recordShown:p.recordEditorAutocompleteBatchShown,recordOutcome:p.recordEditorAutocompleteBatchOutcome};try{p.settings.composerAutocompleteEnabled=true;p.recordEditorAutocompleteChoice=async()=>{};p.recordEditorAutocompleteBatchShown=async()=>{};p.recordEditorAutocompleteBatchOutcome=async()=>{};v.localAutocompleteCandidates=()=>['继续优化Cancip并核对结果'];const before=v.footerEl.getBoundingClientRect().height;input.value='继续优';input.setSelectionRange(3,3);input.dispatchEvent(new Win.Event('input',{bubbles:true}));const suffix=v.autocompleteSuggestion,ghost=v.inputGhostSuffixEl?.textContent||'',after=v.footerEl.getBoundingClientRect().height;input.dispatchEvent(new Win.KeyboardEvent('keydown',{key:'Tab',bubbles:true,cancelable:true}));return JSON.stringify({localGhost:suffix==='化Cancip并核对结果'&&ghost===suffix,tabApplied:input.value==='继续优化Cancip并核对结果'&&input.selectionStart===input.value.length,footerStable:Math.abs(after-before)<1})}finally{v.autocompleteRequestId++;if(v.autocompleteTimer!==null)Win.clearTimeout(v.autocompleteTimer);v.autocompleteTimer=null;p.settings.composerAutocompleteEnabled=old.enabled;p.recordEditorAutocompleteChoice=old.recordChoice;p.recordEditorAutocompleteBatchShown=old.recordShown;p.recordEditorAutocompleteBatchOutcome=old.recordOutcome;v.localAutocompleteCandidates=old.local;input.value=old.value;input.setSelectionRange(old.start,old.end);v.autocompleteSuggestion=old.suggestion;v.autocompletePrefix=old.prefix;v.resizeInput();v.renderAutocompleteSuggestion()}})()
 '@
     Write-Host 'personalization stage: async'
     $async = Invoke-CancipEval -TimeoutSeconds 15 -Code @'
-(()=>{const p=app.plugins.plugins.cancip,v=app.workspace.getLeavesOfType('cancip-view').map(leaf=>leaf.view).find(view=>view?.inputEl?.isConnected),input=v?.inputEl;if(!p||!v||!input)throw new Error('rendered Cancip view unavailable');const old={enabled:p.settings.composerAutocompleteEnabled,value:input.value,start:input.selectionStart,end:input.selectionEnd,local:v.localAutocompleteCandidates,suggestion:v.autocompleteSuggestion,prefix:v.autocompletePrefix,choices:v.autocompleteChoices,activeRequest:v.activeRequest,activeMenu:v.activeMenu,isComposing:v.autocompleteIsComposing};try{p.settings.composerAutocompleteEnabled=true;v.activeRequest=null;v.activeMenu=null;const source=String(v.generateAutocomplete);const staleSuppressed=source.includes('!==this.autocompleteRequestId');const modelFailureKeepsLocal=/catch\s*\(/.test(source)&&source.includes('localAutocompleteSuffix');const draft=v.normalizeAutocompleteModelDraft(JSON.stringify({suffix:'新补全',choices:[{text:'处理第二段输入并核对结果',steps:['定位目标','执行修改','核对结果']}]}),'第二段输入','');input.value='第二段输入';input.setSelectionRange(input.value.length,input.value.length);v.setAutocompleteDraft(input.value,draft);const staleSuggestion=v.autocompleteSuggestion,modelChoice=v.autocompleteChoices?.[0],choiceVisible=!!v.composerSuggestionsEl?.querySelector('.obcc-composer-suggestion'),workflowSteps=modelChoice?.steps?.length===3;v.localAutocompleteCandidates=()=>['继续优化Cancip'];input.value='继续优';input.setSelectionRange(3,3);v.autocompleteIsComposing=true;const compositionSuppressed=v.autocompleteEligiblePrefix()===null;v.autocompleteIsComposing=false;const compositionRestored=v.localAutocompleteSuffix('继续优')==='化Cancip';v.localAutocompleteCandidates=()=>['失败保留补全'];v.activeMenu='model';v.menuEl?.classList.add('is-hidden');input.value='失败';input.setSelectionRange(2,2);const hiddenMenuAllows=v.autocompleteEligiblePrefix()==='失败';return JSON.stringify({staleSuppressed,compositionSuppressed,compositionRestored,modelFailureKeepsLocal,hiddenMenuAllows,calls:0,suggestion:staleSuggestion,choiceVisible,workflowSteps})}finally{p.settings.composerAutocompleteEnabled=old.enabled;v.localAutocompleteCandidates=old.local;v.activeRequest=old.activeRequest;v.activeMenu=old.activeMenu;v.autocompleteIsComposing=old.isComposing;input.value=old.value;input.setSelectionRange(old.start,old.end);v.autocompleteSuggestion=old.suggestion;v.autocompletePrefix=old.prefix;v.autocompleteChoices=old.choices;v.resizeInput();v.renderAutocompleteSuggestion()}})()
+(async()=>{const p=app.plugins.plugins.cancip,v=app.workspace.getLeavesOfType('cancip-view').map(leaf=>leaf.view).find(view=>view?.inputEl?.isConnected),input=v?.inputEl;if(!p||!v||!input)throw new Error('rendered Cancip view unavailable');const old={enabled:p.settings.composerAutocompleteEnabled,value:input.value,start:input.selectionStart,end:input.selectionEnd,local:v.localAutocompleteCandidates,suggestion:v.autocompleteSuggestion,prefix:v.autocompletePrefix,choices:v.autocompleteChoices,activeRequest:v.activeRequest,activeMenu:v.activeMenu,isComposing:v.autocompleteIsComposing,candidates:p.editorAutocompleteCandidates,recordShown:p.recordEditorAutocompleteBatchShown,recordOutcome:p.recordEditorAutocompleteBatchOutcome};try{p.settings.composerAutocompleteEnabled=true;p.recordEditorAutocompleteBatchShown=async()=>{};p.recordEditorAutocompleteBatchOutcome=async()=>{};v.activeRequest=null;v.activeMenu=null;const source=String(v.generateAutocomplete);const staleSuppressed=source.includes('!==this.autocompleteRequestId');const draft=v.normalizeAutocompleteModelDraft(JSON.stringify({suffix:'新补全',choices:[{text:'处理第二段输入并核对结果',steps:['定位目标','执行修改','核对结果']}]}),'第二段输入','');input.value='第二段输入';input.setSelectionRange(input.value.length,input.value.length);v.setAutocompleteDraft(input.value,draft);const staleSuggestion=v.autocompleteSuggestion,modelChoice=v.autocompleteChoices?.[0],choiceVisible=!!v.composerSuggestionsEl?.querySelector('.obcc-composer-suggestion'),workflowSteps=modelChoice?.steps?.length===3;v.localAutocompleteCandidates=()=>['继续优化Cancip'];input.value='继续优';input.setSelectionRange(3,3);v.autocompleteIsComposing=true;const compositionSuppressed=v.autocompleteEligiblePrefix()===null;v.autocompleteIsComposing=false;const compositionRestored=v.localAutocompleteSuffix('继续优')==='化Cancip';v.localAutocompleteCandidates=()=>['失败保留补全'];v.activeMenu='model';v.menuEl?.classList.add('is-hidden');input.value='失败';input.setSelectionRange(2,2);const hiddenMenuAllows=v.autocompleteEligiblePrefix()==='失败';v.clearAutocompleteSuggestion();p.editorAutocompleteCandidates=async()=>{throw new Error('expected smoke failure')};const requestId=++v.autocompleteRequestId;await v.generateAutocompleteRequest('失败',requestId,'',{},true);const modelFailureKeepsLocal=v.autocompletePrefix==='失败'&&v.autocompleteSuggestion==='保留补全';return JSON.stringify({staleSuppressed,compositionSuppressed,compositionRestored,modelFailureKeepsLocal,hiddenMenuAllows,calls:0,suggestion:staleSuggestion,choiceVisible,workflowSteps})}finally{p.settings.composerAutocompleteEnabled=old.enabled;p.editorAutocompleteCandidates=old.candidates;p.recordEditorAutocompleteBatchShown=old.recordShown;p.recordEditorAutocompleteBatchOutcome=old.recordOutcome;v.localAutocompleteCandidates=old.local;v.activeRequest=old.activeRequest;v.activeMenu=old.activeMenu;v.autocompleteIsComposing=old.isComposing;input.value=old.value;input.setSelectionRange(old.start,old.end);v.autocompleteSuggestion=old.suggestion;v.autocompletePrefix=old.prefix;v.autocompleteChoices=old.choices;v.resizeInput();v.renderAutocompleteSuggestion()}})()
 '@
     Write-Host 'personalization stage: longPress'
     $longPress = Invoke-CancipEval -TimeoutSeconds 15 -Code @'
-(async()=>{const v=app.workspace.getLeavesOfType('cancip-view')[0]?.view,Win=v.inputEl.ownerDocument.defaultView,wait=ms=>new Promise(r=>setTimeout(r,ms)),button=v.autocompleteApplyButtonEl,PointerCtor=Win.PointerEvent||Win.MouseEvent;try{button.dispatchEvent(new PointerCtor('pointerdown',{bubbles:true,button:0,pointerType:'touch'}));await wait(560);button.dispatchEvent(new PointerCtor('pointerup',{bubbles:true,button:0,pointerType:'touch'}));const popup=v.autocompletePopoverEl,text=popup?.textContent||'',model=popup?.querySelector('.obcc-autocomplete-model-row select'),modelOptions=Array.from(model?.options||[]).map(option=>option.textContent||'');return JSON.stringify({longPressSettings:!!popup&&!!popup.querySelector('input[type="checkbox"]')&&!!popup.querySelector('.obcc-autocomplete-prompt-row input')&&!!model&&modelOptions.some(label=>label.includes('跟随当前模型'))&&modelOptions.some(label=>label.includes(' · '))&&text.includes('换一个补全')})}finally{v.closeAutocompletePopover?.()}})()
+(async()=>{const v=app.workspace.getLeavesOfType('cancip-view').map(leaf=>leaf.view).find(view=>view?.inputEl?.isConnected);if(!v)throw new Error('rendered Cancip view unavailable');const Win=v.inputEl.ownerDocument.defaultView,wait=ms=>new Promise(r=>setTimeout(r,ms)),button=v.autocompleteApplyButtonEl,PointerCtor=Win.PointerEvent||Win.MouseEvent;try{button.dispatchEvent(new PointerCtor('pointerdown',{bubbles:true,button:0,pointerType:'touch',isPrimary:true}));await wait(560);button.dispatchEvent(new PointerCtor('pointerup',{bubbles:true,button:0,pointerType:'touch',isPrimary:true}));const popup=v.autocompletePopoverEl,text=popup?.textContent||'',model=Array.from(popup?.querySelectorAll('.obcc-autocomplete-model-row select')||[]).find(select=>Array.from(select.options||[]).some(option=>(option.textContent||'').includes('跟随当前模型'))),modelOptions=Array.from(model?.options||[]).map(option=>option.textContent||'');return JSON.stringify({longPressSettings:!!popup&&!!popup.querySelector('input[type="checkbox"]')&&!!popup.querySelector('.obcc-autocomplete-prompt-row input')&&!!model&&modelOptions.some(label=>label.includes('跟随当前模型'))&&modelOptions.some(label=>label.includes(' · '))&&text.includes('换一个补全')})}finally{v.closeAutocompletePopover?.()}})()
 '@
     Write-Host 'personalization stage: diary'
     $diary = Invoke-CancipEval -TimeoutSeconds 35 -Code @'
@@ -997,7 +1042,7 @@ if (Should-RunProgrammaticCase 'programmatic.personalization-autocomplete') {
 '@
     Write-Host 'personalization stage: usage'
     $usage = Invoke-CancipEval -TimeoutSeconds 15 -Code @'
-(async()=>{const p=app.plugins.plugins.cancip,old={usage:p.personalizationUsage,loaded:p.personalizationUsageLoaded,write:p.writePersonalizationUsage,propose:p.proposePersonalizationPriorityReview};let proposed=0;try{p.personalizationUsage={schemaVersion:1,entries:[],approvedPriorityKeys:[],reviewedPriorityKeys:[]};p.personalizationUsageLoaded=true;p.writePersonalizationUsage=async()=>{};p.proposePersonalizationPriorityReview=async()=>{proposed++};await p.recordPersonalizationChoice('常用动作并核对结果','composer');await p.recordPersonalizationChoice('常用动作并核对结果','composer');await p.recordPersonalizationChoice('常用动作并核对结果','composer');const choices=[{text:'普通动作',steps:[]},{text:'常用动作并核对结果',steps:[]}],before=p.sortComposerSuggestionChoices(choices),key=p.personalizationUsage.entries[0]?.key||'';await p.handlePersonalizationReviewDecision({path:'AI/Cancip/个性化建议/按钮排序.md',old_text:'',new_text:`<!-- cancip-personalization-priority:choice-old -->\n<!-- cancip-personalization-priority:${key} -->`,changes:['write'],links:{},structure:[]},'approved');const after=p.sortComposerSuggestionChoices(choices),latestApproved=p.personalizationUsage.approvedPriorityKeys.includes(key)&&!p.personalizationUsage.approvedPriorityKeys.includes('choice-old');await p.removePersonalizationPriority(key);const undone=p.sortComposerSuggestionChoices(choices);return JSON.stringify({usageCount:p.personalizationUsage.entries[0]?.count===3,reviewProposed:proposed===1,beforeApprovalStable:before[0]?.text==='普通动作',afterApprovalPromoted:after[0]?.text==='常用动作并核对结果',latestApproved,undoRestoresOrder:undone[0]?.text==='普通动作'})}finally{p.personalizationUsage=old.usage;p.personalizationUsageLoaded=old.loaded;p.writePersonalizationUsage=old.write;p.proposePersonalizationPriorityReview=old.propose}})()
+(async()=>{const p=app.plugins.plugins.cancip;await p.personalizationUsageMutationQueue.catch(()=>undefined);const old={usage:p.personalizationUsage,loaded:p.personalizationUsageLoaded,load:p.loadPersonalizationUsage,write:p.writePersonalizationUsage,writeDirect:p.writePersonalizationUsageDirect,propose:p.proposePersonalizationPriorityReview};let proposed=0;try{p.personalizationUsage={schemaVersion:1,entries:[],approvedPriorityKeys:[],reviewedPriorityKeys:[],autocompleteSelections:[],autocompleteUsage:[]};p.personalizationUsageLoaded=true;p.loadPersonalizationUsage=async()=>p.personalizationUsage;p.writePersonalizationUsage=async()=>{};p.writePersonalizationUsageDirect=async()=>{};p.proposePersonalizationPriorityReview=async()=>{proposed++};await p.recordPersonalizationChoice('常用动作并核对结果','composer');await p.recordPersonalizationChoice('常用动作并核对结果','composer');await p.recordPersonalizationChoice('常用动作并核对结果','composer');const choices=[{text:'普通动作',steps:[]},{text:'常用动作并核对结果',steps:[]}],before=p.sortComposerSuggestionChoices(choices),key=p.personalizationUsage.entries[0]?.key||'';await p.handlePersonalizationReviewDecision({path:'AI/Cancip/个性化建议/按钮排序.md',old_text:'',new_text:`<!-- cancip-personalization-priority:choice-old -->\n<!-- cancip-personalization-priority:${key} -->`,changes:['write'],links:{},structure:[]},'approved');const after=p.sortComposerSuggestionChoices(choices),latestApproved=p.personalizationUsage.approvedPriorityKeys.includes(key)&&!p.personalizationUsage.approvedPriorityKeys.includes('choice-old');await p.removePersonalizationPriority(key);const undone=p.sortComposerSuggestionChoices(choices);return JSON.stringify({usageCount:p.personalizationUsage.entries[0]?.count===3,reviewProposed:proposed===1,beforeApprovalStable:before[0]?.text==='普通动作',afterApprovalPromoted:after[0]?.text==='常用动作并核对结果',latestApproved,undoRestoresOrder:undone[0]?.text==='普通动作'})}finally{await p.personalizationUsageMutationQueue.catch(()=>undefined);p.personalizationUsage=old.usage;p.personalizationUsageLoaded=old.loaded;p.loadPersonalizationUsage=old.load;p.writePersonalizationUsage=old.write;p.writePersonalizationUsageDirect=old.writeDirect;p.proposePersonalizationPriorityReview=old.propose}})()
 '@
     $item = [pscustomobject]@{
       id = 'programmatic.personalization-autocomplete'
@@ -4892,6 +4937,56 @@ if (Should-RunProgrammaticCase 'programmatic.document-workbench-conversion') {
     Add-CaseResult -Group 'programmaticCases' -Item @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs; samples = @($item.samples).Count }
   } catch {
     Add-CaseResult -Group 'programmaticCases' -Item @{ id = 'programmatic.document-workbench-conversion'; pass = $false; error = $_.Exception.Message }
+  }
+}
+
+if (Should-RunProgrammaticCase 'programmatic.document-workbench-notedraw') {
+  try {
+    $code = @'
+(async()=>{
+  const started=Date.now(),p=app.plugins.plugins.cancip,sleep=(ms)=>new Promise((resolve)=>setTimeout(resolve,ms));
+  const file=app.vault.getFiles().find((candidate)=>/html?$/i.test(candidate.extension)&&candidate.stat.size>0&&candidate.stat.size<2000000);
+  if(!p||!file)throw new Error('HTML workbench fixture unavailable');
+  const view=await p.activateDocumentWorkbench(file);
+  let stage=null,controller=null;
+  for(let attempt=0;attempt<50;attempt+=1){
+    stage=view.contentEl?.querySelector('.obcc-document-stage');
+    controller=stage?._noteDrawController;
+    if(controller?.editMarkdownButton&&view.htmlPreviewFrame?.isConnected)break;
+    await sleep(100);
+  }
+  if(!stage||!controller)throw new Error('NoteDraw workbench controller unavailable');
+  if(!controller.active)await controller.toggle();
+  controller.setBrushMode('pen');
+  await sleep(120);
+  controller.editMarkdownButton.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window}));
+  for(let attempt=0;attempt<30&&view.htmlPreviewFrame?.dataset.cancipEditMode!=='true';attempt+=1)await sleep(100);
+  const result={
+    id:'programmatic.document-workbench-notedraw',elapsedMs:Date.now()-started,
+    file:file.path,viewFile:view.file?.path||'',snapshotFile:view.snapshot?.file?.path||'',controllerFile:controller.file?.path||'',
+    controllerActive:controller.active===true,toolMode:controller.toolMode,stageEdit:stage.classList.contains('is-edit-md-mode'),
+    bridgeEdit:view.noteDrawMarkdownEditMode===true,iframeEdit:view.htmlPreviewFrame?.dataset.cancipEditMode==='true',
+    nativeWand:view.containerEl.querySelectorAll('.notedraw-header-button').length,
+    ownWand:view.contentEl.querySelectorAll('.obcc-document-action.is-notedraw').length,
+    toolbar:document.body.contains(controller.toolbar)
+  };
+  controller.setBrushMode('pen');
+  return JSON.stringify(result);
+})()
+'@
+    $item = Invoke-CancipEval -Code $code -TimeoutSeconds 45
+    foreach ($field in @('controllerActive','stageEdit','bridgeEdit','iframeEdit','toolbar')) {
+      if (-not [bool]$item.$field) { throw "workbench NoteDraw check failed: $field ($($item | ConvertTo-Json -Compress))" }
+    }
+    if ([string]$item.viewFile -ne [string]$item.file -or [string]$item.snapshotFile -ne [string]$item.file -or [string]$item.controllerFile -ne [string]$item.file) {
+      throw "workbench/NoteDraw file binding diverged: $($item | ConvertTo-Json -Compress)"
+    }
+    if ([string]$item.toolMode -ne 'edit-md' -or [int]$item.nativeWand -lt 1 -or [int]$item.ownWand -ne 0) {
+      throw "workbench NoteDraw controls diverged: $($item | ConvertTo-Json -Compress)"
+    }
+    Add-CaseResult 'programmaticCases' @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs; file = $item.file }
+  } catch {
+    Add-CaseResult 'programmaticCases' @{ id = 'programmatic.document-workbench-notedraw'; pass = $false; error = $_.Exception.Message }
   }
 }
 

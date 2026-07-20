@@ -1,6 +1,6 @@
 {
   "name": "cancip",
-  "version": "3.0.8",
+  "version": "3.0.9",
   "private": true,
   "main": "main.js",
   "scripts": {
@@ -22,6 +22,7 @@
   "dependencies": {
     "@codemirror/state": "6.5.0",
     "@codemirror/view": "6.38.6",
+    "fflate": "^0.8.2",
     "html2canvas": "^1.4.1",
     "onnxruntime-web": "^1.27.0",
     "pinyin-pro": "^3.28.1"
