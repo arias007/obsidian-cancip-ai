@@ -55,6 +55,7 @@ $RunProfile = if ($Mobile) { 'mobile' } elseif (
   $Case -like '*editor-autocomplete*' -or
   $Case -like '*document-workbench*' -or
   $Case -like '*personalization-autocomplete*' -or
+  $Case -like '*automation-core-contracts*' -or
   $Case -like '*process-detail-deferred-dom*' -or
   $Case -like '*interaction-regression-controls*'
 ) { 'ui-button' } elseif ($Write) { 'write' } elseif ($Full) { 'full' } else { 'core' }
@@ -543,6 +544,7 @@ if (-not $Case -or 'programmatic.ui-button-mention-hierarchy'.Contains($Case)) {
   try {
     $code = @'
 (async()=>{
+  try{
   const started=Date.now(),p=app.plugins.plugins.cancip,v=await p?.activateView?.();
   if(!p||!v?.inputEl||!v?.headerMenuEl)throw new Error('Cancip mention UI unavailable');
   const oldValue=v.inputEl.value,oldStart=v.inputEl.selectionStart,oldEnd=v.inputEl.selectionEnd;
@@ -668,6 +670,95 @@ if (-not $Case -or 'programmatic.ui-button-automation-truthful-status'.Contains(
     Add-CaseResult 'programmaticCases' @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs; count = $item.count; curationPattern = $item.curationPattern }
   } catch {
     Add-CaseResult 'programmaticCases' @{ id = 'programmatic.ui-button-automation-truthful-status'; pass = $false; error = $_.Exception.Message }
+  }
+}
+
+if (-not $Case -or 'programmatic.ui-button-context-editor-lifecycle'.Contains($Case)) {
+  try {
+    $code = @'
+(async()=>{
+  const started=Date.now(),p=app.plugins.plugins.cancip,v=await p?.activateView?.();
+  if(!p||!v?.inputEl||!v?.contextEl)throw new Error('Cancip context editor unavailable');
+  const originalInput=v.inputEl,originalDraft=[...(v.draftContext||[])];
+  try{
+    v.addDraftContext('smoke context','before','smoke:context','virtual');
+    const draft=(v.draftContext||[]).at(-1),open=()=>{
+      v.renderContextChips();
+      const chip=[...v.contextEl.querySelectorAll('.obcc-context-chip')].find(element=>element.getAttribute('title')==='smoke:context');
+      const edit=chip?.querySelector('.obcc-context-edit');
+      if(!edit)throw new Error('context edit button missing');
+      edit.click();
+    };
+    open();await new Promise(r=>setTimeout(r,80));
+    let modal=activeDocument.querySelector('.obcc-context-edit-modal');
+    if(!modal)throw new Error('context editor did not open');
+    const textarea=modal.querySelector('textarea'),ok=[...modal.querySelectorAll('button')].find(button=>button.textContent?.trim()==='OK');
+    if(!textarea||!ok)throw new Error('context editor controls missing');
+    textarea.value='after';ok.click();await new Promise(r=>setTimeout(r,100));
+    const saved=draft?.content==='after',savedClosed=!modal.isConnected;
+    open();await new Promise(r=>setTimeout(r,80));
+    modal=activeDocument.querySelector('.obcc-context-edit-modal');
+    const cancel=[...(modal?.querySelectorAll('button')??[])].find(button=>button.textContent?.trim()==='Cancel');
+    if(!modal||!cancel)throw new Error('context cancel controls missing');
+    cancel.click();await new Promise(r=>setTimeout(r,100));
+    return JSON.stringify({id:'programmatic.ui-button-context-editor-lifecycle',elapsedMs:Date.now()-started,saved,savedClosed,cancelClosed:!modal.isConnected,inputAlive:originalInput===v.inputEl&&v.inputEl.isConnected});
+  }finally{v.draftContext=originalDraft;v.renderContextChips()}
+})()
+'@
+    $item = Invoke-CancipEval -Code (ConvertTo-CancipEvalBootstrap -Code $code) -TimeoutSeconds 45
+    foreach ($field in @('saved','savedClosed','cancelClosed','inputAlive')) {
+      if (-not [bool]$item.$field) { throw "context editor lifecycle failed: $field ($($item | ConvertTo-Json -Compress))" }
+    }
+    Add-CaseResult 'programmaticCases' @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs }
+  } catch {
+    Add-CaseResult 'programmaticCases' @{ id = 'programmatic.ui-button-context-editor-lifecycle'; pass = $false; error = $_.Exception.Message }
+  }
+}
+
+if (-not $Case -or 'programmatic.automation-core-contracts'.Contains($Case)) {
+  try {
+    $code = @'
+(async()=>{
+  try{
+  const started=Date.now(),p=app.plugins.plugins.cancip,v=app.workspace.getLeavesOfType('cancip-view')[0]?.view??await p?.getOrCreateChatView?.({reveal:false,focus:false});
+  if(!p||!v?.extractCancipActions||!v?.automationCommandNeedsModel||!v?.isAutomationDue)throw new Error('automation test API unavailable');
+  await p.ensureDefaultDailyAutomations();
+  const tasks=await p.loadAutomations(true),deprecated=new Set(['auto-cancip-memory-dream','auto-vault-daily-maintenance-report']);
+  const knownCommands=new Set(['cancip.reviewGate','cancip.localVersionCommit','cancip.newsBrief','cancip.dailyCare','cancip.personalization.refresh','github.status','cancip.rebuildIndex']);
+  const unknown=tasks.filter(task=>task.command&&!knownCommands.has(task.command)).map(task=>task.id+':'+task.command);
+  const invalid=tasks.filter(task=>!task.command&&!String(task.prompt||'').trim()).map(task=>task.id);
+  const badSessions=tasks.filter(task=>task.sessionMode!=='session'||!String(task.sessionId||'').startsWith('automation-')).map(task=>task.id);
+  const silentNormalized=tasks.every(task=>typeof task.silent==='boolean');
+  const missingModel=tasks.filter(task=>!task.command||v.automationCommandNeedsModel(task.command)).filter(task=>{const profile=p.automationApiProfile(task,task.prompt||'');return !profile.apiUrl||!profile.apiKey||!profile.model}).map(task=>task.id);
+  const toolActions=v.extractCancipActions('{"tool":"write","path":"Smoke.md","content":"ok"}');
+  const silentActions=v.extractCancipActions('{"type":"automation","op":"add","title":"silent","prompt":"run","silent":true}');
+  const now=new Date(),failedAt=new Date(now.getTime()-21*60*1000).toISOString();
+  const retryDue=v.isAutomationDue({enabled:true,schedule:'hourly',intervalMinutes:120,lastRunAt:failedAt,lastStatus:'failed'},now)===true;
+  const diary=tasks.find(task=>task.id==='auto-personalized-diary-assist'),diaryTarget=v.todayDiaryTarget();
+  const diarySource=await v.buildPersonalizedDiarySourcePack();
+  const diaryDecision=v.normalizePersonalizedDiaryAnswer(JSON.stringify({content:'今天完成了自动化契约测试。'}),diaryTarget.path);
+  const diaryActions=diaryDecision?v.extractCancipActions(diaryDecision.answer):[];
+  const diarySkip=v.normalizePersonalizedDiaryAnswer('{"skip":true,"reason":"CANCIP_DIARY_NO_UPDATE"}',diaryTarget.path);
+  const originalRun=p.runAutomationByIdUnlocked,order=[];let active=0,maxActive=0;
+  try{
+    p.runAutomationByIdUnlocked=async id=>{active+=1;maxActive=Math.max(maxActive,active);order.push(id+':start');await new Promise(r=>setTimeout(r,35));order.push(id+':end');active-=1;return {ok:true,status:'ok',text:id}};
+    await Promise.all([p.runAutomationById('__smoke-queue-a'),p.runAutomationById('__smoke-queue-b')]);
+  }finally{p.runAutomationByIdUnlocked=originalRun}
+  return JSON.stringify({id:'programmatic.automation-core-contracts',elapsedMs:Date.now()-started,count:tasks.length,daily:tasks.filter(task=>task.id==='auto-cancip-daily-care').length,deprecated:[...deprecated].filter(id=>tasks.some(task=>task.id===id)),unknown,invalid,badSessions,missingModel,silentNormalized,toolAlias:toolActions.length===1&&toolActions[0].type==='write',silentAction:silentActions.length===1&&silentActions[0].silent===true,retryDue,directIndex:!v.automationCommandNeedsModel('cancip.rebuildIndex'),modelNews:v.automationCommandNeedsModel('cancip.newsBrief'),diaryPrompt:!!diary&&String(diary.prompt).includes('Personalized Diary v2')&&String(diary.prompt).includes('CANCIP_DIARY_NO_UPDATE'),diarySource:diarySource.length>100&&diarySource.length<=9000&&diarySource.includes(JSON.stringify(diaryTarget.path)),diaryAppend:diaryActions.length===1&&diaryActions[0].type==='append'&&diaryActions[0].path===diaryTarget.path,diarySkip:diarySkip?.skipped===true,serialized:maxActive===1&&order.join('|')==='__smoke-queue-a:start|__smoke-queue-a:end|__smoke-queue-b:start|__smoke-queue-b:end'});
+  }catch(error){return JSON.stringify({id:'programmatic.automation-core-contracts',error:String(error?.stack??error)})}
+})()
+'@
+    $item = Invoke-CancipEval -Code (ConvertTo-CancipEvalBootstrap -Code $code) -TimeoutSeconds 55
+    if ($item.error) { throw "automation core contract runtime error: $($item.error)" }
+    if ([int]$item.daily -ne 1 -or @($item.deprecated).Count -or @($item.unknown).Count -or @($item.invalid).Count -or @($item.badSessions).Count -or @($item.missingModel).Count) {
+      throw "automation core contract failed: $($item | ConvertTo-Json -Compress -Depth 8)"
+    }
+    foreach ($field in @('silentNormalized','toolAlias','silentAction','retryDue','directIndex','modelNews','diaryPrompt','diarySource','diaryAppend','diarySkip','serialized')) {
+      if (-not [bool]$item.$field) { throw "automation core contract failed: $field ($($item | ConvertTo-Json -Compress))" }
+    }
+    Add-CaseResult 'programmaticCases' @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs; count = $item.count }
+  } catch {
+    Add-CaseResult 'programmaticCases' @{ id = 'programmatic.automation-core-contracts'; pass = $false; error = $_.Exception.Message }
   }
 }
 
@@ -1911,7 +2002,7 @@ if (-not $Case -or 'programmatic.automation-background-focus-neutral'.Contains($
     prepare:runner.prepareAutomationSession,
     run:runner.runAutomationPrompt
   };
-  var result;
+  var result,preparedTask=null;
   try{
     p.loadAutomations=async function(){return [{
       id:'smoke-background-focus-neutral',
@@ -1923,15 +2014,17 @@ if (-not $Case -or 'programmatic.automation-background-focus-neutral'.Contains($
       hour:0,
       minute:0,
       sessionMode:'new',
+      notifyMode:'always',
+      silent:true,
       createdAt:new Date().toISOString(),
       updatedAt:new Date().toISOString()
     }];};
     p.beginAiVaultMutationCapture=function(){return null;};
     p.writeAutomationLog=async function(){return '';};
     p.markAutomationRun=async function(){};
-    runner.prepareAutomationSession=async function(){};
-    runner.runAutomationPrompt=async function(){return 'background smoke complete';};
-    result=await p.runAutomationById('smoke-background-focus-neutral',{trigger:'scheduled'});
+    runner.prepareAutomationSession=async function(task){preparedTask=task;};
+    runner.runAutomationPrompt=async function(){return {status:'ok',text:'background smoke complete'};};
+    result=await p.runAutomationById('smoke-background-focus-neutral',{trigger:'manual'});
   }finally{
     p.loadAutomations=original.load;
     p.beginAiVaultMutationCapture=original.begin;
@@ -1953,6 +2046,7 @@ if (-not $Case -or 'programmatic.automation-background-focus-neutral'.Contains($
     backgroundBeforeCleanup:backgroundBeforeCleanup,
     backgroundAfterCleanup:app.workspace.getLeavesOfType('cancip-automation-runner-view').length,
     released:released,
+    silentDedicated:preparedTask?.silent===true&&preparedTask?.notifyMode==='never'&&preparedTask?.sessionMode==='session'&&String(preparedTask?.sessionId||'').startsWith('automation-'),
     result:String(result&&result.text||'')
   });
 })()
@@ -1961,6 +2055,7 @@ if (-not $Case -or 'programmatic.automation-background-focus-neutral'.Contains($
     if (-not $item.focusStayed) { throw "automation runner changed the active leaf: $($item | ConvertTo-Json -Compress)" }
     if ($item.runnerType -ne 'cancip-automation-runner-view' -or $item.backgroundBeforeCleanup -ne 1) { throw "automation runner view isolation failed: $($item | ConvertTo-Json -Compress)" }
     if (-not $item.released -or $item.backgroundAfterCleanup -ne 0) { throw "automation runner cleanup failed: $($item | ConvertTo-Json -Compress)" }
+    if (-not $item.silentDedicated) { throw "silent automation did not stay in a dedicated no-notice session: $($item | ConvertTo-Json -Compress)" }
     if ($item.result -ne 'background smoke complete') { throw "background automation result failed: $($item | ConvertTo-Json -Compress)" }
     Add-CaseResult -Group 'programmaticCases' -Item @{ id = $item.id; pass = $true; elapsedMs = $item.elapsedMs; runnerType = $item.runnerType }
   } catch {
