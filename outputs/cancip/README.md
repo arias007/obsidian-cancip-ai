@@ -59,6 +59,22 @@ Cancip is a lightweight prototype for managing an Obsidian vault from a mobile-f
 - New-file curation runs in an isolated session with a stable minimal prompt prefix. A programmatic benefit gate classifies each file as curate, skip, or protected before any model call: only concrete high-value defects become candidates; clean, cosmetic-only, or Inbox-only cases are consumed silently; templates, frequently referenced notes, plugin syntax, and generated files are protected from automatic rename/restructure. Each candidate carries a defect-derived action allowlist so one formatting issue cannot authorize unrelated tags, links, summaries, or renaming.
 - TTS is provider-routed by language. English defaults to Web Speech / system TTS and does not need a local model package. Chinese can auto-download and use the current compact PrimeTTS Chinese/English ONNX package. Other languages use system/Web/custom URL unless a compatible local PrimeTTS package is installed under `tts/<package>/` with a manifest.
 
+## 3.0.17
+
+- Process details keep long raw lines horizontally scrollable by default, with stable wrap/copy controls. Mobile context-file editors are protected from accidental popup dismissal, and an empty sidebar composer no longer starts autocomplete requests or shows a loading indicator.
+
+## 3.0.16
+
+- Process tool results now use the same raw-content controls as sent/received details: long lines stay horizontally scrollable by default, with explicit wrap and copy buttons.
+
+## 3.0.15
+
+- Mobile Cancip popups now distinguish a tap from a vertical gesture: buttons execute on an unmoved pointer-up, while a swipe keeps scrolling and cannot close or activate the popup accidentally.
+
+## 3.0.14
+
+- Context-file edit dialogs are isolated from mobile button/first-touch handlers so editing an attached file no longer closes the dialog unexpectedly. Process details keep long raw lines intact for horizontal scrolling and now provide copy and wrap controls.
+
 ## 3.0.13
 
 - Workbench HTML editing now writes through Obsidian's binary Vault API and verifies the resulting bytes. Preview edits carry a stable DOM selector, so text spanning nested HTML tags can fall back to an exact element writeback instead of reporting a false save failure.

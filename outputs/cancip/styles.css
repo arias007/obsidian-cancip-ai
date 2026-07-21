@@ -2799,7 +2799,9 @@ details.obcc-process-step-details:not([open]) > :not(summary),
 }
 
 .obcc-model-edit-modal-container,
-.obcc-model-edit-modal {
+.obcc-model-edit-modal,
+.obcc-context-edit-modal-container,
+.obcc-context-edit-modal {
   z-index: 2147483002;
 }
 
@@ -8213,24 +8215,85 @@ body.is-phone .obcc-review-leaf .obcc-review-detail-rail {
 .obcc-process-detail-field-body {
   max-height: min(46vh, 420px);
   padding: 4px 2px 8px;
-  overflow: auto;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
   font-size: 11px;
 }
 
+.obcc-process-detail-raw-frame {
+  min-width: 0;
+}
+
+.obcc-process-detail-raw-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  min-height: 24px;
+  margin-bottom: 3px;
+}
+
+.obcc-process-detail-raw-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 24px;
+  padding: 3px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.obcc-process-detail-raw-action:hover,
+.obcc-process-detail-raw-action:focus-visible,
+.obcc-process-detail-raw-action.is-active {
+  border-color: var(--background-modifier-border);
+  background: var(--background-primary);
+  color: var(--interactive-accent);
+}
+
+.obcc-process-detail-raw-action svg {
+  width: 14px;
+  height: 14px;
+}
+
+.obcc-process-detail-raw,
+.obcc-process-detail-raw.is-nowrap > code {
+  white-space: pre;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
 .obcc-process-detail-raw {
+  box-sizing: border-box;
   width: 100%;
   max-width: 100%;
+  min-width: 0;
   margin: 0;
   padding: 7px;
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: auto;
   border: 0;
   background: var(--background-secondary);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  word-break: break-word;
+  overscroll-behavior-inline: contain;
+  -webkit-overflow-scrolling: touch;
+  white-space: pre;
+  overflow-wrap: normal;
+  word-break: normal;
   font-family: var(--font-monospace);
   font-size: 10.5px;
   line-height: 1.45;
+}
+
+.obcc-process-detail-raw.is-wrapped,
+.obcc-process-detail-raw.is-wrapped > code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .obcc-process-detail-raw code {

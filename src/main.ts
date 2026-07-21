@@ -476,6 +476,7 @@ class CancipContextEditModal extends Modal {
   private labelEl: HTMLInputElement | null = null;
   private contentElInput: HTMLTextAreaElement | null = null;
   private settled = false;
+  private closeRequested = false;
 
   constructor(
     app: App,
@@ -488,6 +489,28 @@ class CancipContextEditModal extends Modal {
   }
 
   onOpen(): void {
+    this.containerEl.addClass("obcc-context-edit-modal-container");
+    this.modalEl.addClass("obcc-context-edit-modal");
+    // Keep the context editor isolated from Cancip's mobile first-touch and
+    // button-management listeners. Those listeners belong to the main view,
+    // not to a modal that is already handling its own controls.
+    const stopOuterTouch = (event: Event) => event.stopPropagation();
+    this.modalEl.addEventListener("pointerdown", stopOuterTouch);
+    this.modalEl.addEventListener("touchstart", stopOuterTouch);
+    this.modalEl.addEventListener("touchmove", stopOuterTouch, { passive: true });
+    this.modalEl.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      this.dismiss();
+    });
+    this.modalEl.addEventListener("click", (event) => {
+      const target = event.target as Element | null;
+      if (!target?.closest(".modal-close")) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      this.dismiss();
+    }, true);
     this.setTitle(this.titleText);
     new Setting(this.contentEl)
       .setName(this.titleText)
@@ -503,7 +526,7 @@ class CancipContextEditModal extends Modal {
     this.contentElInput = body;
     const actions = this.contentEl.createDiv({ cls: "obcc-context-edit-actions" });
     const cancel = actions.createEl("button", { text: "Cancel", attr: { type: "button" } });
-    cancel.addEventListener("click", () => this.close());
+    cancel.addEventListener("click", () => this.dismiss());
     const save = actions.createEl("button", { text: "OK", attr: { type: "button" } });
     save.addClass("mod-cta");
     save.addEventListener("click", () => this.submit());
@@ -513,6 +536,17 @@ class CancipContextEditModal extends Modal {
   onClose(): void {
     if (!this.settled) this.onSubmitValue(null);
     this.contentEl.empty();
+  }
+
+  close(): void {
+    if (!this.closeRequested) return;
+    this.closeRequested = false;
+    super.close();
+  }
+
+  private dismiss(): void {
+    this.closeRequested = true;
+    this.close();
   }
 
   private submit(): void {
@@ -3129,6 +3163,9 @@ const EN = {
   processReceivedRaw: "Original received content",
   processRuntime: "Runtime information",
   processOther: "Other details",
+  processCopy: "Copy content",
+  processWrapEnable: "Wrap lines",
+  processWrapDisable: "Keep lines unwrapped",
   searchOpen: "Search Vault",
   searchPlaceholder: "Search notes, files, sessions, memory...",
   searchHard: "Hard",
@@ -4080,6 +4117,9 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     processReceivedRaw: "接收原文",
     processRuntime: "运行信息",
     processOther: "其他详情",
+    processCopy: "复制内容",
+    processWrapEnable: "开启换行",
+    processWrapDisable: "保持不换行",
     searchOpen: "搜索 Vault",
     searchPlaceholder: "搜索笔记、文件、会话、记忆……",
     searchHard: "硬搜索",
@@ -14654,7 +14694,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     );
     if (!target) target = this.fallbackEditableButtonTarget(rawTarget);
     if (!target) return null;
-    if (target.closest(".obcc-button-edit-bubble, .obcc-button-edit-modal, .suggestion-container, .obcc-ui-sort-overlay, .obcc-ui-sort-snapshot-stage")) return null;
+    if (target.closest(".obcc-button-edit-bubble, .obcc-button-edit-modal, .obcc-context-edit-modal, .suggestion-container, .obcc-ui-sort-overlay, .obcc-ui-sort-snapshot-stage")) return null;
     if (!this.isEditableButtonUiTarget(target)) return null;
     return target;
   }
@@ -14676,7 +14716,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     let current: Element | null = rawElement;
     for (let depth = 0; current && depth < 6; depth += 1, current = current.parentElement) {
       if (!current.instanceOf(win.HTMLElement)) continue;
-      if (current.closest(".markdown-preview-view, .cm-editor, .cm-scroller, .pdfViewer .page, .obcc-button-edit-modal")) {
+      if (current.closest(".markdown-preview-view, .cm-editor, .cm-scroller, .pdfViewer .page, .obcc-button-edit-modal, .obcc-context-edit-modal")) {
         if (!current.closest(".view-actions, .view-header, .pdf-toolbar, .modal-button-container, .setting-item-control, .obcc-root, .obcc-review-leaf-shell")) continue;
       }
       const uiRoot = current.closest(".workspace, .app-container, .modal-container, .menu, .suggestion-container, .status-bar, .workspace-ribbon, .view-actions, .view-header, .nav-header, .nav-buttons-container, .pdf-toolbar, .obcc-root, .obcc-review-leaf-shell");
@@ -15014,7 +15054,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       ".dropdown"
     ].join(",");
     return Array.from(root.querySelectorAll<HTMLElement>(selector))
-      .filter((item) => !item.closest(".obcc-button-edit-modal, .obcc-button-edit-bubble, .obcc-selection-send-bubble, .obcc-ui-sort-overlay"))
+      .filter((item) => !item.closest(".obcc-button-edit-modal, .obcc-context-edit-modal, .obcc-button-edit-bubble, .obcc-selection-send-bubble, .obcc-ui-sort-overlay"))
       .filter((item) => item.dataset.cancipUiCustomButton !== "true")
       .filter((item) => this.isEditableButtonUiTarget(item) || Boolean(this.editableButtonTarget(item)))
       .filter((item) => options.includeOffscreen
@@ -24418,6 +24458,8 @@ class CancipView extends ItemView {
   private searchButtonEl: HTMLButtonElement | null = null;
   private searchPopoverEl: HTMLElement | null = null;
   private searchPopoverCleanup: (() => void) | null = null;
+  private processDetailWrapState = new Map<string, boolean>();
+  private processDetailScrollLeft = new Map<string, number>();
   private headerLiveStatusSignature = "";
   private mentionItems: MentionTarget[] = [];
   private mentionActiveIndex = 0;
@@ -24436,6 +24478,11 @@ class CancipView extends ItemView {
   private mobileFirstTouchTarget: HTMLElement | null = null;
   private mobileFirstTouchAt = 0;
   private mobileFirstSyntheticClick = false;
+  private mobileFirstTouchPointerId = -1;
+  private mobileFirstTouchStartX = 0;
+  private mobileFirstTouchStartY = 0;
+  private mobileFirstTouchMoved = false;
+  private mobileFirstTouchClearTimer: number | null = null;
   private liveProcessRecordActive = false;
   private readOnlyActionCache = new Map<string, ReadOnlyActionCacheEntry>();
   private outcomeEvidenceImagesByRunId = new Map<string, ImageAttachmentContext[]>();
@@ -24848,6 +24895,9 @@ class CancipView extends ItemView {
     this.registerEvent(this.app.workspace.on("file-open", () => this.renderContextChips()));
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.renderContextChips()));
     this.registerDomEvent(activeDocument, "pointerdown", (event) => this.handleMobileFirstPointerDown(event), true);
+    this.registerDomEvent(activeDocument, "pointermove", (event) => this.handleMobileFirstPointerMove(event), true);
+    this.registerDomEvent(activeDocument, "pointerup", (event) => this.handleMobileFirstPointerUp(event), true);
+    this.registerDomEvent(activeDocument, "pointercancel", (event) => this.handleMobileFirstPointerCancel(event), true);
     this.registerDomEvent(activeDocument, "click", (event) => this.handleMobileFirstClick(event), true);
     this.registerDomEvent(activeDocument, "pointerdown", (event) => this.handleDocumentPointerDown(event));
     this.registerDomEvent(activeDocument, "contextmenu", (event) => this.handleDocumentContextMenu(event));
@@ -24868,6 +24918,7 @@ class CancipView extends ItemView {
   async onClose(): Promise<void> {
     const keepsBackgroundWorker = this.ownsAnySessionRequest();
     if (!keepsBackgroundWorker) this.clearLiveTimers();
+    this.clearMobileFirstTouch();
     this.cleanupAutocompleteUi();
     this.closeSearchPopover();
     this.overlayLayerEl?.remove();
@@ -26223,6 +26274,7 @@ class CancipView extends ItemView {
     this.resizeInput();
     this.syncRequestControls();
     this.queueMentionPopupUpdate("typing");
+    if (!this.inputEl.value.trim()) this.cancelAutocompleteNetworkRequests();
     this.scheduleAutocomplete();
   }
 
@@ -26377,6 +26429,7 @@ class CancipView extends ItemView {
   }
 
   private beginAutocompleteNetworkRequest(): () => void {
+    if (this.autocompleteEligiblePrefix() === null) return () => undefined;
     const epoch = this.autocompleteNetworkEpoch;
     this.autocompleteNetworkRequests += 1;
     this.autocompleteModelBusy = true;
@@ -26709,7 +26762,7 @@ class CancipView extends ItemView {
     this.inputGhostEl?.toggleClass("has-suggestion", suggestionMatchesCursor);
     const button = this.autocompleteApplyButtonEl;
     if (!button) return;
-    const requesting = this.autocompleteNetworkRequests > 0;
+    const requesting = Boolean(this.autocompleteEligiblePrefix()) && this.autocompleteNetworkRequests > 0;
     const hasSuggestion = suggestionMatchesCursor;
     button.toggleClass("is-loading", requesting);
     button.toggleClass("has-suggestion", hasSuggestion);
@@ -27820,21 +27873,63 @@ class CancipView extends ItemView {
       || Boolean(this.footerEl?.contains(actionable))
       || Boolean(this.overlayLayerEl?.contains(actionable));
     if (!owned) return;
-    event.preventDefault();
+    this.clearMobileFirstTouch();
     event.stopPropagation();
     this.mobileFirstTouchTarget = actionable;
     this.mobileFirstTouchAt = Date.now();
+    this.mobileFirstTouchPointerId = event.pointerId;
+    this.mobileFirstTouchStartX = event.clientX;
+    this.mobileFirstTouchStartY = event.clientY;
+    this.mobileFirstTouchMoved = false;
+    this.mobileFirstTouchClearTimer = window.setTimeout(() => this.clearMobileFirstTouch(), 1100);
+  }
+
+  private handleMobileFirstPointerMove(event: PointerEvent): void {
+    if (!this.mobileFirstTouchTarget || event.pointerId !== this.mobileFirstTouchPointerId) return;
+    if (Math.abs(event.clientX - this.mobileFirstTouchStartX) < 8
+      && Math.abs(event.clientY - this.mobileFirstTouchStartY) < 8) return;
+    this.mobileFirstTouchMoved = true;
+  }
+
+  private handleMobileFirstPointerUp(event: PointerEvent): void {
+    const actionable = this.mobileFirstTouchTarget;
+    if (!actionable || event.pointerId !== this.mobileFirstTouchPointerId) return;
+    if (this.mobileFirstTouchMoved) return;
+    event.preventDefault();
+    event.stopPropagation();
     this.mobileFirstSyntheticClick = true;
     try {
-      actionable.click();
+      if (actionable.isConnected) actionable.click();
     } finally {
       this.mobileFirstSyntheticClick = false;
     }
   }
 
+  private handleMobileFirstPointerCancel(event: PointerEvent): void {
+    if (event.pointerId !== this.mobileFirstTouchPointerId) return;
+    this.clearMobileFirstTouch();
+  }
+
+  private clearMobileFirstTouch(): void {
+    if (this.mobileFirstTouchClearTimer !== null) window.clearTimeout(this.mobileFirstTouchClearTimer);
+    this.mobileFirstTouchClearTimer = null;
+    this.mobileFirstTouchTarget = null;
+    this.mobileFirstTouchAt = 0;
+    this.mobileFirstTouchPointerId = -1;
+    this.mobileFirstTouchStartX = 0;
+    this.mobileFirstTouchStartY = 0;
+    this.mobileFirstTouchMoved = false;
+  }
+
   private handleMobileFirstClick(event: MouseEvent): void {
     const body = this.containerEl.ownerDocument.body;
     if (!(Platform.isMobile || body.hasClass("is-mobile") || body.hasClass("is-phone")) || this.mobileFirstSyntheticClick) return;
+    if (this.mobileFirstTouchMoved && this.mobileFirstTouchTarget) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      this.clearMobileFirstTouch();
+      return;
+    }
     const target = event.target as Node | null;
     const win = this.containerEl.ownerDocument.defaultView;
     if (!win || !target?.instanceOf(win.Element)) return;
@@ -43775,7 +43870,8 @@ class CancipView extends ItemView {
   }
 
   private shouldDeferMessageRender(): boolean {
-    return this.userInteractingWithMessages && !this.activeRequest && !this.liveProcessRecordActive;
+    const processRecordOpen = Boolean(this.messagesEl?.querySelector("details.obcc-process-record-details[open]"));
+    return this.userInteractingWithMessages && (!this.activeRequest || processRecordOpen);
   }
 
   private markMessageScrollInteraction(): void {
@@ -44133,13 +44229,71 @@ class CancipView extends ItemView {
       const summary = this.createProcessSummary(details, section.title);
       summary.addClass("obcc-process-detail-field-title");
       const body = details.createDiv({ cls: "obcc-process-detail-field-body" });
-      const pre = body.createEl("pre", { cls: "obcc-process-detail-raw" });
-      const code = pre.createEl("code");
+      const raw = this.createProcessRawBlock(body, section.content, `field:${processFoldKey}:${section.group}`);
       this.renderWhenProcessFieldOpen(details, () => {
-        code.setText(section.content);
-        pre.dataset.loaded = "true";
+        raw.load();
       });
     }
+  }
+
+  private createProcessRawBlock(
+    parent: HTMLElement,
+    content: string,
+    stateKey: string,
+    maxChars = 0
+  ): { pre: HTMLPreElement; load: () => void } {
+    const frame = parent.createDiv({ cls: "obcc-process-detail-raw-frame" });
+    const actions = frame.createDiv({ cls: "obcc-process-detail-raw-actions" });
+    const copy = actions.createEl("button", {
+      cls: "obcc-process-detail-raw-action",
+      attr: { type: "button", title: this.t("processCopy"), "aria-label": this.t("processCopy") }
+    });
+    setIcon(copy, "copy");
+    copy.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const value = maxChars > 0
+        ? trimContext(redactSensitiveText(content), maxChars)
+        : redactSensitiveText(content);
+      void this.copyTextDirect(value, this.t("copyDone"));
+    });
+    const wrapButton = actions.createEl("button", {
+      cls: "obcc-process-detail-raw-action",
+      attr: { type: "button", "aria-label": this.t("processWrapEnable") }
+    });
+    setIcon(wrapButton, "wrap-text");
+    const syncWrapState = () => {
+      const wrapped = this.processDetailWrapState.get(stateKey) === true;
+      pre.toggleClass("is-wrapped", wrapped);
+      pre.toggleClass("is-nowrap", !wrapped);
+      wrapButton.toggleClass("is-active", wrapped);
+      wrapButton.setAttr("title", wrapped ? this.t("processWrapDisable") : this.t("processWrapEnable"));
+      wrapButton.setAttr("aria-label", wrapped ? this.t("processWrapDisable") : this.t("processWrapEnable"));
+      wrapButton.setAttr("aria-pressed", wrapped ? "true" : "false");
+    };
+    wrapButton.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.processDetailWrapState.set(stateKey, !(this.processDetailWrapState.get(stateKey) === true));
+      syncWrapState();
+    });
+    const pre = frame.createEl("pre", { cls: "obcc-process-detail-raw is-nowrap" });
+    const code = pre.createEl("code");
+    pre.addEventListener("scroll", () => {
+      this.processDetailScrollLeft.set(stateKey, pre.scrollLeft);
+    }, { passive: true });
+    const load = () => {
+      if (pre.dataset.loaded === "true") return;
+      const value = maxChars > 0
+        ? trimContext(redactSensitiveText(content), maxChars)
+        : redactSensitiveText(content);
+      code.setText(value);
+      pre.dataset.loaded = "true";
+      const scrollLeft = this.processDetailScrollLeft.get(stateKey) ?? 0;
+      if (scrollLeft > 0) window.requestAnimationFrame(() => { pre.scrollLeft = scrollLeft; });
+    };
+    syncWrapState();
+    return { pre, load };
   }
 
   private renderWhenProcessRecordOpen(parent: HTMLElement, render: () => void): void {
@@ -44374,10 +44528,14 @@ class CancipView extends ItemView {
       wrap.createDiv({ cls: "obcc-folded-block-title", text: hasProcessFold ? this.t("processDetails") : this.t("toolJsonDetails") });
       for (const block of blocks) {
         wrap.createDiv({ cls: "obcc-folded-block-title", text: block.title });
-        const pre = wrap.createEl("pre");
-        this.renderWhenProcessRecordOpen(pre, () => {
-          pre.setText(trimContext(redactSensitiveText(block.content), PROCESS_DETAIL_MAX_CHARS));
-          pre.dataset.loaded = "true";
+        const raw = this.createProcessRawBlock(
+          wrap,
+          block.content,
+          `tool:${parent.closest<HTMLElement>("[data-message-id]")?.dataset.messageId ?? "unknown"}:${block.title}`,
+          PROCESS_DETAIL_MAX_CHARS
+        );
+        this.renderWhenProcessRecordOpen(wrap, () => {
+          raw.load();
         });
       }
       return;
@@ -44623,10 +44781,14 @@ class CancipView extends ItemView {
       if (detail) {
         if (inlineDetails) {
           row.createDiv({ cls: "obcc-tool-run-result-label", text: this.t("toolRunResult") });
-          const pre = row.createEl("pre", { cls: "obcc-tool-run-result" });
-          this.renderWhenProcessRecordOpen(pre, () => {
-            pre.setText(trimContext(redactSensitiveText(detail), TOOL_RESULT_DETAIL_MAX_CHARS));
-            pre.dataset.loaded = "true";
+          const raw = this.createProcessRawBlock(
+            row,
+            detail,
+            `tool-run:${message.id}:${run.id}`,
+            TOOL_RESULT_DETAIL_MAX_CHARS
+          );
+          this.renderWhenProcessRecordOpen(row, () => {
+            raw.load();
           });
         } else {
           const details = row.createEl("details", { cls: "obcc-tool-run-details" });
