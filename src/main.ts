@@ -7324,18 +7324,18 @@ function createCancipEditorAutocompleteExtension(plugin: CancipPlugin): Extensio
     private candidateRotationTimer: number | null = null;
     private requestId = 0;
     private destroyed = false;
+    private inputArmed = false;
     private modelInFlight = false;
     private queuedSnapshot: EditorAutocompleteSuggestion | null = null;
     private queuedForce = false;
     private readonly compositionEnd = () => {
       const win = this.view.dom.ownerDocument.defaultView;
-      if (!win) return;
+      if (!win || !this.inputArmed) return;
       win.requestAnimationFrame(() => this.schedule());
     };
 
     constructor(private view: EditorView) {
       this.view.dom.addEventListener("compositionend", this.compositionEnd);
-      this.schedule();
     }
 
     update(update: ViewUpdate): void {
@@ -7351,11 +7351,13 @@ function createCancipEditorAutocompleteExtension(plugin: CancipPlugin): Extensio
         return;
       }
       if (effects.some((effect) => effect.is(regenerateEditorAutocompleteSuggestion))) {
-        this.schedule(undefined, { force: true });
+        if (this.inputArmed) this.schedule(undefined, { force: true });
+        else this.clearInactiveState();
         return;
       }
       if (effects.some((effect) => effect.is(refreshEditorAutocompleteSuggestion))) {
-        this.schedule(undefined, { force: true });
+        if (this.inputArmed) this.schedule(undefined, { force: true });
+        else this.clearInactiveState();
         return;
       }
       if (update.docChanged) {
@@ -7366,12 +7368,25 @@ function createCancipEditorAutocompleteExtension(plugin: CancipPlugin): Extensio
           || transaction.isUserEvent("redo")
         ));
         const appliedAutocomplete = effects.some((effect) => effect.is(setEditorAutocompleteSuggestion));
-        if (userChangedDocument || appliedAutocomplete) {
+        const focusedDocumentEdit = !appliedAutocomplete
+          && this.view.hasFocus
+          && plugin.isEditorAutocompleteViewActive(this.view);
+        if (userChangedDocument || focusedDocumentEdit) {
+          this.inputArmed = this.view.state.doc.length > 0;
+        }
+        if ((userChangedDocument || focusedDocumentEdit || appliedAutocomplete) && this.inputArmed) {
           this.schedule(update.startState.field(editorAutocompleteState));
+        } else if (!this.inputArmed) {
+          this.clearInactiveState();
         }
         return;
       }
-      if (update.selectionSet || update.focusChanged) this.schedule();
+      if (update.focusChanged && !plugin.isEditorAutocompleteViewActive(this.view)) {
+        this.inputArmed = false;
+        this.clearInactiveState();
+        return;
+      }
+      if ((update.selectionSet || update.focusChanged) && this.inputArmed) this.schedule();
     }
 
     destroy(): void {
@@ -7396,6 +7411,22 @@ function createCancipEditorAutocompleteExtension(plugin: CancipPlugin): Extensio
       this.candidateRotationTimer = null;
     }
 
+    private clearInactiveState(): void {
+      this.clearTimer();
+      this.clearCandidateRotation();
+      this.queuedSnapshot = null;
+      this.queuedForce = false;
+      const requestId = ++this.requestId;
+      const win = this.view.dom.ownerDocument.defaultView;
+      if (!win) return;
+      win.setTimeout(() => {
+        if (this.destroyed || requestId !== this.requestId) return;
+        if (this.view.state.field(editorAutocompleteState)) {
+          this.view.dispatch({ effects: setEditorAutocompleteSuggestion.of(null) });
+        }
+      }, 0);
+    }
+
     private syncCandidateRotation(): void {
       this.clearCandidateRotation();
       if (this.destroyed) return;
@@ -7409,7 +7440,7 @@ function createCancipEditorAutocompleteExtension(plugin: CancipPlugin): Extensio
     }
 
     private dispatchSuggestion(snapshot: EditorAutocompleteSuggestion, candidates: string[], candidateIndex = 0, allowReplace = false): void {
-      if (this.destroyed) return;
+      if (this.destroyed || !this.inputArmed) return;
       const existing = this.view.state.field(editorAutocompleteState);
       const normalizedCandidates = uniqueEditorAutocompleteCandidates(candidates, plugin.editorAutocompleteCandidateCount());
       if (!normalizedCandidates.length) {
@@ -7439,7 +7470,7 @@ function createCancipEditorAutocompleteExtension(plugin: CancipPlugin): Extensio
     }
 
     private scheduleBranchPrefetch(snapshot: EditorAutocompleteSuggestion, candidates: string[], path: string): void {
-      if (!plugin.settings.composerAutocompletePrefetchEnabled || !candidates.length) return;
+      if (!this.inputArmed || !plugin.settings.composerAutocompletePrefetchEnabled || !candidates.length) return;
       const current = editorAutocompleteSnapshot(this.view, plugin);
       if (!current || current.signature !== snapshot.signature) return;
       const contextFrom = Math.max(0, snapshot.from - 1050);
@@ -7450,6 +7481,10 @@ function createCancipEditorAutocompleteExtension(plugin: CancipPlugin): Extensio
 
     private schedule(previous?: EditorAutocompleteSuggestion | null, options: { force?: boolean } = {}): void {
       this.clearTimer();
+      if (!this.inputArmed) {
+        this.clearInactiveState();
+        return;
+      }
       const requestId = ++this.requestId;
       const snapshot = editorAutocompleteSnapshot(this.view, plugin);
       const win = this.view.dom.ownerDocument.defaultView;
@@ -7512,7 +7547,7 @@ function createCancipEditorAutocompleteExtension(plugin: CancipPlugin): Extensio
 
     private async requestModelSuggestion(snapshot: EditorAutocompleteSuggestion, force = false): Promise<void> {
       const current = editorAutocompleteSnapshot(this.view, plugin);
-      if (!current || current.signature !== snapshot.signature || this.destroyed || this.modelInFlight) return;
+      if (!this.inputArmed || !current || current.signature !== snapshot.signature || this.destroyed || this.modelInFlight) return;
       const displayedAtStart = this.view.state.field(editorAutocompleteState);
       const contextFrom = Math.max(0, snapshot.from - 1050);
       const contextTo = Math.min(this.view.state.doc.length, snapshot.from + 150);
@@ -7536,7 +7571,7 @@ function createCancipEditorAutocompleteExtension(plugin: CancipPlugin): Extensio
       } finally {
         this.modelInFlight = false;
       }
-      if (this.destroyed) return;
+      if (this.destroyed || !this.inputArmed || !plugin.isEditorAutocompleteViewActive(this.view)) return;
       const latest = editorAutocompleteSnapshot(this.view, plugin);
       if (!latest) {
         this.queuedSnapshot = null;
@@ -34847,9 +34882,7 @@ class CancipView extends ItemView {
 
   private formatLiveModelProgress(text: string): string {
     const audit = this.lastModelCallAudit;
-    const readableProgress = trimContext(sanitizeLiveModelProgress(text), 1800);
     return this.formatAuditSections([
-      ...(readableProgress ? [{ title: "Readable progress", content: readableProgress }] : []),
       {
         title: "Model exchange raw contents",
         content: [
@@ -34910,9 +34943,15 @@ class CancipView extends ItemView {
     modelPrompt: string,
     context: { system: string; contextText: string; searchHits: SearchHit[]; images?: ImageAttachmentContext[] }
   ): string {
+    const inputText = this.modelInputText(modelPrompt, context, rawPrompt);
     return this.formatAuditSections([
       { title: "Summary", content: `${this.t("obsidianContext")}: ${context.contextText.length} chars\n${this.t("hitCount", { count: context.searchHits.length })}\nimages: ${context.images?.length ?? 0}` },
       { title: "Routing summary", content: this.promptRoutingAuditSummary(rawPrompt, taskGoal, modelPrompt) },
+      { title: "SENT system / instructions", content: context.system },
+      { title: "SENT contextText", content: context.contextText },
+      { title: "SENT turn prompt", content: modelPrompt },
+      ...(rawPrompt !== modelPrompt ? [{ title: "Original user prompt", content: rawPrompt }] : []),
+      { title: "SENT actual user inputText", content: inputText },
       { title: "Input sizes", content: this.promptSizeAudit(context.system, context.contextText, modelPrompt) },
       { title: "Included sources", content: this.searchHitsAuditSummary(context.searchHits) }
     ]);
@@ -34960,7 +34999,7 @@ class CancipView extends ItemView {
     const endpoint = normalizeApiUrl(profile.apiUrl);
     const requestedMode = profile.apiMode;
     const resolvedMode = resolveApiMode(profile.apiMode, endpoint);
-    const readableProgress = trimContext(sanitizeLiveModelProgress(visibleAnswer || rawAnswer), 1800);
+    const readableProgress = trimContext(extractModelReasoningSummary(this.lastModelCallAudit?.responseJson), 1800);
     return this.formatAuditSections([
       ...(readableProgress ? [{ title: "Readable progress", content: readableProgress }] : []),
       {
@@ -44702,11 +44741,11 @@ class CancipView extends ItemView {
       const content = detail.slice(start, end).replace(/^\s+|\s+$/g, "");
       if (!content || /^(?:none|无|暂无)$/i.test(content)) continue;
       const normalized = title.toLowerCase();
-      const group = /raw sent|\bsent\b|system\s*\/\s*instructions|contexttext|turn prompt|user prompt|inputtext|input sizes/.test(normalized)
+      const group = /raw sent|\bsent\b|system\s*\/\s*instructions|contexttext|turn prompt|user prompt|inputtext/.test(normalized)
         ? "sent"
         : /raw received|\breceived\b|parsed extracted|visible answer|reply filter|response(?:text|json)?/.test(normalized)
           ? "received"
-          : /api profile|token usage|actual api|previous attempt|mode|endpoint|request audit/.test(normalized)
+          : /api profile|token usage|actual api|previous attempt|mode|endpoint|request audit|input sizes/.test(normalized)
             ? "runtime"
             : "other";
       sections.push({ title, content, group });
@@ -44723,18 +44762,24 @@ class CancipView extends ItemView {
       }
       return grouped[0] ?? null;
     };
-    const sent = firstSection("sent", [
-      /^raw sent requestbody$/i,
-      /^sent actual user inputtext$/i,
-      /^original user prompt$/i,
-      /^sent turn prompt$/i
-    ]);
+    const sentSections = sections.filter((section) => section.group === "sent");
+    const rawSent = sentSections.find((section) => /^raw sent requestbody$/i.test(section.title));
+    const sent = rawSent
+      ? { title: this.t("processSentRaw"), content: this.processExchangeRawContent(rawSent.content) }
+      : sentSections.length
+        ? {
+          title: this.t("processSentRaw"),
+          content: sentSections
+            .map((section) => `${this.localizedProcessFieldTitle(section.title)}\n${this.processExchangeRawContent(section.content)}`)
+            .join("\n\n")
+        }
+        : null;
     const rawReceived = sections.filter((section) => section.group === "received" && /^raw received response(?:text|json)$/i.test(section.title));
     const received = rawReceived.length
       ? {
         title: this.t("processReceivedRaw"),
         content: rawReceived
-          .map((section) => `${this.localizedProcessFieldTitle(section.title)}\n${section.content}`)
+          .map((section) => `${this.localizedProcessFieldTitle(section.title)}\n${this.processExchangeRawContent(section.content)}`)
           .join("\n\n")
       }
       : firstSection("received", [
@@ -44772,6 +44817,10 @@ class CancipView extends ItemView {
         raw.load();
       });
     }
+  }
+
+  private processExchangeRawContent(content: string): string {
+    return content.replace(/^chars:\s*\d+(?:\s*·[^\n]*)?\s*\n+/i, "").trim();
   }
 
   private createProcessRawBlock(
@@ -57980,6 +58029,7 @@ function shouldFoldCodeBlock(lang: string, body: string): boolean {
   if (lang === "cancip-action") return true;
   if (["bash", "sh", "zsh", "shell", "powershell", "ps1", "cmd", "bat", "terminal", "console"].includes(lang)) return true;
   if (["ts", "tsx", "js", "jsx", "json", "html", "css", "python", "py", "diff"].includes(lang)) return true;
+  if (lang === "text" && /^#{2,3}\s+(?:api profile|token usage|model exchange raw contents|actual api call audit|input sizes|reply filter|raw sent|raw received|parsed extracted|visible answer|sent system|sent contexttext|sent turn prompt|sent actual user inputtext|original user prompt|previous attempt|summary|routing summary|included sources)\b/im.test(body)) return true;
   if ((lang === "json" || !lang) && /^\{\s*"?(?:actions|type)"?\s*:/.test(body.trim())) return true;
   if (/^(?:\$|>|PS>|powershell|cmd|node|npm|git|gh|python|py|obsidian|cancip)\b/im.test(body.trim())) return true;
   return false;
@@ -63025,6 +63075,40 @@ function extractResponsesOutputText(output: unknown): string {
     })
     .filter(Boolean)
     .join("\n");
+}
+
+function extractModelReasoningSummary(value: unknown): string {
+  const summaries: string[] = [];
+  const seen = new Set<unknown>();
+  const collect = (entry: unknown, reasoningScope = false, depth = 0): void => {
+    if (depth > 10 || entry === null || entry === undefined || seen.has(entry)) return;
+    if (typeof entry === "string") {
+      if (reasoningScope && entry.trim()) summaries.push(entry.trim());
+      return;
+    }
+    if (Array.isArray(entry)) {
+      seen.add(entry);
+      for (const item of entry) collect(item, reasoningScope, depth + 1);
+      return;
+    }
+    if (!isRecord(entry)) return;
+    seen.add(entry);
+    const marker = [entry.type, entry.kind, entry.name, entry.category]
+      .filter((item): item is string => typeof item === "string")
+      .join(" ")
+      .toLowerCase();
+    const explicitSummary = /reasoning|thinking|thought|analysis/.test(marker)
+      && /summary/.test(marker);
+    for (const [key, child] of Object.entries(entry)) {
+      const normalized = key.toLowerCase();
+      const summaryKey = /^(?:reasoning[_-]?summary|thinking[_-]?summary|summary_text)$/.test(normalized);
+      const nestedSummary = normalized === "summary" && (/reasoning|thinking|thought|analysis/.test(marker) || reasoningScope);
+      const summaryTextChild = reasoningScope && /^(?:text|content|value|parts|delta|output_text)$/.test(normalized);
+      collect(child, summaryKey || nestedSummary || explicitSummary || summaryTextChild, depth + 1);
+    }
+  };
+  collect(value);
+  return uniqueStrings(summaries).join("\n\n");
 }
 
 function extractTextFragment(value: unknown, depth = 0): string {

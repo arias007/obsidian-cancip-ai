@@ -59,6 +59,12 @@ Cancip is a lightweight prototype for managing an Obsidian vault from a mobile-f
 - New-file curation runs in an isolated session with a stable minimal prompt prefix. A programmatic benefit gate classifies each file as curate, skip, or protected before any model call: only concrete high-value defects become candidates; clean, cosmetic-only, or Inbox-only cases are consumed silently; templates, frequently referenced notes, plugin syntax, and generated files are protected from automatic rename/restructure. Each candidate carries a defect-derived action allowlist so one formatting issue cannot authorize unrelated tags, links, summaries, or renaming.
 - TTS is provider-routed by language. English defaults to Web Speech / system TTS and does not need a local model package. Chinese can auto-download and use the current compact PrimeTTS Chinese/English ONNX package. Other languages use system/Web/custom URL unless a compatible local PrimeTTS package is installed under `tts/<package>/` with a manifest.
 
+## 3.0.20
+
+- Process records now show the real sent payload instead of input-size statistics. Before the API call exists, the folded sent section contains the exact assembled system instructions, context, turn prompt, original prompt when distinct, and actual model input; after the call it prefers the exact request body.
+- Ordinary model answers and execution/status text stay folded in process details. Only an explicit provider-supplied reasoning/thinking summary is expanded as readable progress; raw response text, commands, JSON, and audits remain folded.
+- Note autocomplete no longer starts from editor construction, focus, file switching, or caret movement alone. A real user edit in the current focus cycle arms completion; focus loss or an empty document invalidates queued work and clears the suggestion.
+
 ## 3.0.19
 
 - Automations now have a separate Silent run option. Silent tasks keep their full result in a stable dedicated session while suppressing start/completion notices and never revealing the response session.

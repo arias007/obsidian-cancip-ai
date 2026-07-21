@@ -2485,12 +2485,12 @@ if (Should-RunProgrammaticCase 'programmatic.live-process-timer-actual-audit') {
   const v=app.workspace.getLeavesOfType('cancip-view').map((leaf)=>leaf.view).find((view)=>view?.messagesEl?.isConnected);
   if(!v)throw new Error('rendered Cancip view unavailable');
   const old={messages:v.messages,active:v.activeRequest,details:v.detailsOpenState instanceof Map?new Map(v.detailsOpenState):null};
-  const id='smoke-live-audit',timer=setInterval(()=>{},60000),fence=String.fromCharCode(96).repeat(4),sent='RAW-SENT-EXACT',received='RAW-RECEIVED-EXACT';
+  const id='smoke-live-audit',timer=setInterval(()=>{},60000),fence=String.fromCharCode(96).repeat(4),sent='RAW-SENT-EXACT',received='RAW-RECEIVED-EXACT',ordinaryAnswer='ORDINARY-FINAL-ANSWER';
   try{
     const content=[
       '<!-- cancip-progress-step -->','<!-- cancip-process-message -->',
       '执行中 · 模型正在基于当前证据生成回答... · 字数 发送 120 / 接收中 0 · 耗时 2s',
-      fence+'text','## API profile','model: smoke','','## Model exchange raw contents','### RAW SENT requestBody',sent,'','### RAW RECEIVED responseText',received,'','## Actual API call audit','status: 200',fence
+      fence+'text','## Input sizes','systemChars: 1746','contextChars: 0','turnChars: 3','estimatedInputTokens: 585','','## API profile','model: smoke','','## Model exchange raw contents','### RAW SENT requestBody',`chars: ${sent.length}`,'',sent,'','### RAW RECEIVED responseText',`chars: ${received.length}`,'',received,'','### VISIBLE answer after filtering',ordinaryAnswer,'','## Actual API call audit','status: 200',fence
     ].join('\n');
     v.messages=[{id,role:'assistant',createdAt:Date.now()-2000,content}];
     v.activeRequest={};
@@ -2499,12 +2499,22 @@ if (Should-RunProgrammaticCase 'programmatic.live-process-timer-actual-audit') {
     v.renderMessages();
     const record=v.messagesEl.querySelector('.obcc-process-record-details.is-live-process-record');
     const text=record?.textContent||'';
+    const sentField=record?.querySelector('.obcc-process-detail-group.is-sent');
+    const receivedField=record?.querySelector('.obcc-process-detail-group.is-received');
+    if(sentField){sentField.open=true;sentField.dispatchEvent(new sentField.ownerDocument.defaultView.Event('toggle'))}
+    if(receivedField){receivedField.open=true;receivedField.dispatchEvent(new receivedField.ownerDocument.defaultView.Event('toggle'))}
+    const sentRaw=sentField?.querySelector('.obcc-process-detail-raw code')?.textContent||'';
+    const receivedRaw=receivedField?.querySelector('.obcc-process-detail-raw code')?.textContent||'';
     return JSON.stringify({
       timerVisible:/耗时\s*2s/.test(text),
       liveOpen:!!record?.open,
       sentClassified:!!record?.querySelector('.obcc-process-detail-group.is-sent'),
       receivedClassified:!!record?.querySelector('.obcc-process-detail-group.is-received'),
       runtimeClassified:!!record?.querySelector('.obcc-process-detail-group.is-runtime'),
+      exactSentRaw:sentRaw===sent,
+      exactReceivedRaw:receivedRaw.includes(received)&&!receivedRaw.includes('chars:'),
+      inputSizesNotSent:!sentRaw.includes('systemChars')&&!sentRaw.includes('estimatedInputTokens'),
+      ordinaryAnswerFolded:!record?.querySelector('.obcc-process-step-readable')&&receivedRaw.includes(ordinaryAnswer),
       noPlaceholder:!v.messagesEl.querySelector('.is-live-process-placeholder')
     });
   }finally{
@@ -2513,7 +2523,7 @@ if (Should-RunProgrammaticCase 'programmatic.live-process-timer-actual-audit') {
 })()
 '@
     $item = Invoke-CancipEval -Code (ConvertTo-CancipEvalBootstrap -Code $code) -TimeoutSeconds 25
-    foreach ($field in @('timerVisible','liveOpen','sentClassified','receivedClassified','runtimeClassified','noPlaceholder')) {
+    foreach ($field in @('timerVisible','liveOpen','sentClassified','receivedClassified','runtimeClassified','exactSentRaw','exactReceivedRaw','inputSizesNotSent','ordinaryAnswerFolded','noPlaceholder')) {
       if (-not [bool]$item.$field) { throw "live process audit failed: $field; $($item | ConvertTo-Json -Compress -Depth 8)" }
     }
     Add-CaseResult -Group 'programmaticCases' -Item @{ id = 'programmatic.live-process-timer-actual-audit'; pass = $true; elapsedMs = [int]((Get-Date) - $started).TotalMilliseconds }
@@ -2837,7 +2847,7 @@ if (Should-RunProgrammaticCase 'programmatic.editor-autocomplete-mounted') {
 })()
 '@
     $rotationCode = @'
-(async()=>{const p=app.plugins.plugins.cancip,s=p?.__editorAutocompleteSmoke;if(!s)throw new Error('autocomplete smoke state unavailable');s.cm.focus();s.editor.setCursor({line:s.target.line,ch:0});s.cm.dispatch({selection:{anchor:s.cm.state.selection.main.head}});const settleDeadline=Date.now()+5000;while(p.editorAutocompleteActivityCount>0&&Date.now()<settleDeadline)await new Promise(resolve=>setTimeout(resolve,100));await new Promise(resolve=>setTimeout(resolve,320));s.calls=0;s.branchStartedAt=0;s.branchResolvedAt=0;s.editor.setCursor(s.target);s.cm.dispatch({selection:{anchor:s.cm.state.selection.main.head}});const snapshot=()=>{const widgetEl=s.leaf.containerEl.querySelector('.obcc-editor-autocomplete-widget'),overlayEl=widgetEl?.querySelector('.obcc-editor-autocomplete-overlay'),ghostEl=overlayEl?.querySelector('.obcc-editor-autocomplete-ghost'),widgetStyle=widgetEl?s.doc.defaultView.getComputedStyle(widgetEl):null,overlayStyle=overlayEl?s.doc.defaultView.getComputedStyle(overlayEl):null,ghostStyle=ghostEl?s.doc.defaultView.getComputedStyle(ghostEl):null;return {ghost:ghostEl?.textContent||'',position:s.leaf.containerEl.querySelector('.obcc-editor-autocomplete-position')?.textContent||'',widgetDisplay:widgetStyle?.display||'',widgetWidth:widgetStyle?.width||'',overlayPosition:overlayStyle?.position||'',overlayWidth:overlayStyle?.width||'',ghostDisplay:ghostStyle?.display||'',whiteSpace:ghostStyle?.whiteSpace||'',textOverflow:ghostStyle?.textOverflow||'',calls:s.calls,branchStartedAt:s.branchStartedAt,branchResolvedAt:s.branchResolvedAt,hasFocus:s.cm.hasFocus,documentFocus:s.doc.hasFocus(),documentUntouched:s.editor.getValue()===s.before}};const started=Date.now(),deadline=started+10000;let initial=null,initialAt=0,rotated=null;while(Date.now()<deadline){const current=snapshot();if(!initial&&current.position==='1/3'){initial=current;initialAt=Date.now()}if(initial&&current.position==='2/3'){rotated=current;break}await new Promise(resolve=>setTimeout(resolve,80))}let manual=null,paused=null,menuFound=false;if(rotated){const apply=s.leaf.containerEl.querySelector('.obcc-editor-autocomplete-apply');apply?.dispatchEvent(new s.doc.defaultView.MouseEvent('contextmenu',{bubbles:true,cancelable:true,button:2}));await new Promise(resolve=>setTimeout(resolve,80));const nextTitle=p.t('autocompleteNext'),nextItem=Array.from(s.doc.querySelectorAll('.menu-item')).find(item=>(item.textContent||'').includes(nextTitle));menuFound=!!nextItem;if(nextItem){nextItem.click();await new Promise(resolve=>setTimeout(resolve,120));manual=snapshot();await new Promise(resolve=>setTimeout(resolve,2400));paused=snapshot()}}const last=snapshot();return JSON.stringify({initial,rotated,manual,paused,last,menuFound,elapsedMs:Date.now()-started,rotationMs:initialAt&&rotated?Date.now()-initialAt:0,rootDisplayedBeforePrefetch:!!initial&&initial.branchResolvedAt===0,manualStopsRotation:!!manual&&manual.position==='3/3'&&paused?.position==='3/3'&&manual.ghost===paused.ghost})})()
+(async()=>{const p=app.plugins.plugins.cancip,s=p?.__editorAutocompleteSmoke;if(!s)throw new Error('autocomplete smoke state unavailable');s.cm.focus();s.editor.setCursor({line:s.target.line,ch:0});s.cm.dispatch({selection:{anchor:s.cm.state.selection.main.head}});await new Promise(resolve=>setTimeout(resolve,500));s.calls=0;s.branchStartedAt=0;s.branchResolvedAt=0;s.editor.setCursor(s.target);s.cm.dispatch({selection:{anchor:s.cm.state.selection.main.head}});await new Promise(resolve=>setTimeout(resolve,500));const noInputCalls=s.calls,noInputSpinner=p.editorAutocompleteActivityCount,inputAt=s.cm.state.selection.main.head,Transaction=s.cm.state.update({selection:{anchor:inputAt}}).constructor;s.cm.dispatch({changes:{from:inputAt,insert:'测'},selection:{anchor:inputAt+1},annotations:Transaction.userEvent.of('input.type')});s.cm.dispatch({changes:{from:inputAt,to:inputAt+1,insert:''},selection:{anchor:inputAt},annotations:Transaction.userEvent.of('delete.backward')});const snapshot=()=>{const widgetEl=s.leaf.containerEl.querySelector('.obcc-editor-autocomplete-widget'),overlayEl=widgetEl?.querySelector('.obcc-editor-autocomplete-overlay'),ghostEl=overlayEl?.querySelector('.obcc-editor-autocomplete-ghost'),widgetStyle=widgetEl?s.doc.defaultView.getComputedStyle(widgetEl):null,overlayStyle=overlayEl?s.doc.defaultView.getComputedStyle(overlayEl):null,ghostStyle=ghostEl?s.doc.defaultView.getComputedStyle(ghostEl):null;return {ghost:ghostEl?.textContent||'',position:s.leaf.containerEl.querySelector('.obcc-editor-autocomplete-position')?.textContent||'',widgetDisplay:widgetStyle?.display||'',widgetWidth:widgetStyle?.width||'',overlayPosition:overlayStyle?.position||'',overlayWidth:overlayStyle?.width||'',ghostDisplay:ghostStyle?.display||'',whiteSpace:ghostStyle?.whiteSpace||'',textOverflow:ghostStyle?.textOverflow||'',calls:s.calls,branchStartedAt:s.branchStartedAt,branchResolvedAt:s.branchResolvedAt,hasFocus:s.cm.hasFocus,documentFocus:s.doc.hasFocus(),documentUntouched:s.editor.getValue()===s.before}};const started=Date.now(),deadline=started+10000;let initial=null,initialAt=0,rotated=null;while(Date.now()<deadline){const current=snapshot();if(!initial&&current.position==='1/3'){initial=current;initialAt=Date.now()}if(initial&&current.position==='2/3'){rotated=current;break}await new Promise(resolve=>setTimeout(resolve,80))}let manual=null,paused=null,menuFound=false;if(rotated){const apply=s.leaf.containerEl.querySelector('.obcc-editor-autocomplete-apply');apply?.dispatchEvent(new s.doc.defaultView.MouseEvent('contextmenu',{bubbles:true,cancelable:true,button:2}));await new Promise(resolve=>setTimeout(resolve,80));const nextTitle=p.t('autocompleteNext'),nextItem=Array.from(s.doc.querySelectorAll('.menu-item')).find(item=>(item.textContent||'').includes(nextTitle));menuFound=!!nextItem;if(nextItem){nextItem.click();await new Promise(resolve=>setTimeout(resolve,120));manual=snapshot();await new Promise(resolve=>setTimeout(resolve,2400));paused=snapshot()}}const last=snapshot();return JSON.stringify({initial,rotated,manual,paused,last,menuFound,noInputCalls,noInputSpinner,elapsedMs:Date.now()-started,rotationMs:initialAt&&rotated?Date.now()-initialAt:0,rootDisplayedBeforePrefetch:!!initial&&initial.branchResolvedAt===0,manualStopsRotation:!!manual&&manual.position==='3/3'&&paused?.position==='3/3'&&manual.ghost===paused.ghost})})()
 '@
     $blockCode = @'
 (async()=>{const p=app.plugins.plugins.cancip,s=p?.__editorAutocompleteSmoke;if(!s)throw new Error('autocomplete smoke state unavailable');const text=s.editor.getLine(s.target.line)||'',blocker=Math.max(0,text.search(/\S/)),line=s.cm.state.doc.line(s.target.line+1),blockedPos=line.from+blocker;s.callsBeforeBlocked=s.calls;s.cm.focus();s.cm.dispatch({selection:{anchor:blockedPos}});await new Promise((resolve)=>setTimeout(resolve,250));return JSON.stringify({ok:true,blocker,callsBeforeBlocked:s.callsBeforeBlocked,ghost:s.leaf.containerEl.querySelector('.obcc-editor-autocomplete-ghost')?.textContent||'',calls:s.calls,documentUntouched:s.editor.getValue()===s.before})})()
@@ -2896,6 +2906,7 @@ if (Should-RunProgrammaticCase 'programmatic.editor-autocomplete-mounted') {
     }
     $item = [pscustomobject]@{
       mountedSuggestion = $initial.ghost -eq "第一项`n完整补全" -and $initial.position -eq '1/3'
+      noRequestBeforeInput = [int]$rotation.noInputCalls -eq 0 -and [int]$rotation.noInputSpinner -eq 0
       rotatesCandidates = $rotated.ghost -eq "第二项`n包含换行" -and $rotated.position -eq '2/3'
       rotationUsesSetting = $rotationElapsedMs -ge 1200 -and $rotationElapsedMs -le 4000
       rootDisplayedBeforePrefetch = $rotation.rootDisplayedBeforePrefetch
@@ -2927,7 +2938,7 @@ if (Should-RunProgrammaticCase 'programmatic.editor-autocomplete-mounted') {
       blockedByFollowingText = $blocked.ghost -eq ''
       documentUntouched = $initial.documentUntouched -and $pendingApplied.documentRestored -and $blocked.documentUntouched
     }
-    foreach ($field in @('mountedSuggestion','rotatesCandidates','rotationUsesSetting','rootDisplayedBeforePrefetch','manualStopsRotation','multilineComplete','inlineTextFlow','selectedMultiline','prefetchedImmediate','pendingPrefetchAdopted','pendingPrefetchDeduped','appliedExactly','autocompleteLayoutAligned','applyRestoredDocument','documentUntouched')) {
+    foreach ($field in @('mountedSuggestion','noRequestBeforeInput','rotatesCandidates','rotationUsesSetting','rootDisplayedBeforePrefetch','manualStopsRotation','multilineComplete','inlineTextFlow','selectedMultiline','prefetchedImmediate','pendingPrefetchAdopted','pendingPrefetchDeduped','appliedExactly','autocompleteLayoutAligned','applyRestoredDocument','documentUntouched')) {
       if (-not [bool]$item.$field) { throw "mounted editor autocomplete failed: $field; $($item | ConvertTo-Json -Compress -Depth 8)" }
     }
     Add-CaseResult -Group 'programmaticCases' -Item @{ id = 'programmatic.editor-autocomplete-mounted'; pass = $true; elapsedMs = [int]((Get-Date) - $started).TotalMilliseconds }
