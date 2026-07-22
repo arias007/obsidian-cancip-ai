@@ -4,6 +4,7 @@ Obsidian Cancip AI is a right-side AI chat panel shaped toward a mobile-first ag
 
 Cancip is a lightweight prototype for managing an Obsidian vault from a mobile-friendly AI panel:
 
+- Process-record raw blocks keep Copy and Wrap controls in a fixed header above an independent scroll layer. Hidden process/tool blocks share the same controls, so long lines stay horizontally scrollable by default and can be wrapped on demand.
 - Separate model sources and models: each source stores its own Base URL, key, and API mode, while each model ID is explicitly bound to one source and a single default model drives AI modules unless they override it.
 - Multilingual UI with auto device-language detection for Simplified Chinese, Traditional Chinese, English, Uyghur, Turkish, Russian, Japanese, Korean, Spanish, French, German, and Arabic; missing low-frequency strings fall back to English, and Arabic/Uyghur use RTL layout hints.
 - Automatic OpenAI Responses and OpenAI-compatible Chat Completions support.
@@ -58,6 +59,34 @@ Cancip is a lightweight prototype for managing an Obsidian vault from a mobile-f
 - Startup and foreground loading follow a warm/cold lifecycle: the visible shell renders first, latest-session restore follows asynchronously, small high-value indexes warm during browser idle time, and startup maintenance yields between tasks so mobile interaction remains responsive.
 - New-file curation runs visibly in an isolated session with a stable minimal prompt prefix. Most nonempty user-created Markdown notes receive one bounded organization pass; explicit opt-outs, templates, frequently referenced notes, plugin syntax, and generated files are protected. Changes keep per-file action allowlists, Review Gate capture, backups, and readback verification.
 - TTS is provider-routed by language. English defaults to Web Speech / system TTS and does not need a local model package. Chinese can auto-download and use the current compact PrimeTTS Chinese/English ONNX package. Other languages use system/Web/custom URL unless a compatible local PrimeTTS package is installed under `tts/<package>/` with a manifest.
+
+## 3.0.32
+
+- Automation tasks now expose only a task-specific model selector. Task-level API profile settings are hidden and ignored; model source, URL, and key stay in the global model-source/model binding settings. Manual automation run buttons now give immediate started feedback, suppress duplicate started notices, and use guarded mobile tap handling so a tap reliably launches the task.
+
+## 3.0.31
+
+- Separate automation silence from notification policy. Personalized new-chat greeting refresh now migrates to silent background execution with notification policy set to Never; Silent only prevents opening or switching to the automation session, while Notify controls notices independently.
+
+## 3.0.30
+
+- Stop background universal search from chasing a complete index in repeated follow-up batches. Scheduled indexing now does one small maintenance pass per trigger, skips unchanged shard writes, and relies on on-demand local search for deeper content so desktop sync churn does not slow the mobile-first runtime.
+
+## 3.0.29
+
+- Treat mobile as the primary runtime for universal search: background indexing now keeps only the most useful recent items per category, sessions and mobile binary files index title/path first, unchanged shards are not rewritten, and full content is read only when a search actually needs it.
+
+## 3.0.26
+
+- Keep status-bar chat and review badges stable while background counts refresh. Existing blue/red attention markers stay visible until fresh disk counts are ready, then update atomically.
+
+## 3.0.27
+
+- Reduce mobile background load by avoiding repeated full universal-search rewrites, excluding machine-generated review/version/archive/config-backup data from the search index, and polling only key Cancip state files instead of large data folders.
+
+## 3.0.28
+
+- Make mobile search self-sufficient and on-demand: universal search writes small per-kind shards instead of one large document list, mobile indexing no longer waits for desktop-synced full indexes, and config/attachment content is read only when the query or user option asks for it.
 
 ## 3.0.22
 
@@ -235,18 +264,12 @@ Cancip is a lightweight prototype for managing an Obsidian vault from a mobile-f
 - Failed verification now continues with the same loop id and incremented attempt for measured, minimal correction only. The loop stops at its declared limit and hands the saved evidence to the user instead of retrying indefinitely.
 - Added installed-exporter PDF verification and a real Obsidian regression fixture covering pass/fail/attempt-limit behavior, PNG integrity and pixels, report schema, evidence UI, image handoff, and cleanup.
 
-## 2.11.1
-
-- Fixed smoke-test cleanup so a restored `data.json` remains authoritative over the mirrored `.cancip/config.json`, preventing test runs from reapplying stale UI rules or preferences.
-
 ## 2.11.0
 
-- Added a dedicated mobile acceptance smoke profile covering viewport bounds, Android keyboard/composer geometry, `@` popover placement, bottom-of-chat reachability, history reuse, and blank-leaf prevention.
 - Process-record raw sent/received fields and inline tool results now load only when the first-level process record is opened. Folded sessions keep the full auditable source on disk without immediately laying out tens of thousands of hidden DOM characters.
 - Mobile keyboard clearance now follows the actual overlay inset, so the final chat record can scroll above both the keyboard and floating composer and docks cleanly after keyboard dismissal.
 - Fixed temporary hidden-button reveal restoring explicit hide rules, flattened mobile menu groups and cross-section sorting, and made native File Explorer pin tests open and restore the mobile left drawer explicitly.
 - Exact-answer prompts now use one zero-context model call, explicit read-only memory/plugin questions take narrow programmatic routes, and completed tool-backed answers retain a completed session state instead of being misclassified as failed.
-- Smoke fixtures now stay under `Cancip验收-临时/`, Windows PowerShell 5.1 automatically relaunches the suite under PowerShell 7 for UTF-8 safety, and reusable npm smoke/verify commands are included.
 
 ## 2.10.2
 
@@ -284,58 +307,10 @@ Build output is written to:
 outputs/cancip/
 ```
 
-## Smoke Tests
-
-Reusable Cancip regression cases live in:
-
-```text
-tests/cancip-regression-cases.json
-```
-
-The default smoke test is read-only and does not call the model API. It checks prompt economy, memory routing, Skill discovery, command bus access, automation templates, current Obsidian view, and attachment/external-file help:
-
-```bash
-npm run smoke
-```
-
 Run the normal development gate before committing:
 
 ```bash
 npm run verify
-```
-
-Run the broader read-only command set. This still excludes the heavy UI button customization/sorting cases so the full command/memory gate does not inherit mobile-menu timeout noise:
-
-```bash
-npm run smoke:full
-```
-
-Run the heavier UI button customization/sorting checks separately. These tests exercise native menu snapshots and mobile-style sortable overlays, so they are intentionally outside both the default core smoke path and the broader command/memory smoke path. The UI profile fails fast on transport timeouts because one stale Obsidian eval can cascade into several false failures:
-
-```bash
-npm run smoke:ui
-```
-
-Every smoke run writes a timestamped report plus `reports/cancip-smoke-latest.json`. The latest report contains failed case ids, group counts, and next-action recommendations so another agent or Cancip itself can resume from the smallest failing surface.
-
-Optional write/config tests create temporary files under the Cancip data `test-lab/` folder and then clean them up. Run them only when Vault write tests are intentionally allowed:
-
-```bash
-npm run smoke:write
-```
-
-If Obsidian CLI connectivity is stale after a crashed UI smoke, restart Obsidian and rerun the focused case. The smoke script now fails fast and writes a report instead of hanging when both eval transports fail:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-cancip-smoke.ps1 -Case memory -FailFast
-```
-
-Useful direct PowerShell filters:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-cancip-smoke.ps1 -Case memory
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-cancip-smoke.ps1 -Full -Case command
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-cancip-smoke.ps1 -Full -Case ui-button
 ```
 
 ## Install

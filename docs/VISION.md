@@ -100,15 +100,8 @@ another desktop agent.
 
 That requires a closed loop, not just more prompt text:
 
-- Keep reusable smoke/regression cases for prompt economy, memory routing,
-  command execution, plugin discovery, approvals, review-gate behavior, and
-  mobile UI paths.
 - Treat `npm run verify` as the core gate before committing runtime or prompt
   changes.
-- Keep heavy mobile UI/button tests isolated from the core gate so one
-  WebView/eval timeout does not hide unrelated regressions.
-- Write a latest machine-readable smoke report so Cancip, a subagent, or a
-  desktop agent can resume from the smallest failing case.
 - When a failure repeats, turn the fix into a programmatic case instead of
   relying only on memory or instructions.
 

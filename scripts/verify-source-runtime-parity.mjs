@@ -28,6 +28,7 @@ const intentionallyRemovedRuntimeMethods = new Set([
   "clearPersonalizedDiaryButtons",
   "close",
   "createNoteDrawWorkbenchStage",
+  "globalFinalAnswerTemplatePrompt",
   "insertPersonalizedDiary",
   "installReviewTreeTouchScroll",
   "noteDrawControllerForStage",

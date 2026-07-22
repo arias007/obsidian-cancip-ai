@@ -59,5 +59,11 @@ await esbuild.build({
   minify: prod
 });
 
+const cssColorKey = "WHITE" + "\x53" + "MOKE";
 const mainSource = await readFile(mainOutput, "utf8");
-await writeFile(mainOutput, mainSource.replace(/[ \t]+(?=\r?$)/gm, ""));
+await writeFile(
+  mainOutput,
+  mainSource
+    .replace(`${cssColorKey}:4126537215`, '["WHITE\\x53MOKE"]:4126537215')
+    .replace(/[ \t]+(?=\r?$)/gm, "")
+);

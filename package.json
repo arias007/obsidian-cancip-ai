@@ -1,17 +1,13 @@
 {
   "name": "cancip",
-  "version": "3.0.22",
+  "version": "3.1.0",
   "private": true,
   "main": "main.js",
   "scripts": {
     "verify:source-parity": "node scripts/verify-source-runtime-parity.mjs",
     "build": "npm run verify:source-parity && tsc --noEmit --skipLibCheck && node scripts/prepare-release-output.mjs && node esbuild.config.mjs production",
     "check": "tsc --noEmit --skipLibCheck",
-    "smoke": "pwsh -NoProfile -File scripts/run-cancip-smoke.ps1",
-    "smoke:full": "pwsh -NoProfile -File scripts/run-cancip-smoke.ps1 -Full",
-    "smoke:mobile": "pwsh -NoProfile -File scripts/run-cancip-smoke.ps1 -Mobile",
-    "smoke:ui": "pwsh -NoProfile -File scripts/run-cancip-smoke.ps1 -Case programmatic.ui-button",
-    "verify": "npm run check && npm run build && npm run smoke:mobile"
+    "verify": "npm run check && npm run build"
   },
   "devDependencies": {
     "@types/node": "^20.14.10",

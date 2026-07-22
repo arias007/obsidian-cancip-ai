@@ -5297,7 +5297,17 @@ details.obcc-process-step-details:not([open]) > :not(summary),
 }
 
 .obcc-status-link.is-changes {
-  color: var(--text-success);
+  gap: 5px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.obcc-status-link.is-changes .is-added {
+  color: var(--color-green);
+}
+
+.obcc-status-link.is-changes .is-removed {
+  color: var(--color-red);
 }
 
 .obcc-status-link:hover,
@@ -8324,22 +8334,48 @@ body.is-phone .obcc-review-leaf .obcc-review-detail-rail {
   max-height: min(46vh, 420px);
   padding: 4px 2px 8px;
   min-width: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
+  max-width: 100%;
+  overflow: visible;
   font-size: 11px;
 }
 
 .obcc-process-detail-raw-frame {
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  max-width: 100%;
   min-width: 0;
+  overflow: hidden;
+  contain: inline-size;
 }
 
 .obcc-process-detail-raw-actions {
+  position: relative;
+  z-index: 2;
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 4px;
+  width: 100%;
   min-height: 24px;
   margin-bottom: 3px;
+  padding-right: 2px;
+  background: var(--background-primary);
+}
+
+.obcc-process-detail-raw-scroll {
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  max-height: min(40vh, 370px);
+  overflow: auto;
+  overscroll-behavior-inline: contain;
+  overscroll-behavior-block: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x pan-y;
+  background: var(--background-secondary);
 }
 
 .obcc-process-detail-raw-action {
@@ -8377,18 +8413,16 @@ body.is-phone .obcc-review-leaf .obcc-review-detail-rail {
 }
 
 .obcc-process-detail-raw {
+  display: block;
   box-sizing: border-box;
-  width: 100%;
-  max-width: 100%;
+  width: max-content;
+  max-width: none;
   min-width: 0;
   margin: 0;
   padding: 7px;
-  overflow-x: auto;
-  overflow-y: auto;
+  overflow: visible;
   border: 0;
-  background: var(--background-secondary);
-  overscroll-behavior-inline: contain;
-  -webkit-overflow-scrolling: touch;
+  background: transparent;
   white-space: pre;
   overflow-wrap: normal;
   word-break: normal;
@@ -8399,17 +8433,46 @@ body.is-phone .obcc-review-leaf .obcc-review-detail-rail {
 
 .obcc-process-detail-raw.is-wrapped,
 .obcc-process-detail-raw.is-wrapped > code {
+  width: 100%;
+  max-width: 100%;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   word-break: break-word;
 }
 
 .obcc-process-detail-raw code {
+  display: block;
+  min-width: 100%;
   padding: 0;
   background: transparent;
   color: inherit;
   white-space: inherit;
   font: inherit;
+}
+
+.obcc-process-detail-raw.is-nowrap > code {
+  width: max-content;
+}
+
+.obcc-process-detail-raw.is-wrapped > code {
+  width: 100%;
+  max-width: 100%;
+}
+
+.obcc-message.is-process-record .obcc-process-detail-raw-scroll.is-nowrap,
+.obcc-message.is-process-record .obcc-process-detail-raw-scroll.is-nowrap .obcc-process-detail-raw,
+.obcc-message.is-process-record .obcc-process-detail-raw-scroll.is-nowrap .obcc-process-detail-raw > code {
+  white-space: pre;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.obcc-message.is-process-record .obcc-process-detail-raw-scroll.is-wrapped,
+.obcc-message.is-process-record .obcc-process-detail-raw-scroll.is-wrapped .obcc-process-detail-raw,
+.obcc-message.is-process-record .obcc-process-detail-raw-scroll.is-wrapped .obcc-process-detail-raw > code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .obcc-footer.is-viewport-floating {

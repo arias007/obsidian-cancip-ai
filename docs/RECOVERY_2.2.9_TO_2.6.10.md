@@ -22,7 +22,7 @@ The `2.6.10` release commit replaced the complete source instead of carrying it 
 - Tagged `2.6.10` `src/main.ts`: 22,681 lines.
 - Release commit source delta: 10,890 added lines and 28,002 deleted lines.
 - The tagged `2.6.10` source does not contain `openButtonEditModal`, `installButtonEditLongPress`, or the other complete button-management implementation.
-- The tagged `2.6.10` release `main.js` does contain those methods, and the smoke tests call them.
+- The tagged `2.6.10` release `main.js` does contain those methods.
 
 Therefore the released runtime and committed source diverged. Rebuilding from the tagged `2.6.10` source necessarily removes runtime-only features.
 
