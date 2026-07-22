@@ -313,7 +313,7 @@ body .view-content.obcc-review-leaf {
   align-items: center;
   gap: 3px;
   min-width: 0;
-  max-width: 56%;
+  max-width: 100%;
   height: 18px;
   padding: 0 4px;
   border: 0;
@@ -1409,7 +1409,7 @@ body [data-cancip-tag-hidden="true"] {
 }
 
 .obcc-title-line .obcc-session-id-copy {
-  flex: 1 1 42px;
+  flex: 1 1 auto;
 }
 
 body.obcc-force-statusbar-visible .status-bar.obcc-ui-rule-hidden:not([data-cancip-ui-rule-hidden="true"]),
