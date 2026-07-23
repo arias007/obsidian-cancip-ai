@@ -402,6 +402,84 @@ function promptTextModal(app: App, title: string, initialValue: string): Promise
   });
 }
 
+class CancipHtmlPromptModal extends Modal {
+  private inputEl: HTMLTextAreaElement | null = null;
+  private settled = false;
+
+  constructor(
+    app: App,
+    private readonly titleText: string,
+    private readonly placeholderText: string,
+    private readonly submitText: string,
+    private readonly cancelText: string,
+    private readonly onSubmitValue: (value: string | null) => void
+  ) {
+    super(app);
+  }
+
+  onOpen(): void {
+    this.setTitle(this.titleText);
+    this.modalEl.addClass("obcc-html-prompt-modal");
+    const stopOuterTouch = (event: Event) => event.stopPropagation();
+    this.modalEl.addEventListener("pointerdown", stopOuterTouch);
+    this.modalEl.addEventListener("touchstart", stopOuterTouch);
+    this.modalEl.addEventListener("touchmove", stopOuterTouch, { passive: true });
+    this.inputEl = this.contentEl.createEl("textarea", {
+      cls: "obcc-html-prompt-input",
+      attr: {
+        rows: "7",
+        placeholder: this.placeholderText,
+        "aria-label": this.titleText
+      }
+    });
+    this.inputEl.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        this.close();
+        return;
+      }
+      if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+        event.preventDefault();
+        this.submit();
+      }
+    });
+    const actions = this.contentEl.createDiv({ cls: "modal-button-container" });
+    const cancel = actions.createEl("button", { text: this.cancelText, attr: { type: "button" } });
+    cancel.addEventListener("click", () => this.close());
+    const submit = actions.createEl("button", { cls: "mod-cta", text: this.submitText, attr: { type: "button" } });
+    submit.addEventListener("click", () => this.submit());
+    window.setTimeout(() => this.inputEl?.focus(), 20);
+  }
+
+  onClose(): void {
+    if (!this.settled) this.onSubmitValue(null);
+    this.contentEl.empty();
+  }
+
+  private submit(): void {
+    const value = this.inputEl?.value.trim() ?? "";
+    if (!value) {
+      this.inputEl?.focus();
+      return;
+    }
+    this.settled = true;
+    this.onSubmitValue(value);
+    this.close();
+  }
+}
+
+function promptHtmlRequirementModal(
+  app: App,
+  title: string,
+  placeholder: string,
+  submitText: string,
+  cancelText: string
+): Promise<string | null> {
+  return new Promise((resolve) => {
+    new CancipHtmlPromptModal(app, title, placeholder, submitText, cancelText, resolve).open();
+  });
+}
+
 type ModelEditModalResult = {
   model: string;
   profileId: string;
@@ -2584,6 +2662,7 @@ class CancipButtonEditModal extends Modal {
 }
 
 const CANCIP_AI_DIR = "AI/Cancip";
+const ONE_CLICK_HTML_OUTPUT_DIR = `${CANCIP_AI_DIR}/Exports/HTML`;
 const LEGACY_CANCIP_CONFIG_DIR = ".cancip";
 const DEFAULT_CANCIP_DATA_DIR = ".obsidian/plugins/cancip/data";
 const DEFAULT_MEMORY_FOLDER = `${CANCIP_AI_DIR}/Memory`;
@@ -3276,6 +3355,13 @@ const EN = {
   openCancip: "Open Cancip",
   commandOpenChat: "Open chat",
   commandNewChat: "New chat",
+  commandCreateInteractiveHtml: "One-click interactive HTML",
+  oneClickHtmlRequirement: "Describe the interactive HTML",
+  oneClickHtmlRequirementPlaceholder: "Example: a mobile-friendly flowchart with clickable steps, progress, reset, and a polished light/dark interface.",
+  oneClickHtmlCreate: "Create and open",
+  oneClickHtmlQueued: "HTML task queued: {path}",
+  oneClickHtmlOpened: "Opened interactive HTML in the workbench: {path}",
+  cancel: "Cancel",
   commandTogglePinActiveFile: "Toggle pin for active file",
   commandSortPinnedFiles: "Sort pinned files in current folder",
   exportSession: "Export session",
@@ -4233,6 +4319,13 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     openCancip: "打开 Cancip",
     commandOpenChat: "打开聊天",
     commandNewChat: "新对话",
+    commandCreateInteractiveHtml: "一键写交互 HTML",
+    oneClickHtmlRequirement: "描述要制作的交互 HTML",
+    oneClickHtmlRequirementPlaceholder: "例如：做一个适合手机使用的流程图，步骤可点击、显示进度、可以重置，并支持明暗主题。",
+    oneClickHtmlCreate: "生成并打开",
+    oneClickHtmlQueued: "HTML 任务已排队：{path}",
+    oneClickHtmlOpened: "已在工作台打开交互 HTML：{path}",
+    cancel: "取消",
     commandTogglePinActiveFile: "置顶或取消置顶当前文件",
     commandSortPinnedFiles: "调整当前文件夹的置顶文件顺序",
     exportSession: "导出会话",
@@ -8196,6 +8289,15 @@ export default class CancipPlugin extends Plugin {
       callback: async () => {
         const view = await this.activateView();
         void view?.newChat();
+      }
+    });
+
+    this.addCommand({
+      id: "create-interactive-html",
+      name: this.t("commandCreateInteractiveHtml"),
+      callback: async () => {
+        const view = await this.activateView();
+        void view?.startOneClickHtml();
       }
     });
 
@@ -26564,6 +26666,28 @@ class CancipView extends ItemView {
     setIcon(addButton, "plus");
     addButton.addEventListener("click", () => this.toggleAddMenu());
 
+    const htmlButton = leftControls.createEl("button", {
+      cls: "obcc-tool-button obcc-html-create-button",
+      attr: { type: "button", title: this.t("commandCreateInteractiveHtml"), "aria-label": this.t("commandCreateInteractiveHtml") }
+    });
+    setIcon(htmlButton, "file-code-2");
+    let mobileHtmlPointerRunAt = 0;
+    htmlButton.addEventListener("pointerdown", (event) => {
+      if (!Platform.isMobile || (event.pointerType === "mouse" && event.button !== 0)) return;
+      mobileHtmlPointerRunAt = Date.now();
+      event.preventDefault();
+      event.stopPropagation();
+      void this.startOneClickHtml();
+    });
+    htmlButton.addEventListener("click", (event) => {
+      if (Platform.isMobile && Date.now() - mobileHtmlPointerRunAt <= 800) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      void this.startOneClickHtml();
+    });
+
     const accessMode = this.plugin.settings.accessMode;
     const accessLabel = accessMode === "full-access" ? this.t("accessFullAccess") : this.t("accessAskApproval");
     const accessButton = leftControls.createEl("button", {
@@ -28282,6 +28406,7 @@ class CancipView extends ItemView {
   private toggleAddMenu(): void {
     const items: ComposerMenuItem[] = [
       { icon: "paperclip", label: this.t("addAttachment"), shortLabel: this.t("addAttachment"), action: () => this.openAttachmentPicker() },
+      { icon: "file-code-2", label: this.t("commandCreateInteractiveHtml"), shortLabel: "HTML", action: () => this.startOneClickHtml() },
       { icon: "file-search", label: this.t("addFileFolder"), shortLabel: this.t("mentionFile"), detail: "@", action: () => this.startMentionQuery("", "menu") },
       { icon: "plug", label: this.t("addPlugin"), shortLabel: "Plugin", detail: "@plugin", action: () => this.startMentionQuery("plugin", "menu") },
       { icon: "sparkles", label: this.t("addSkill"), shortLabel: "Skill", detail: "@skill", action: () => this.startMentionQuery("skill", "menu") },
@@ -31277,6 +31402,45 @@ class CancipView extends ItemView {
       return;
     }
     void this.sendPromptNow(prompt);
+  }
+
+  async startOneClickHtml(requirementOverride = ""): Promise<void> {
+    let requirement = requirementOverride.trim() || this.inputEl.value.trim();
+    const usedComposerInput = !requirementOverride.trim() && Boolean(requirement);
+    if (!requirement) {
+      requirement = (await promptHtmlRequirementModal(
+        this.app,
+        this.t("oneClickHtmlRequirement"),
+        this.t("oneClickHtmlRequirementPlaceholder"),
+        this.t("oneClickHtmlCreate"),
+        this.t("cancel")
+      ))?.trim() ?? "";
+    }
+    if (!requirement) return;
+
+    const outputPath = await this.oneClickHtmlOutputPath(requirement);
+    const prompt = buildOneClickHtmlPrompt(requirement, outputPath, isChineseLanguage(this.plugin.language()));
+    if (usedComposerInput) {
+      this.inputEl.value = "";
+      this.clearAutocompleteSuggestion();
+      this.handleComposerInputChanged();
+    }
+    this.closeCommandMenu();
+    this.closeMentionPopup();
+    if (this.activeRequest) {
+      this.enqueuePrompt(prompt, { priority: true });
+      this.setStatus(this.t("oneClickHtmlQueued", { path: outputPath }));
+      this.syncRequestControls();
+      return;
+    }
+    await this.sendPromptNow(prompt);
+  }
+
+  private async oneClickHtmlOutputPath(requirement: string): Promise<string> {
+    const explicit = explicitOneClickHtmlPath(requirement);
+    if (explicit) return explicit;
+    const stem = oneClickHtmlFileStem(requirement);
+    return await this.nextAvailableVaultPath(`${ONE_CLICK_HTML_OUTPUT_DIR}/${stem}.html`);
   }
 
   async translateCurrentPage(): Promise<void> {
@@ -35661,6 +35825,7 @@ class CancipView extends ItemView {
     if (/(?:自动化|定时|通知|新文件触发|automation|schedule|notification|new.?file)/i.test(prompt)) sections.push(this.automationAgentPolicyPrompt());
     if (!directVaultFileTask && policy.intent === "implementation" && (policy.includeAutoSkills || promptNeedsSkillExperienceRoute(prompt))) sections.push(this.skillRoutePolicyPrompt());
     if (!directVaultFileTask && (policy.includeToolProtocol || (policy.intent === "implementation" && policy.includeWorkingState))) sections.push(this.t("finalAnswerFormatPrompt"));
+    if (isOneClickHtmlPrompt(prompt)) sections.push(this.oneClickHtmlSystemPrompt());
     sections.push(modeInstruction);
     if (this.mode === "search") sections.push(this.universalSearchPolicyPrompt());
     if (!policy.includeToolProtocol) {
@@ -35793,6 +35958,21 @@ class CancipView extends ItemView {
       "Explicit file change: the user supplied the Vault-relative path and requirement. Choose write, append, or patch and execute the smallest correct action. Do not read/findTarget before creating a new target; patch directly when both old and new values are explicit, and read an existing target once only when its current text is needed.",
       'First output only one <cancip-action>{"actions":[{"type":"write","path":"exact/path","content":"requested content"}]}</cancip-action>, with no visible prose or todo.',
       "write/append/patch verify their readback internally. After a successful tool result, answer briefly with the path and verification; do not read or write it again."
+    ].join("\n");
+  }
+
+  private oneClickHtmlSystemPrompt(): string {
+    if (this.plugin.language().startsWith("zh")) {
+      return [
+        "一键 HTML：只写提示中的目标文件，不搜索、不读取其他文件、不新建说明文档。输出完整单文件 HTML5，CSS 与 JavaScript 尽量内联；除非需求明确需要外部库、API 或素材，否则不依赖网络资源。",
+        "页面必须适配手机和桌面，文字清楚、控件可触摸、无内容重叠；需求中的按钮、输入、切换、步骤或其他交互必须真正工作，并提供合理的初始、空白和错误状态。",
+        "首轮仅输出一个 write 动作，content 从 <!doctype html> 开始并包含完整 head/body；不要输出 Markdown 代码围栏。工具会校验 HTML、读回文件并自动在交互工作台打开。"
+      ].join("\n");
+    }
+    return [
+      "One-click HTML: write only the target path in the prompt. Do not search, read other files, or create documentation. Return a complete standalone HTML5 file with CSS and JavaScript inline where practical; use external libraries, APIs, or assets only when the requirements need them.",
+      "The page must work on mobile and desktop with readable text, touch-sized controls, no overlap, and real behavior for every requested button, input, switch, step, or other interaction, including useful initial, empty, and error states.",
+      "First output exactly one write action whose content starts with <!doctype html> and contains complete head/body markup. Do not use Markdown fences. The tool validates and reads back the HTML, then opens it in the interactive workbench."
     ].join("\n");
   }
 
@@ -36447,7 +36627,7 @@ class CancipView extends ItemView {
 
   private async callModel(prompt: string, context: { system: string; contextText: string; images?: ImageAttachmentContext[] }, rawPrompt = prompt, profileOverride?: ApiProfile, onStream?: ModelStreamCallback, directInput = false): Promise<string> {
     const profile = profileOverride ?? this.activeRequestApiProfile ?? this.plugin.activeApiProfile();
-    const maxOutputTokens = isSimpleDirectVaultFileTask(rawPrompt)
+    const maxOutputTokens = isSimpleDirectVaultFileTask(rawPrompt) && !isOneClickHtmlPrompt(rawPrompt)
       ? Math.min(this.plugin.settings.maxOutputTokens, 512)
       : this.plugin.settings.maxOutputTokens;
     const inputText = directInput
@@ -39241,6 +39421,10 @@ class CancipView extends ItemView {
           const rollback = await this.rollbackUnregisteredAiReviewItems(reviewItems);
           throw new Error(`review registration failed; AI note changes reverted: ${reason}${rollback ? `; ${rollback}` : ""}`);
         }
+      }
+      if (!run.cached) {
+        const htmlOpenResult = await this.openOneClickHtmlForExecutedAction(run.action);
+        if (htmlOpenResult) finalResult = `${finalResult}\n${htmlOpenResult}`;
       }
       run.result = finalResult;
       if (run.cached) {
@@ -42761,6 +42945,7 @@ class CancipView extends ItemView {
     action: Extract<CancipAction, { type: "write" | "append" }>
   ): Promise<string> {
     const content = textWriteActionContent(action);
+    this.validateOneClickHtmlWrite(path, action.type, content);
     const chunks = splitTextChunks(content, FILE_WRITE_CHUNK_SIZE);
     await ensureParentFolder(adapter, path);
 
@@ -42791,6 +42976,42 @@ class CancipView extends ItemView {
     }
     await recordCancipConfigWrite(adapter, path, verification.actual, backupIndex);
     return this.withSelfPatchNotice(path, this.t("actionAppendDetailed", { path, chars: content.length, chunks: chunks.length }));
+  }
+
+  private oneClickHtmlTargetForPath(path: string): string {
+    const normalized = normalizePath(path);
+    for (let index = this.messages.length - 1; index >= Math.max(0, this.messages.length - 40); index -= 1) {
+      const message = this.messages[index];
+      if (message.role !== "user") continue;
+      const target = oneClickHtmlTargetFromPrompt(message.content);
+      if (target && normalizePath(target) === normalized) return target;
+    }
+    return "";
+  }
+
+  private validateOneClickHtmlWrite(path: string, mode: "write" | "append", content: string): void {
+    if (!this.oneClickHtmlTargetForPath(path)) return;
+    if (mode !== "write") throw new Error("one-click HTML requires one complete write action, not append");
+    const issue = interactiveHtmlValidationIssue(content);
+    if (issue) throw new Error(`one-click HTML validation failed: ${issue}`);
+  }
+
+  private async openOneClickHtmlForExecutedAction(action: CancipAction): Promise<string> {
+    if (action.type !== "write") return "";
+    const path = normalizeActionPath(action.path);
+    if (!this.oneClickHtmlTargetForPath(path)) return "";
+    try {
+      const file = this.app.vault.getAbstractFileByPath(path);
+      if (!(file instanceof TFile)) return `workbench open failed: file not found after write (${path})`;
+      const view = await this.plugin.activateDocumentWorkbench(file, "preview");
+      if (!view) return `workbench open failed: ${path}`;
+      const message = this.t("oneClickHtmlOpened", { path });
+      new Notice(message);
+      return message;
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      return `workbench open failed: ${path} · ${reason}`;
+    }
   }
 
   private async executeDeleteAction(adapter: DataAdapter, path: string, permanent: boolean): Promise<string> {
@@ -43795,6 +44016,7 @@ class CancipView extends ItemView {
       const result = isChineseLanguage(this.plugin.language())
         ? [
             "文档工作台入口：",
+            "- 一键 HTML：在 Cancip 输入需求后点 file-code 图标，或运行 Obsidian 命令“一键写交互 HTML”；写入、读回验证后自动用工作台预览。",
             "- 打开：cancip.documents.open {path, mode=preview|markdown|edit}",
             "- 转换：cancip.documents.convert {path, format=md|html}",
             "- Text/HTML/MHTML 可原位编辑；保存成功必须再读取原 path，或用 cancip.outcome.verify 检查文件内容，不能只信保存按钮提示。",
@@ -43804,6 +44026,7 @@ class CancipView extends ItemView {
           ].join("\n")
         : [
             "Document workbench routes:",
+            "- One-click HTML: enter requirements in Cancip and press the file-code button, or run the One-click interactive HTML command; the verified file opens automatically in the workbench.",
             "- Open: cancip.documents.open {path, mode=preview|markdown|edit}",
             "- Convert: cancip.documents.convert {path, format=md|html}",
             "- Text/HTML/MHTML can be edited in place. After save, read the original path or use cancip.outcome.verify; do not trust the save notice alone.",
@@ -51828,6 +52051,66 @@ function safeVaultFileName(name: string): string {
   return name.replace(/[\\/:*?"<>|]+/g, "_").replace(/\0/g, "").slice(0, 120) || "memory.md";
 }
 
+function isOneClickHtmlPrompt(prompt: string): boolean {
+  return /^\[(?:一键写 HTML|One-click HTML)\]\s*$/im.test(prompt);
+}
+
+function oneClickHtmlTargetFromPrompt(prompt: string): string {
+  if (!isOneClickHtmlPrompt(prompt)) return "";
+  const match = prompt.match(/^(?:目标文件|Target file)\s*[：:]\s*([^\r\n]+)$/im);
+  if (!match?.[1]) return "";
+  const path = normalizePath(match[1].trim().replace(/\\/g, "/").replace(/^\/+/, ""));
+  return /\.html?$/i.test(path) ? path : "";
+}
+
+function explicitOneClickHtmlPath(requirement: string): string {
+  for (const candidate of explicitVaultFileReferenceCandidates(requirement)) {
+    const normalized = normalizePath(candidate.trim().replace(/\\/g, "/").replace(/^\/+/, ""));
+    if (/^[A-Za-z]:\//.test(normalized) || !/\.html?$/i.test(normalized)) continue;
+    return normalized;
+  }
+  return "";
+}
+
+function oneClickHtmlFileStem(requirement: string): string {
+  const withoutPath = requirement
+    .replace(/[`"'“”‘’][^`"'“”‘’\r\n]+\.html?[`"'“”‘’]?/gi, " ")
+    .replace(/https?:\/\/\S+/gi, " ")
+    .trim();
+  const firstIdea = (withoutPath.split(/[\r\n，,。！？!?；;]/).find((part) => part.trim()) ?? withoutPath)
+    .replace(/^(?:请|帮我|给我|麻烦|可以)?\s*(?:做|制作|创建|生成|写|设计|实现|build|create|make|design)\s*(?:一个|一份|个|an?\s+)?/i, "")
+    .replace(/(?:交互式?|可交互的?)?\s*(?:HTML|网页|页面|web\s*page)\s*$/i, "")
+    .trim();
+  const safe = safeVaultFileName(firstIdea || "交互页面")
+    .replace(/\.html?$/i, "")
+    .replace(/\s+/g, " ")
+    .replace(/^\.+|\.+$/g, "")
+    .trim();
+  return (safe && safe !== "memory.md" ? safe : "交互页面").slice(0, 48);
+}
+
+function buildOneClickHtmlPrompt(requirement: string, path: string, chinese: boolean): string {
+  const normalizedRequirement = trimContext(requirement.trim(), 6000);
+  return chinese
+    ? [`[一键写 HTML]`, `目标文件：${path}`, "需求：", normalizedRequirement].join("\n")
+    : [`[One-click HTML]`, `Target file: ${path}`, "Requirements:", normalizedRequirement].join("\n");
+}
+
+function interactiveHtmlValidationIssue(content: string): string {
+  const source = content.trim();
+  if (!/^<!doctype\s+html\b/i.test(source)) return "content must start with <!doctype html>";
+  if (!/<html\b[^>]*>[\s\S]*<\/html>\s*$/i.test(source)) return "missing complete html element";
+  if (!/<head\b[^>]*>[\s\S]*<\/head>/i.test(source) || !/<body\b[^>]*>[\s\S]*<\/body>/i.test(source)) {
+    return "missing complete head or body";
+  }
+  if (/```(?:html)?/i.test(source)) return "remove Markdown code fences";
+  const inlineScript = [...source.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)]
+    .some((match) => !/\bsrc\s*=/.test(match[1] ?? "") && Boolean(match[2]?.trim()));
+  const nativeInteraction = /<details\b|\bcontenteditable\s*=|\bon(?:click|input|change|submit|pointerdown)\s*=/i.test(source);
+  if (!inlineScript && !nativeInteraction) return "missing working inline interaction";
+  return "";
+}
+
 function outcomeElementRect(element: HTMLElement): { left: number; top: number; right: number; bottom: number; width: number; height: number } {
   const rect = element.getBoundingClientRect();
   return {
@@ -57528,6 +57811,7 @@ function isSimpleDirectVaultFileReadTask(prompt: string): boolean {
 
 function isSimpleDirectVaultFileMutationTask(prompt: string): boolean {
   const text = prompt.trim();
+  if (isOneClickHtmlPrompt(text)) return Boolean(oneClickHtmlTargetFromPrompt(text));
   if (!text || text.length > 1200) return false;
   if (explicitVaultFileReferenceCandidates(text).length !== 1) return false;
   if (/(?:模糊|相似|类似|附近|全库|所有|批量|搜索|查找|如果没有|找不到就|fuzzy|similar|search|find|all|batch)/i.test(text)) return false;

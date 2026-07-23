@@ -4611,6 +4611,23 @@ details.obcc-process-step {
   color: var(--text-muted);
 }
 
+.obcc-html-create-button:hover,
+.obcc-html-create-button:focus-visible {
+  color: var(--interactive-accent);
+  background: var(--background-modifier-hover);
+}
+
+.obcc-html-prompt-modal .obcc-html-prompt-input {
+  display: block;
+  width: 100%;
+  min-height: 150px;
+  max-height: min(52vh, 440px);
+  margin: 4px 0 14px;
+  padding: 10px 12px;
+  resize: vertical;
+  line-height: 1.5;
+}
+
 .obcc-access-button {
   flex: 0 1 auto;
   gap: 6px;
