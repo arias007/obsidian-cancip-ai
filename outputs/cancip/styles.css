@@ -9744,8 +9744,11 @@ body.is-phone.obcc-force-statusbar-visible .view-content.obcc-document-workbench
 .obcc-document-preview-host,
 .obcc-document-html-preview,
 .obcc-document-native-preview {
+  box-sizing: border-box;
   display: block;
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
   height: 100%;
   min-height: 480px;
   border: 0;

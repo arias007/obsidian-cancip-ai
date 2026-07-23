@@ -3158,7 +3158,7 @@ const AUTOMATION_SCHEMA_VERSION = 13;
 const AUTOMATION_NEW_FILE_DEFAULT_DEBOUNCE_SECONDS = 45;
 const AUTOMATION_NEW_FILE_MAX_BATCH = 40;
 const VAULT_CURATION_AUTOMATION_ID = "auto-vault-curation";
-const VAULT_CURATION_AUTOMATION_PROMPT_MARKER = "Vault Curation v7";
+const VAULT_CURATION_AUTOMATION_PROMPT_MARKER = "Vault Curation v8";
 let VAULT_CURATION_NEW_FILE_STATE_PATH = `${AUTOMATION_DIR}/vault-curation-new-files.json`;
 const VAULT_CURATION_NEW_FILE_STATE_SCHEMA_VERSION = 2;
 const PERSONALIZED_DIARY_AUTOMATION_ID = "auto-personalized-diary-assist";
@@ -3166,6 +3166,7 @@ const PERSONALIZED_DIARY_NO_UPDATE_MARKER = "CANCIP_DIARY_NO_UPDATE";
 const MEMORY_DREAM_AUTOMATION_ID = "auto-cancip-memory-dream";
 const MEMORY_DREAM_PROMPT_MARKER = "Workflow Optimizer v3";
 const CANCIP_DAILY_CARE_AUTOMATION_ID = "auto-cancip-daily-care";
+const CANCIP_DAILY_CARE_PROMPT_MARKER = "Daily Feedback Learning v2";
 const DEPRECATED_AUTOMATION_IDS = new Set([
   "auto-vault-content-beautify",
   "auto-vault-auto-tags",
@@ -3210,6 +3211,8 @@ const REVIEW_GATE_DIR = `${CANCIP_AI_DIR}/Review`;
 let REVIEW_GATE_HIDDEN_DIR = `${CANCIP_CONFIG_DIR}/review-gates`;
 let REVIEW_GATE_PACKAGE_INDEX_PATH = `${CANCIP_CONFIG_DIR}/review-index.json`;
 let REVIEW_GATE_CANONICAL_STATE_PATH = `${CANCIP_CONFIG_DIR}/review-state.json`;
+let REVIEW_FEEDBACK_LOG_PATH = `${CANCIP_CONFIG_DIR}/feedback/review-decisions.jsonl`;
+const REVIEW_FEEDBACK_LOG_MAX_BYTES = 256 * 1024;
 let CANCIP_STORAGE_MIGRATION_MARKER_PATH = `${CANCIP_CONFIG_DIR}/migration-from-dot-cancip-v1.json`;
 const CANCIP_STORAGE_MIGRATION_CRITICAL_PATHS = [
   "config.json",
@@ -3268,6 +3271,7 @@ function configureCancipStorageRoot(storageDir: string): void {
   REVIEW_GATE_HIDDEN_DIR = `${CANCIP_CONFIG_DIR}/review-gates`;
   REVIEW_GATE_PACKAGE_INDEX_PATH = `${CANCIP_CONFIG_DIR}/review-index.json`;
   REVIEW_GATE_CANONICAL_STATE_PATH = `${CANCIP_CONFIG_DIR}/review-state.json`;
+  REVIEW_FEEDBACK_LOG_PATH = `${CANCIP_CONFIG_DIR}/feedback/review-decisions.jsonl`;
   CANCIP_STORAGE_MIGRATION_MARKER_PATH = `${CANCIP_CONFIG_DIR}/migration-from-dot-cancip-v1.json`;
   DEFAULT_HIDDEN_MEMORY_FOLDER = `${CANCIP_CONFIG_DIR}/memory`;
   DEFAULT_SKILL_ROOTS = [`${CANCIP_CONFIG_DIR}/skills`, "AI/Cancip/Skills", "SkillOB", "skills", "技能", "能力"];
@@ -7925,6 +7929,7 @@ export default class CancipPlugin extends Plugin {
   private reviewGateSnapshotTtlMs = 10000;
   private reviewGatePackageIndexWriteQueue: Promise<void> = Promise.resolve();
   private reviewGateCanonicalStateWriteQueue: Promise<void> = Promise.resolve();
+  private reviewFeedbackWriteQueue: Promise<void> = Promise.resolve();
   private reviewGateManualSupersedeTimer: number | null = null;
   private reviewGateManualSupersedePaths = new Set<string>();
   private reviewGateManualSupersedeRunning = false;
@@ -16481,6 +16486,61 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     return await this.mergeReviewGatePackageIndex([], true);
   }
 
+  async recordReviewFeedback(payload: Record<string, unknown>): Promise<void> {
+    const changes = (Array.isArray(payload.changes) ? payload.changes : [])
+      .map((value) => trimContext(redactSensitiveText(String(value ?? "")).replace(/\s+/g, " "), 180))
+      .filter(Boolean);
+    const structure = normalizeReviewStructureChanges(payload.structure)
+      .map((change) => {
+        const route = [change.old_path, change.new_path].filter(Boolean).join(" -> ");
+        return `${change.kind}${route ? `: ${route}` : ""}`;
+      });
+    const row = {
+      at: typeof payload.at === "string" && Number.isFinite(Date.parse(payload.at)) ? payload.at : new Date().toISOString(),
+      path: typeof payload.path === "string" ? normalizePath(payload.path) : "",
+      decision: typeof payload.decision === "string" ? payload.decision : "unknown",
+      note: typeof payload.note === "string" ? trimContext(redactSensitiveText(payload.note).replace(/\s+/g, " "), 260) : "",
+      source: typeof payload.source === "string" ? trimContext(payload.source, 100) : "cancip.review-panel",
+      applied: payload.applied === true,
+      reverted: payload.reverted === true,
+      summary: trimContext(uniqueStrings([...changes, ...structure]).join("; "), 900)
+    };
+    if (!row.path) return;
+    const operation = this.reviewFeedbackWriteQueue
+      .catch(() => undefined)
+      .then(async () => {
+        const adapter = this.app.vault.adapter;
+        const line = `${JSON.stringify(row)}\n`;
+        await ensureParentFolder(adapter, REVIEW_FEEDBACK_LOG_PATH);
+        const stat = await adapter.stat(REVIEW_FEEDBACK_LOG_PATH).catch(() => null);
+        if (!stat) {
+          await adapter.write(REVIEW_FEEDBACK_LOG_PATH, line);
+          return;
+        }
+        if (stat.size + line.length <= REVIEW_FEEDBACK_LOG_MAX_BYTES) {
+          await adapter.append(REVIEW_FEEDBACK_LOG_PATH, line);
+          return;
+        }
+        const existing = await adapter.read(REVIEW_FEEDBACK_LOG_PATH);
+        const rows = existing.split(/\r?\n/).map((value) => value.trim()).filter(Boolean);
+        const retained: string[] = [];
+        let retainedBytes = line.length;
+        for (let index = rows.length - 1; index >= 0; index -= 1) {
+          const candidate = rows[index];
+          if (retainedBytes + candidate.length + 1 > Math.floor(REVIEW_FEEDBACK_LOG_MAX_BYTES * 0.82)) break;
+          retained.unshift(candidate);
+          retainedBytes += candidate.length + 1;
+        }
+        await adapter.write(REVIEW_FEEDBACK_LOG_PATH, `${retained.join("\n")}${retained.length ? "\n" : ""}${line}`);
+      });
+    this.reviewFeedbackWriteQueue = operation.catch(() => undefined);
+    try {
+      await operation;
+    } catch (error) {
+      console.warn("Cancip review feedback write failed", error);
+    }
+  }
+
   async reconcileReviewGatePackageIndex(): Promise<string[]> {
     const packages = await this.reviewGatePackagePaths(true);
     this.invalidateReviewGateSnapshot();
@@ -16624,6 +16684,17 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       structure: item.structure ?? []
     }));
     await this.app.vault.adapter.write(decisionPath, `${existing}${lines.join("\n")}\n`);
+    for (const row of rows) {
+      await this.recordReviewFeedback({
+        at,
+        path: row.item.path,
+        decision: "rejected",
+        note: "Manual edit after AI review; current file state is kept.",
+        source: "cancip.review.manual-override",
+        changes: row.item.changes ?? [],
+        structure: row.item.structure ?? []
+      });
+    }
   }
 
   private async reconcileReviewGateManualSupersedes(
@@ -17136,6 +17207,80 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       "- 改良依据：后续补全仅把上述统计作为低置信度排序参考，优先保持当前光标上下文和完整换行；不因统计自动改设置、不重复请求、不把未验证偏好写成硬规则。",
       `- 现有摘要：${summary.summary}`
     ].join("\n");
+  }
+
+  personalizationFeedbackAutomationSummary(days: number): string {
+    const sinceMs = Date.now() - Math.max(1, days) * 24 * 60 * 60 * 1000;
+    const approved = new Set(this.personalizationUsage.approvedPriorityKeys);
+    const reviewed = new Set(this.personalizationUsage.reviewedPriorityKeys);
+    const entries = this.personalizationUsage.entries
+      .filter((entry) => Date.parse(entry.lastUsedAt) >= sinceMs)
+      .sort((a, b) => Date.parse(b.lastUsedAt) - Date.parse(a.lastUsedAt))
+      .slice(0, 24);
+    if (!entries.length) return "- 最近窗口没有推荐按钮或个性化操作采用记录。";
+    const sourceCounts = new Map<string, number>();
+    for (const entry of entries) sourceCounts.set(entry.source, (sourceCounts.get(entry.source) ?? 0) + entry.count);
+    const sourceSummary = [...sourceCounts.entries()].map(([source, count]) => `${source}=${count}`).join(", ");
+    return [
+      `- adoptedActions: ${entries.reduce((sum, entry) => sum + entry.count, 0)}; sources: ${sourceSummary || "none"}`,
+      ...entries.map((entry) => {
+        const state = approved.has(entry.key) ? "approved-priority" : reviewed.has(entry.key) ? "reviewed-not-approved" : "observed";
+        return `- ${entry.lastUsedAt} · ${entry.source} · ${state} · used=${entry.count}: ${trimContext(entry.text.replace(/\s+/g, " "), 180)}`;
+      })
+    ].join("\n");
+  }
+
+  async compactPersonalizationFeedback(): Promise<string> {
+    await this.loadPersonalizationUsage();
+    const now = Date.now();
+    const ageDays = (value: string): number => {
+      const timestamp = Date.parse(value);
+      return Number.isFinite(timestamp) ? (now - timestamp) / (24 * 60 * 60 * 1000) : Number.POSITIVE_INFINITY;
+    };
+    const approved = new Set(this.personalizationUsage.approvedPriorityKeys);
+    const reviewed = new Set(this.personalizationUsage.reviewedPriorityKeys);
+    const staleEntries = this.personalizationUsage.entries.filter((entry) => {
+      if (approved.has(entry.key)) return false;
+      const age = ageDays(entry.lastUsedAt);
+      if (reviewed.has(entry.key)) return age > 30;
+      if (entry.count <= 1) return age > 60;
+      return age > 180;
+    });
+    const staleSelections = this.personalizationUsage.autocompleteSelections.filter((event) => ageDays(event.at) > 120);
+    const staleUsage = this.personalizationUsage.autocompleteUsage.filter((event) => {
+      const timestamp = event.selectedAt || event.dismissedAt || event.shownAt;
+      return ageDays(timestamp) > (event.used ? 120 : event.dismissedAt ? 30 : 7);
+    });
+    if (!staleEntries.length && !staleSelections.length && !staleUsage.length) return "personalization feedback kept; no stale records";
+
+    const batch = {
+      at: new Date(now).toISOString(),
+      entries: staleEntries,
+      autocompleteSelections: staleSelections,
+      autocompleteUsage: staleUsage
+    };
+    const batchId = stableTextHash(JSON.stringify(batch));
+    const archiveDir = `${CANCIP_ARCHIVE_DIR}/personalization`;
+    const archivePath = `${archiveDir}/${new Date(now).toISOString().slice(0, 7)}.jsonl`;
+    const adapter = this.app.vault.adapter;
+    await ensureFolder(adapter, archiveDir);
+    const existing = await readTextIfExists(adapter, archivePath, "");
+    if (!existing.includes(`\"batchId\":\"${batchId}\"`)) {
+      await adapter.write(archivePath, `${existing}${JSON.stringify({ batchId, ...batch })}\n`);
+    }
+
+    const staleEntryKeys = new Set(staleEntries.map((entry) => entry.key));
+    const staleSelectionKeys = new Set(staleSelections.map((event) => `${event.at}\n${event.text}\n${event.index}`));
+    const staleUsageIds = new Set(staleUsage.map((event) => event.id));
+    await this.enqueuePersonalizationUsageMutation((ledger) => {
+      ledger.entries = ledger.entries.filter((entry) => !staleEntryKeys.has(entry.key));
+      ledger.autocompleteSelections = ledger.autocompleteSelections.filter((event) => !staleSelectionKeys.has(`${event.at}\n${event.text}\n${event.index}`));
+      ledger.autocompleteUsage = ledger.autocompleteUsage.filter((event) => !staleUsageIds.has(event.id));
+      const retainedKeys = new Set(ledger.entries.map((entry) => entry.key));
+      ledger.reviewedPriorityKeys = ledger.reviewedPriorityKeys.filter((key) => ledger.approvedPriorityKeys.includes(key) || retainedKeys.has(key));
+    });
+    await this.writePersonalizationUsage();
+    return `personalization feedback archived: entries=${staleEntries.length}, selections=${staleSelections.length}, unused/old batches=${staleUsage.length} -> ${archivePath}`;
   }
 
   editorLocalAutocompleteSuffix(prefix: string): string {
@@ -22339,6 +22484,15 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     return true;
   }
 
+  async sendDocumentPromptToCancip(file: TFile, prompt: string): Promise<boolean> {
+    const chatView = await this.getOrCreateChatView({ reveal: true, focus: true });
+    if (!chatView) return false;
+    await chatView.addFileOrFolderContext(file);
+    const normalizedPrompt = trimContext(prompt.replace(/\s+/g, " ").trim(), 4000);
+    if (normalizedPrompt) await chatView.submitExternalPrompt(normalizedPrompt);
+    return true;
+  }
+
   async openNativeMarkdownFile(file: TFile, mode: "preview" | "source" = "source"): Promise<boolean> {
     const leaf = this.activeWorkspaceLeaf() ?? this.app.workspace.getMostRecentLeaf();
     if (!leaf) return false;
@@ -22681,7 +22835,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     }
     if (markdown === snapshot.markdown) return snapshot;
     const previewHtml = snapshot.kind === "docx" || snapshot.kind === "xlsx" || snapshot.kind === "pptx"
-      ? documentMarkdownToPreviewHtml(markdown, snapshot.file.basename)
+      ? documentMarkdownToPreviewHtml(this.app, snapshot.file, markdown, snapshot.file.basename)
       : snapshot.previewHtml;
     return { ...snapshot, markdown, previewHtml };
   }
@@ -23160,12 +23314,21 @@ class CancipDocumentWorkbenchView extends FileView {
     const toolbar = header.createDiv({ cls: "obcc-document-toolbar" });
     const modes = toolbar.createDiv({ cls: "obcc-document-modes", attr: { role: "tablist" } });
     this.addModeButton(modes, "preview", this.plugin.t("documentPreview"));
-    this.addModeButton(modes, "markdown", this.plugin.t("documentMarkdown"));
+    const sourceLabel = snapshot.kind === "html" || snapshot.kind === "mhtml"
+      ? isChineseLanguage(this.plugin.language()) ? "源码" : "Source"
+      : this.plugin.t("documentMarkdown");
+    this.addModeButton(modes, "markdown", sourceLabel);
 
     const actions = toolbar.createDiv({ cls: "obcc-document-actions" });
     this.addIconButton(actions, "send", this.plugin.t("documentSendToCancip"), () => {
       void this.sendToCancip();
     });
+    if (this.rawMarkdownMode()) {
+      const save = this.addIconButton(actions, "save", this.plugin.t("documentSave"), () => {
+        void this.saveEditBuffer();
+      }, !this.dirty);
+      save.addClass("is-save");
+    }
     this.addIconButton(actions, "file-search", this.plugin.t("documentSearchInFile"), () => {
       void this.toggleDocumentSearch();
     });
@@ -23660,6 +23823,11 @@ class CancipDocumentWorkbenchView extends FileView {
       const save = this.contentEl.querySelector<HTMLButtonElement>(".obcc-document-action.is-save");
       if (save) save.disabled = false;
     });
+    textarea.addEventListener("keydown", (event) => {
+      if (event.key.toLowerCase() !== "s" || (!event.ctrlKey && !event.metaKey)) return;
+      event.preventDefault();
+      if (this.dirty) void this.saveEditBuffer();
+    });
   }
 
   private async renderPreview(parent: HTMLElement): Promise<void> {
@@ -23678,10 +23846,10 @@ class CancipDocumentWorkbenchView extends FileView {
     if (snapshot.previewKind === "html") {
       parent.addClass("is-native-preview", "is-html-preview");
       const previewHtml = this.dirty
-        ? documentMarkdownToPreviewHtml(this.currentMarkdown(), snapshot.file.basename)
+        ? documentMarkdownToPreviewHtml(this.app, snapshot.file, this.currentMarkdown(), snapshot.file.basename)
         : snapshot.previewHtml;
       const iframe = this.createIsolatedWorkbenchFrame(stage, "obcc-document-html-preview", snapshot.file.name);
-      iframe.setAttr("sandbox", "allow-scripts allow-forms allow-pointer-lock");
+      iframe.setAttr("sandbox", "allow-scripts allow-forms allow-pointer-lock allow-modals allow-popups allow-popups-to-escape-sandbox allow-downloads");
       iframe.setAttr("data-note-draw-source-path", snapshot.file.path);
       this.htmlPreviewFrame = iframe;
       this.installHtmlPreviewBridge(stage, iframe, snapshot);
@@ -23887,6 +24055,23 @@ class CancipDocumentWorkbenchView extends FileView {
         }
         return;
       }
+      if (event.data.type === "link") {
+        const href = typeof event.data.href === "string" ? trimContext(event.data.href.trim(), 4000) : "";
+        if (href) {
+          void this.openHtmlPreviewLink(snapshot, href).catch((error) => {
+            const reason = error instanceof Error ? error.message : String(error);
+            new Notice(this.plugin.t("documentLoadFailed", { reason }));
+          });
+        }
+        return;
+      }
+      if (event.data.type === "action") {
+        void this.handleHtmlPreviewAction(snapshot, event.data).catch((error) => {
+          const reason = error instanceof Error ? error.message : String(error);
+          new Notice(this.plugin.t("documentLoadFailed", { reason }));
+        });
+        return;
+      }
       if (event.data.type !== "commit" || snapshot.previewKind !== "html") return;
       const originalText = typeof event.data.originalText === "string" ? event.data.originalText : "";
       const editedText = typeof event.data.editedText === "string" ? event.data.editedText : "";
@@ -23900,6 +24085,118 @@ class CancipDocumentWorkbenchView extends FileView {
       iframe.removeEventListener("load", syncEditMode);
       hostWindow.removeEventListener("message", onMessage);
     };
+  }
+
+  private async handleHtmlPreviewAction(snapshot: DocumentSnapshot, data: Record<string, unknown>): Promise<void> {
+    const action = String(data.action ?? "").trim().toLowerCase().replace(/[\s_]+/g, "-");
+    if (action === "send" || action === "send-to-cancip" || action === "cancip") {
+      await this.sendToCancip();
+      return;
+    }
+    if (action === "ask" || action === "prompt") {
+      const prompt = typeof data.prompt === "string" ? trimContext(data.prompt.trim(), 4000) : "";
+      const sent = prompt
+        ? await this.plugin.sendDocumentPromptToCancip(snapshot.file, prompt)
+        : await this.plugin.sendFileToCancip(snapshot.file);
+      if (!sent) throw new Error("Cancip chat view unavailable");
+      return;
+    }
+    if (action === "edit" || action === "edit-source" || action === "source") {
+      if (!this.dirty) this.editBuffer = snapshot.rawSourceAvailable ? snapshot.rawSourceText : snapshot.sourceText;
+      this.mode = "markdown";
+      await this.render();
+      this.contentEl.querySelector<HTMLTextAreaElement>(".obcc-document-editor")?.focus();
+      return;
+    }
+    if (action === "preview") {
+      this.mode = "preview";
+      await this.render();
+      return;
+    }
+    if (action === "save") {
+      if (this.dirty) await this.saveEditBuffer();
+      return;
+    }
+    if (action === "command" || action === "run-command" || action === "plugin-command") {
+      const command = typeof data.command === "string" ? trimContext(data.command.trim(), 300) : "";
+      await this.executeHtmlPreviewCommand(command);
+      return;
+    }
+    if (action === "open" || action === "link") {
+      const href = typeof data.href === "string" ? trimContext(data.href.trim(), 4000) : "";
+      if (!href) throw new Error("HTML action requires a link");
+      await this.openHtmlPreviewLink(snapshot, href);
+      return;
+    }
+    throw new Error(`Unknown HTML workbench action: ${action || "(empty)"}`);
+  }
+
+  private async executeHtmlPreviewCommand(commandId: string): Promise<void> {
+    const id = commandId.trim();
+    if (!id) throw new Error("HTML command action requires an exact Obsidian command id");
+    if (!this.plugin.settings.executeObsidianCommands) throw new Error(this.plugin.t("settingsExecuteObsidianCommands"));
+    const commands = (this.plugin.app as unknown as { commands?: ObsidianCommandApi }).commands;
+    const command = commands?.commands?.[id];
+    if (!command || typeof commands?.executeCommandById !== "function") throw new Error(`Obsidian command not found: ${id}`);
+    const result = await Promise.resolve(commands.executeCommandById(id));
+    if (result === false) throw new Error(`Obsidian command was not executed: ${id}`);
+    new Notice(command.name || id);
+  }
+
+  private async openHtmlPreviewLink(snapshot: DocumentSnapshot, href: string): Promise<void> {
+    const value = href.trim();
+    if (!value || value.startsWith("#")) return;
+    if (/^cancip:(?:\/\/)?/i.test(value)) {
+      const request = value.replace(/^cancip:(?:\/\/)?/i, "");
+      const [routePart, query = ""] = request.split("?", 2);
+      const action = routePart.replace(/^\/+|\/+$/g, "") || "send";
+      const params = new URLSearchParams(query);
+      await this.handleHtmlPreviewAction(snapshot, {
+        action,
+        prompt: params.get("prompt") ?? "",
+        command: params.get("command") ?? params.get("id") ?? "",
+        href: params.get("href") ?? ""
+      });
+      return;
+    }
+    if (/^(?:obsidian|plugin)-command:(?:\/\/)?/i.test(value)) {
+      const id = decodeUriComponentSafely(value.replace(/^(?:obsidian|plugin)-command:(?:\/\/)?/i, "").replace(/^\/+/, ""));
+      await this.executeHtmlPreviewCommand(id);
+      return;
+    }
+    if (/^obsidian:\/\//i.test(value)) {
+      const internalPath = obsidianOpenUriFilePath(value);
+      if (internalPath) {
+        await this.openHtmlPreviewVaultPath(internalPath);
+        return;
+      }
+      this.openHtmlPreviewExternalUrl(value);
+      return;
+    }
+    if (/^(?:https?:|mailto:|tel:|sms:|geo:)/i.test(value) || value.startsWith("//")) {
+      this.openHtmlPreviewExternalUrl(value.startsWith("//") ? `https:${value}` : value);
+      return;
+    }
+    const path = resolveHtmlPreviewVaultPath(snapshot.file.path, value);
+    if (!path) throw new Error(`HTML link target is invalid: ${value}`);
+    await this.openHtmlPreviewVaultPath(path);
+  }
+
+  private openHtmlPreviewExternalUrl(url: string): void {
+    const hostWindow = this.contentEl.ownerDocument.defaultView ?? activeWindow;
+    hostWindow.open(url, "_blank", "noopener,noreferrer");
+  }
+
+  private async openHtmlPreviewVaultPath(path: string): Promise<void> {
+    const file = this.plugin.app.vault.getAbstractFileByPath(normalizePath(path));
+    if (!(file instanceof TFile)) throw new Error(`Vault link target not found: ${path}`);
+    if (isMarkdownFile(file)) {
+      const opened = await this.plugin.openNativeMarkdownFile(file, "preview");
+      if (!opened) throw new Error(`Could not open Vault file: ${file.path}`);
+      return;
+    }
+    const view = await this.plugin.activateDocumentWorkbench(file, "preview");
+    if (!view) throw new Error(`Could not open Vault file in workbench: ${file.path}`);
   }
 
   private async commitHtmlPreviewText(snapshot: DocumentSnapshot, originalText: string, editedText: string, selector = ""): Promise<void> {
@@ -23921,7 +24218,7 @@ class CancipDocumentWorkbenchView extends FileView {
             sourceText: nextSource,
             rawSourceText: nextSource,
             markdown: trimContext(markdownFromDocumentText(snapshot.file, nextSource, snapshot.kind), DOCUMENT_MARKDOWN_MAX_CHARS),
-            previewHtml: isolatedHtmlPreview(nextSource)
+            previewHtml: isolatedHtmlPreview(this.app, snapshot.file, nextSource)
           };
           this.editBuffer = nextSource;
           this.dirty = false;
@@ -25320,6 +25617,7 @@ class CancipReviewLeafView extends ItemView {
         structure: item.structure ?? []
       };
       await this.app.vault.adapter.write(path, `${existing}${JSON.stringify(payload)}\n`);
+      await this.plugin.recordReviewFeedback({ ...payload, source: "cancip.review-panel" });
       await this.plugin.markReviewGateItemsDecided(`${folder}/manifest.json`, [item.path]);
       await this.plugin.handlePersonalizationReviewDecision(item, decision);
       if (data) {
@@ -30357,6 +30655,7 @@ class CancipView extends ItemView {
         structure: item.structure ?? []
       };
       await this.app.vault.adapter.write(path, `${existing}${JSON.stringify(payload)}\n`);
+      await this.plugin.recordReviewFeedback({ ...payload, source: "cancip.review-panel" });
       await this.plugin.markReviewGateItemsDecided(`${folder}/manifest.json`, [item.path]);
       await this.plugin.handlePersonalizationReviewDecision(item, decision);
       this.plugin.syncOpenReviewGateDecision(`${folder}/manifest.json`);
@@ -31385,6 +31684,17 @@ class CancipView extends ItemView {
       return;
     }
     void this.sendPromptNow(prompt);
+  }
+
+  async submitExternalPrompt(prompt: string): Promise<void> {
+    const normalized = prompt.trim();
+    if (!normalized) return;
+    if (this.activeRequest) {
+      this.enqueuePrompt(normalized, { priority: true });
+      this.syncRequestControls();
+      return;
+    }
+    await this.sendPromptNow(normalized);
   }
 
   async startOneClickHtml(requirementOverride = ""): Promise<void> {
@@ -32848,6 +33158,8 @@ class CancipView extends ItemView {
     await writeTextInChunks(adapter, dreamPath, `${retainedDream.trimEnd()}\n`);
 
     const compactResult = compactExperience ? await this.compactExperienceLogForDream() : "experience compact skipped";
+    const personalizationCompact = await this.plugin.compactPersonalizationFeedback();
+    const coldArchive = await this.plugin.archiveColdCancipData(false);
     const harvested = await this.harvestExperienceSkills(false);
     const skillIndex = await this.refreshSkillIndex(false);
     await this.appendProjectMemoryDreamNote(summary, dreamPath);
@@ -32862,6 +33174,8 @@ class CancipView extends ItemView {
       `4. 已刷新 Skill 索引：${skillIndex.count} 个 -> ${skillIndex.path}`,
       `5. 知识库 Wiki：${knowledgeWiki.generated} 张新/更新知识卡，当前保留 ${knowledgeWiki.total} 张 -> ${knowledgeWiki.path}${knowledgeWiki.note ? `（${knowledgeWiki.note}）` : ""}`,
       `6. ${compactResult}`,
+      `7. 个性化反馈：${personalizationCompact}`,
+      `8. 冷数据归档：会话 ${coldArchive.sessions}、事件 ${coldArchive.events}、经验 ${coldArchive.experience}${coldArchive.skipped ? "（本轮已跳过）" : ""}`,
       "",
       "摘要：",
       summary
@@ -32870,6 +33184,7 @@ class CancipView extends ItemView {
 
   private async buildKnowledgeWikiEvidencePack(sourcePack: string, summary: string, days: number, existingWiki: string): Promise<string> {
     const since = Date.now() - Math.min(days, 3) * 24 * 60 * 60 * 1000;
+    const dailyFeedback = sourcePack.split("## 当日用户反馈与采用证据\n")[1]?.split(/\n## /)[0]?.trim() ?? "";
     const recentFiles = this.app.vault.getFiles()
       .filter((file) => isContextTextFile(file) && file.stat.mtime >= since)
       .sort((a, b) => b.stat.mtime - a.stat.mtime || a.path.localeCompare(b.path))
@@ -32890,8 +33205,11 @@ class CancipView extends ItemView {
       "## 本轮记忆整理摘要",
       trimContext(redactSensitiveText(summary), 4200),
       "",
+      "## 当日用户反馈与采用证据（最高优先级）",
+      dailyFeedback ? trimContext(redactSensitiveText(dailyFeedback), 5600) : "- none",
+      "",
       "## 近期可靠来源（会话/经验/记忆优先）",
-      trimContext(redactSensitiveText(sourcePack), 7600),
+      trimContext(redactSensitiveText(sourcePack), 5200),
       "",
       "## 近期文件线索（仅作交叉证据，不要把文件列表本身当知识）",
       recentEvidence.length ? recentEvidence.join("\n") : "- none",
@@ -32949,6 +33267,130 @@ class CancipView extends ItemView {
     return { path: wikiPath, generated: generatedCards.length, total: cards.length, note };
   }
 
+  private async buildDailyInteractionFeedbackPack(days: number, sessionEvents: SessionEventView[] = []): Promise<string> {
+    const sinceMs = Date.now() - Math.max(1, days) * 24 * 60 * 60 * 1000;
+    const adapter = this.app.vault.adapter;
+    const recentFiles = this.app.vault.getFiles()
+      .filter((file) => file.stat.mtime >= sinceMs)
+      .filter((file) => isVaultDailyReportContentFile(file, this.plugin.obsidianConfigDir(), this.plugin.settings.memoryFolder))
+      .sort((a, b) => b.stat.mtime - a.stat.mtime || a.path.localeCompare(b.path))
+      .slice(0, 40);
+    const fileLines: string[] = [];
+    for (const [index, file] of recentFiles.entries()) {
+      let excerpt = "";
+      if (index < 16 && file.stat.size > 0 && file.stat.size <= 24000) {
+        try {
+          excerpt = trimContext(redactSensitiveText(makeExcerpt(await this.app.vault.cachedRead(file), [])).replace(/\s+/g, " "), 240);
+        } catch {
+          excerpt = "";
+        }
+      }
+      fileLines.push(`- ${new Date(file.stat.mtime).toISOString()} · ${file.path}${excerpt ? `: ${excerpt}` : ""}`);
+    }
+
+    type ReviewFeedbackRow = { at: string; decision: string; path: string; note: string; source: string; summary: string };
+    const reviewRows: ReviewFeedbackRow[] = [];
+    const collectReviewRows = (raw: string): void => {
+      for (const line of raw.split(/\r?\n/)) {
+        if (!line.trim()) continue;
+        try {
+          const parsed = JSON.parse(line) as unknown;
+          if (!isRecord(parsed) || typeof parsed.at !== "string" || Date.parse(parsed.at) < sinceMs) continue;
+          const changes = (Array.isArray(parsed.changes) ? parsed.changes : [])
+            .map((value) => trimContext(redactSensitiveText(String(value ?? "")).replace(/\s+/g, " "), 160))
+            .filter(Boolean);
+          const structure = normalizeReviewStructureChanges(parsed.structure)
+            .map((change) => {
+              const route = [change.old_path, change.new_path].filter(Boolean).join(" -> ");
+              return `${change.kind}${route ? `: ${route}` : ""}`;
+            });
+          reviewRows.push({
+            at: parsed.at,
+            decision: typeof parsed.decision === "string" ? parsed.decision : "unknown",
+            path: typeof parsed.path === "string" ? normalizePath(parsed.path) : "",
+            note: typeof parsed.note === "string" ? trimContext(redactSensitiveText(parsed.note).replace(/\s+/g, " "), 220) : "",
+            source: typeof parsed.source === "string" ? trimContext(parsed.source, 100) : "review-package",
+            summary: typeof parsed.summary === "string"
+              ? trimContext(redactSensitiveText(parsed.summary).replace(/\s+/g, " "), 500)
+              : trimContext(uniqueStrings([...changes, ...structure]).join("; "), 500)
+          });
+        } catch {
+          // Keep other valid rows when a synced JSONL file has a partial tail.
+        }
+      }
+    };
+    collectReviewRows(await readTextIfExists(adapter, REVIEW_FEEDBACK_LOG_PATH, ""));
+    const reviewPackages = (await this.plugin.reviewGatePackagePaths(false).catch(() => [] as string[])).slice(0, 180);
+    for (const packagePath of reviewPackages) {
+      const decisionPath = `${reviewGatePackageFolder(packagePath)}/review-corrections/pending.jsonl`;
+      try {
+        const stat = await adapter.stat(decisionPath);
+        if (!stat || stat.mtime < sinceMs) continue;
+        collectReviewRows(await adapter.read(decisionPath));
+      } catch {
+        // Packages without a decision ledger are still pending, not failed reads.
+      }
+    }
+    const uniqueReviewRows = [...new Map(reviewRows.map((row) => [
+      `${row.at}\n${row.path}\n${row.decision}\n${row.note}`,
+      row
+    ])).values()].sort((a, b) => b.at.localeCompare(a.at));
+    const reviewCounts = new Map<string, number>();
+    for (const row of uniqueReviewRows) reviewCounts.set(row.decision, (reviewCounts.get(row.decision) ?? 0) + 1);
+    const pendingReviewState = await this.plugin.readReviewGateCanonicalState().catch(() => null);
+    const pendingReviewPaths = pendingReviewState?.pendingPaths.slice(0, 40) ?? [];
+
+    const windowEvents = sessionEvents.filter((event) => Date.parse(event.at) >= sinceMs);
+    const userPromptFeedback = uniqueStrings(windowEvents
+      .filter((event) => event.kind === "prompt.send" && Boolean(event.detail?.trim()))
+      .map((event) => `${event.at} · ${trimContext(redactSensitiveText(event.detail ?? "").replace(/\s+/g, " "), 260)}`))
+      .slice(-48);
+    const executionFeedback = windowEvents
+      .filter((event) => event.kind === "tool.finish"
+        || event.kind === "tool.reject"
+        || event.kind === "prompt.error"
+        || event.kind === "prompt.recoverable_error"
+        || event.kind === "prompt.final_missing")
+      .slice(-60)
+      .map(formatSessionEventLine);
+
+    const automations = (await this.plugin.loadAutomations())
+      .filter((task) => task.lastRunAt && Date.parse(task.lastRunAt) >= sinceMs)
+      .sort((a, b) => Date.parse(b.lastRunAt ?? "") - Date.parse(a.lastRunAt ?? ""))
+      .slice(0, 30);
+    const recommendationUsage = this.plugin.personalizationFeedbackAutomationSummary(days);
+    return [
+      "## Recent Vault activity",
+      "- These are bounded file-change clues, not proof that every change was manual. Use review/session evidence to distinguish user acceptance from AI output.",
+      fileLines.length ? fileLines.join("\n") : "- none",
+      "",
+      "## User requests and corrections",
+      userPromptFeedback.length ? userPromptFeedback.map((line) => `- ${line}`).join("\n") : "- none",
+      "",
+      "## Tool and response outcomes",
+      executionFeedback.length ? executionFeedback.map((line) => `- ${line}`).join("\n") : "- none",
+      "",
+      "## Review decisions and correction feedback",
+      uniqueReviewRows.length
+        ? `- totals: ${[...reviewCounts.entries()].map(([decision, count]) => `${decision}=${count}`).join(", ")}\n${uniqueReviewRows.slice(0, 80).map((row) => `- ${row.at} · ${row.decision} · ${row.path || "unknown path"} · source=${row.source}${row.summary ? ` · change=${row.summary}` : ""}${row.note ? ` · feedback=${row.note}` : ""}`).join("\n")}`
+        : "- no completed review decisions in this window",
+      `- pending now: ${pendingReviewState?.pendingPaths.length ?? 0}${pendingReviewPaths.length ? ` · ${pendingReviewPaths.join(", ")}` : ""}`,
+      "",
+      "## Recommendation and personalized action adoption",
+      recommendationUsage,
+      "",
+      "## Automation outcomes",
+      automations.length
+        ? automations.map((task) => `- ${task.lastRunAt} · ${task.lastStatus ?? "unknown"} · ${task.title}: ${trimContext(redactSensitiveText(task.lastResult ?? "").replace(/\s+/g, " "), 240)}`).join("\n")
+        : "- none",
+      "",
+      "## Learning contract",
+      "- Explicit user corrections and approved/cancelled/correction review decisions outrank model inference. Machine supersede rows describe lifecycle cleanup, not user dislike.",
+      "- Treat accepted recommendation/autocomplete content as positive evidence and completed unused/dismissed batches as weak negative evidence. Pending batches are not negative feedback.",
+      "- Update or merge existing memory, Wiki cards, generated Skills, automation routes, and indexes only when evidence is stable or a workflow has repeated verified success; archive stale machine records before removing them from hot data."
+    ].join("\n");
+  }
+
   private async buildMemoryDreamSourcePack(days: number): Promise<string> {
     await this.plugin.loadPersonalizationUsage();
     const adapter = this.app.vault.adapter;
@@ -32969,12 +33411,21 @@ class CancipView extends ItemView {
     const memoryIndex = await readOptional(memoryIndexPath, 1800);
     const rules = await readOptional(rulesPath, 2400);
     const dream = await readOptional(dreamPath, 1200);
-    const events = (await this.readSessionEvents(160))
+    const events = (await this.readSessionEvents(480))
       .filter((event) => Date.parse(event.at) >= sinceMs)
+      .slice(-240);
+    const supportingEvents = events
+      .filter((event) => event.kind !== "prompt.send"
+        && event.kind !== "tool.finish"
+        && event.kind !== "tool.reject"
+        && event.kind !== "prompt.error"
+        && event.kind !== "prompt.recoverable_error"
+        && event.kind !== "prompt.final_missing")
       .slice(-50);
     const skills = await this.discoverSkills(true);
     const skillSummary = this.formatSkillsList(skills.slice(0, 24));
     const autocompleteUsage = this.plugin.autocompletePreferenceAutomationSummary(days);
+    const interactionFeedback = await this.buildDailyInteractionFeedbackPack(days, events);
     let pluginInventory = "- unavailable";
     try {
       pluginInventory = trimContext(await this.installedPluginsSummary({ includeDisabled: false }), 1800);
@@ -32991,8 +33442,14 @@ class CancipView extends ItemView {
       `- commandCount: ${commandCount}`,
       `- vaultFileCount: ${vaultFileCount}`,
       "",
-      "## Recent session events",
-      events.length ? this.formatSessionEvents(events, 80) : "- none",
+      "## 当日用户反馈与采用证据",
+      interactionFeedback,
+      "",
+      "## 自动补全选择习惯",
+      autocompleteUsage,
+      "",
+      "## Supporting session lifecycle events",
+      supportingEvents.length ? this.formatSessionEvents(supportingEvents, 50) : "- none",
       "",
       `## ${EXPERIENCE_LOG_PATH}`,
       experience || "- none",
@@ -33008,9 +33465,6 @@ class CancipView extends ItemView {
       "",
       "## Existing dream log tail",
       dream || "- none",
-      "",
-      "## 自动补全选择习惯",
-      autocompleteUsage,
       "",
       "## Indexed Skills",
       skillSummary || "- none",
@@ -33035,6 +33489,12 @@ class CancipView extends ItemView {
     const vaultFileCount = Number(sourcePack.match(/^- vaultFileCount:\s*(\d+)/m)?.[1] ?? 0);
     const lines = sourcePack.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
     const autocompleteSummary = sourcePack.split("## 自动补全选择习惯\n")[1]?.split(/\n## /)[0]?.trim() ?? "";
+    const interactionSummary = sourcePack.split("## 当日用户反馈与采用证据\n")[1]?.split(/\n## /)[0]?.trim() ?? "";
+    const userRequestSummary = interactionSummary.split("## User requests and corrections\n")[1]?.split(/\n## /)[0]?.trim() ?? "";
+    const reviewTotals = interactionSummary.match(/^- totals:\s*(.+)$/m)?.[1]?.trim() ?? "none";
+    const pendingReviews = interactionSummary.match(/^- pending now:\s*(\d+)/m)?.[1] ?? "0";
+    const userRequestCount = countRegex(userRequestSummary, /^- \d{4}-\d{2}-\d{2}T/gm);
+    const changedFileClues = countRegex(interactionSummary.split("## Recent Vault activity\n")[1]?.split(/\n## /)[0] ?? "", /^- \d{4}-\d{2}-\d{2}T/gm);
     const pickLines = (pattern: RegExp, limit = 4): string[] => uniqueStrings(lines
       .filter((line) => pattern.test(line))
       .map((line) => line.replace(/^(?:[-*]\s*)+/, "").replace(/\s+/g, " ").trim())
@@ -33054,11 +33514,12 @@ class CancipView extends ItemView {
       failureLines.length ? failureLines.join("\n") : "- 暂无明显失败片段。",
       "4. 新增/修订偏好：",
       preferenceLines.length ? preferenceLines.join("\n") : "- 本窗口无新增明确偏好规则。",
-      "5. Skill/流程候选：",
+      `5. 用户反馈闭环：提示/纠正 ${userRequestCount} 条；文件变化线索 ${changedFileClues} 个；审核 ${reviewTotals}；当前待审核 ${pendingReviews}。明确纠正与审核决定优先于模型推断。`,
+      "6. Skill/流程候选：",
       skillLines.length ? skillLines.join("\n") : "- 本窗口无新增 Skill 候选。",
-      `6. 自动补全偏好：${autocompleteSummary ? trimContext(autocompleteSummary.replace(/\s+/g, " "), 500) : "本窗口没有可用选择记录。"}`,
-      `7. 清理：${duplicateSignals > 0 ? `识别并压缩 ${duplicateSignals} 处重复兜底/套话信号` : "未发现高频重复兜底"}；稳定规则进记忆，执行经验进 experience，可复用流程进 Skill，旧噪音归档。`,
-      `8. 资源：已核对 ${skillCount} 个 Skill、${commandCount} 条 Obsidian 命令和 ${vaultFileCount} 个 Vault 文件；后续优先复用已验证路线，失效生成资产应更新或清理。`
+      `7. 自动补全偏好：${autocompleteSummary ? trimContext(autocompleteSummary.replace(/\s+/g, " "), 500) : "本窗口没有可用选择记录。"}`,
+      `8. 清理：${duplicateSignals > 0 ? `识别并压缩 ${duplicateSignals} 处重复兜底/套话信号` : "未发现高频重复兜底"}；稳定规则进记忆，执行经验进 experience，可复用流程进 Skill，旧噪音归档。`,
+      `9. 资源：已核对 ${skillCount} 个 Skill、${commandCount} 条 Obsidian 命令和 ${vaultFileCount} 个 Vault 文件；后续优先复用已验证路线，失效生成资产应更新或清理。`
     ].join("\n");
   }
 
@@ -33143,8 +33604,8 @@ class CancipView extends ItemView {
     }, profile);
     const memoryFacts = memory
       .split(/\r?\n/)
-      .filter((line) => /^[2-6]\.\s/.test(line.trim()))
-      .slice(0, 5);
+      .filter((line) => /^[2-9]\.\s/.test(line.trim()))
+      .slice(0, 8);
     return [
       report.trim(),
       memoryFacts.length ? `每日整理：\n${memoryFacts.join("\n")}` : ""
@@ -33513,18 +33974,22 @@ class CancipView extends ItemView {
       `- skippedThisBatch: ${skippedCount}`,
       `- scannedPathsJson: ${JSON.stringify(scannedPaths)}`,
       `- candidatePathsJson: ${JSON.stringify(candidatePaths)}`,
-      "- safety: newness triggers one active organization pass. Most nonempty user-created notes enter the bounded candidate list; explicit opt-out, templates, frequently referenced notes, plugin syntax, generated files, and other protected content are skipped programmatically.",
+      "- safety: every newly discovered user Markdown note is analyzed once, but newness alone never authorizes a write. Only objective structure/name/location defects, a long note missing a useful summary, or a verified strong missing relation enters the bounded candidate list; explicit opt-out, templates, frequently referenced notes, plugin syntax, generated files, and other protected content are skipped programmatically.",
       "",
       "## Meaningful candidates with bounded source text",
       formatVaultCurationCandidates(actionableCandidates, candidateLimit),
       "",
       "## Contract",
       "- Process only candidatePathsJson. The source text is already attached; avoid a duplicate read unless it is truncated or an external relation must be verified.",
+      "- For each candidate, treat its full path, filename, parent folder, title, tags, headings, content, outgoing links, backlinks, and suggested relations as one evidence set. The plugin already scored relations across the Vault metadata graph; read only the strongest related-note candidates needed to verify meaning.",
       "- For each candidate, execute only its allowedActions. A formatting defect does not authorize tags, links, summaries, or renaming.",
       "- Use composition/linkRelations only for concise property enrichment: summary, link_count, link_relations, related_candidates. Do not create visible body sections for these facts.",
       "- Suggested link relations are candidates only. Verify with a focused read/search before adding a new wikilink; skip weak candidates instead of inventing relationship text.",
-      "- Do not make cosmetic-only whitespace or punctuation churn. Prefer one small useful organization improvement grounded in the note and the existing Vault taxonomy; a genuinely already-organized note may still be skipped with the required marker.",
+      "- Add a missing bidirectional knowledge connection only when the target note confirms a concrete relation and the current note has no equivalent link. Same-folder placement or one shared term alone is insufficient.",
+      "- Prefer one semantically placed wikilink in the new note; Obsidian supplies the backlink automatically. Do not edit the older target merely to create a symmetric pair unless its text independently needs that link.",
+      "- Do not make cosmetic-only whitespace or punctuation churn. Apply the smallest useful improvement grounded in the note and existing Vault taxonomy; an already organized note is completed programmatically without invoking the model.",
       "- A date-based journal filename is valid. Do not rename it merely because it is a date; do not add unsupported tags, summaries, or links.",
+      "- The dedicated automation session, Review Gate item, readback result, and completed/skip marker are the audit record. State the evidence for every added summary/link and the concrete reason for every skip; do not create a second log file.",
       `- Existing files and folders are handled on demand through Skill ${CANCIP_BUILTIN_CURATION_SKILL_PATH}, not by this scheduled automation.`
     ];
     return trimContext(lines.join("\n"), 30000);
@@ -33600,7 +34065,6 @@ class CancipView extends ItemView {
     const text = String(content ?? "");
     const trimmed = text.trim();
     if (!trimmed) return [];
-    reasons.push("new user note needs a lightweight organization pass");
     if (cancipCurationHasMarkdownDefect(text)) reasons.push("objective Markdown syntax defect");
     if (isVaultCurationInboxLikePath(path)) reasons.push("temporary or inbox location needs classification");
     const vagueName = /^(untitled|新建|未命名|tmp|temp|draft|草稿)([\s._-]?\d*)?$/i.test(basename)
@@ -33643,10 +34107,8 @@ class CancipView extends ItemView {
       if (!allowedActions.includes(action)) allowedActions.push(action);
     };
     for (const reason of input.curationReasons) {
-      if (reason === "new user note needs a lightweight organization pass") {
+      if (reason === "temporary or inbox location needs classification") {
         allow("properties");
-        const bodyLines = input.content.split(/\r?\n/).filter((line) => line.trim()).length;
-        if (input.content.length >= 240 || bodyLines >= 4) allow("format");
       }
       if (reason === "objective Markdown syntax defect" || reason === "long prose lacks usable structure") allow("format");
       if (reason === "long note lacks a useful summary") {
@@ -33654,7 +34116,7 @@ class CancipView extends ItemView {
         allow("summary");
       }
       if (reason === "vague or machine-generated filename") allow("rename");
-      if (reason === "explicitly mentioned related note lacks a link") allow("links");
+      if (reason === "strongly related note lacks a verified link") allow("links");
     }
     if (!allowedActions.length) {
       return {
@@ -33702,11 +34164,16 @@ class CancipView extends ItemView {
         vaultFileCount: relatedScopeFiles.length,
         frontmatter
       });
-      const linkRelations = decision.action === "curate"
+      const linkRelations = decision.action !== "protected"
         ? this.vaultCurationLinkRelations(file, content, cache, tags, relatedScopeFiles)
         : [];
-      if (decision.action === "curate" && linkRelations.some((relation) => relation.direction === "suggested" && /正文提到/.test(relation.evidence ?? ""))) {
-        curationReasons = uniqueStrings([...curationReasons, "explicitly mentioned related note lacks a link"]);
+      const hasStrongMissingRelation = linkRelations.some((relation) => {
+        if (relation.direction !== "suggested") return false;
+        const evidence = relation.evidence ?? "";
+        return /正文提到/.test(evidence) || (/共享标签/.test(evidence) && /共享题名\/路径词/.test(evidence));
+      });
+      if (decision.action !== "protected" && hasStrongMissingRelation) {
+        curationReasons = uniqueStrings([...curationReasons, "strongly related note lacks a verified link"]);
         decision = this.vaultCurationDecision({
           path: file.path,
           content,
@@ -35948,12 +36415,14 @@ class CancipView extends ItemView {
       return [
         "一键 HTML：只写提示中的目标文件，不搜索、不读取其他文件、不新建说明文档。输出完整单文件 HTML5，CSS 与 JavaScript 尽量内联；除非需求明确需要外部库、API 或素材，否则不依赖网络资源。",
         "页面必须适配手机和桌面，文字清楚、控件可触摸、无内容重叠；需求中的按钮、输入、切换、步骤或其他交互必须真正工作，并提供合理的初始、空白和错误状态。",
+        "需要联动工作台时使用 window.Cancip.sendToCancip(prompt?)、ask(prompt)、editSource()、preview()、save()、open(href)、runCommand(准确命令 ID)；也可在控件上使用 data-cancip-action、data-cancip-prompt、data-cancip-prompt-from、data-cancip-command、data-obsidian-command 或 data-plugin-command。",
         "首轮仅输出一个 write 动作，content 从 <!doctype html> 开始并包含完整 head/body；不要输出 Markdown 代码围栏。工具会校验 HTML、读回文件并自动在交互工作台打开。"
       ].join("\n");
     }
     return [
       "One-click HTML: write only the target path in the prompt. Do not search, read other files, or create documentation. Return a complete standalone HTML5 file with CSS and JavaScript inline where practical; use external libraries, APIs, or assets only when the requirements need them.",
       "The page must work on mobile and desktop with readable text, touch-sized controls, no overlap, and real behavior for every requested button, input, switch, step, or other interaction, including useful initial, empty, and error states.",
+      "For workbench integration use window.Cancip.sendToCancip(prompt?), ask(prompt), editSource(), preview(), save(), open(href), or runCommand(exactCommandId). Controls may instead declare data-cancip-action, data-cancip-prompt, data-cancip-prompt-from, data-cancip-command, data-obsidian-command, or data-plugin-command.",
       "First output exactly one write action whose content starts with <!doctype html> and contains complete head/body markup. Do not use Markdown fences. The tool validates and reads back the HTML, then opens it in the interactive workbench."
     ].join("\n");
   }
@@ -42140,6 +42609,17 @@ class CancipView extends ItemView {
         runId: run.id
       }));
       await this.app.vault.adapter.write(path, `${existing}${lines.join("\n")}\n`);
+      for (const item of data.items) {
+        await this.plugin.recordReviewFeedback({
+          at,
+          path: item.path,
+          decision: "rejected",
+          note: "Superseded by direct approval execution.",
+          source: "cancip.pendingToolRun.approve",
+          changes: item.changes ?? [],
+          structure: item.structure ?? []
+        });
+      }
       await this.plugin.markReviewGateItemsDecided(data.path, data.items.map((item) => item.path));
     } catch (error) {
       console.warn("Cancip pre-execution review supersede failed", error);
@@ -42637,6 +43117,17 @@ class CancipView extends ItemView {
           structure: item.structure ?? []
         }));
         await adapter.write(decisionPath, `${existing}${lines.join("\n")}\n`);
+        for (const item of superseded) {
+          await this.plugin.recordReviewFeedback({
+            at,
+            path: item.path,
+            decision: "rejected",
+            note: "Superseded by a newer Cancip review item for the same file chain.",
+            source: "cancip.review.supersede",
+            changes: item.changes ?? [],
+            structure: item.structure ?? []
+          });
+        }
         stateUpdates.push({ manifestPath: `${folder}/manifest.json`, itemPaths: superseded.map((item) => item.path) });
       } catch {
         // Stale or half-synced review packages must not block the latest review package.
@@ -52571,9 +53062,9 @@ function localizeUntouchedAutomationTask(task: AutomationTask, template: Automat
   const legacyMemoryDreamPrompt = task.id === MEMORY_DREAM_AUTOMATION_ID
     && task.prompt.includes("Workflow Optimizer v2");
   const legacyVaultCurationPrompt = task.id === VAULT_CURATION_AUTOMATION_ID
-    && /Vault Curation v[1-6]\b/.test(task.prompt);
+    && /Vault Curation v[1-7]\b/.test(task.prompt);
   const legacyDailyCarePrompt = task.id === CANCIP_DAILY_CARE_AUTOMATION_ID
-    && /(?:^完成每日合并维护：先整理近期记忆|^Run the combined daily maintenance: distill recent memory|Cancip Daily Care \+ Memory Dream v1|Workflow Optimizer v[1-2]\b)/.test(task.prompt);
+    && /(?:^完成每日合并维护：先整理近期记忆|^完成每日合并维护：先看必要证据|^Run the combined daily maintenance: (?:distill recent memory|start with necessary evidence)|Cancip Daily Care \+ Memory Dream v1|Workflow Optimizer v[1-2]\b)/.test(task.prompt);
   const prompt = task.prompt && (knownPrompts.includes(task.prompt) || legacyMemoryDreamPrompt || legacyVaultCurationPrompt || legacyDailyCarePrompt)
     ? template.prompt?.trim() ?? ""
     : task.prompt;
@@ -52642,10 +53133,10 @@ function cancipAutomationTemplates(language: Language = "en"): AutomationTemplat
     {
       id: CANCIP_DAILY_CARE_AUTOMATION_ID,
       title: local("Cancip 每日体检、记忆整理与老友提醒", "Cancip daily care"),
-      description: local("合并完成 Vault 体检、记忆与经验整理、知识库 Wiki 更新、重复流程 Skill 收割和具体提醒。", "Combine Vault checkup, memory and experience distillation, knowledge Wiki updates, repeatable Skill harvesting, and specific reminders."),
+      description: local("汇总会话、文件变化、审核决定、推荐与补全采用情况，更新记忆/Wiki/Skill/经验，并归档过期低价值记录。", "Aggregate sessions, file changes, review decisions, recommendation and autocomplete adoption; update memory, Wiki, Skills, and experience while archiving stale low-value records."),
       prompt: local(
-        "完成每日合并维护：先看必要证据，不足时按需优先查 Vault 内笔记、Skill、自动化、会话历史、记忆、插件/命令和经验，再结合网络与已有知识；整理成功失败和补全偏好，增删改查 Wiki/Skill/自动化/经验路线，再生成事实体检与精简提醒。低风险可恢复改良直接执行并验证；不擅自移动、删除、合并或批量改名。",
-        "Run combined daily maintenance: start with necessary evidence; if insufficient, search targeted Vault notes, Skills, automations, sessions, memory, plugins/commands, and experience before web or prior knowledge. Distill outcomes and autocomplete preferences; query/create/update/merge/prune Wiki, Skills, automations, and routes; then produce a factual checkup. Execute and verify low-risk recoverable improvements, but do not move, delete, merge, or bulk rename without confirmation."
+        `${CANCIP_DAILY_CARE_PROMPT_MARKER}：汇总当日会话与工具结果、用户改动文件及内容线索、审核通过/取消/修正、推荐按钮与自动补全展示/采用/未采用、自动化结果等真实反馈；按内容分析稳定偏好、成功路线和失败根因，更新或合并记忆、Wiki、Skill、自动化与经验索引。归档过期、低价值、用户未采用或已失效的机器记录，减少热数据负担；低风险可恢复改良直接执行并验证，高风险文件移动/删除/合并/批量改名仍只列候选。`,
+        `${CANCIP_DAILY_CARE_PROMPT_MARKER}: aggregate verified daily feedback from sessions and tools, user-touched file/content clues, approved/cancelled/corrected reviews, recommendation and autocomplete shown/used/unused events, and automation outcomes. Analyze content for stable preferences, successful routes, and failure causes; update or merge memory, Wiki, Skills, automations, experience, and indexes. Archive stale, low-value, unused, or invalid machine records to reduce hot data. Execute and verify low-risk recoverable improvements; keep risky move/delete/merge/bulk rename operations as candidates.`
       ),
       command: "cancip.dailyCare",
       args: { days: 1, hours: 24, limit: 80, compactExperience: true },
@@ -52658,8 +53149,8 @@ function cancipAutomationTemplates(language: Language = "en"): AutomationTemplat
       id: VAULT_CURATION_AUTOMATION_ID,
       title: local("Vault 新文件自动整理", "Automatic new-file curation"),
       description: local(
-        "大部分新建 Markdown 笔记默认执行一次小而有用的整理，可处理结构、属性、标签、摘要、链接或简短重命名；明确写不需要整理以及模板、高频引用笔记、插件语法和生成文件会跳过。所有改动可审核、可恢复。",
-        "Most newly created Markdown notes receive one small useful organization pass for structure, properties, tags, summaries, links, or concise renames. Explicit opt-outs, templates, frequently referenced notes, plugin syntax, and generated files are skipped. Every change remains reviewable and recoverable."
+        "结合新文件的内容、名称、目录和全库关系图核实相关笔记，为长篇内容写短摘要、为强关联缺失关系补双链；只整理明确混乱或确有收益的部分，并在专属会话与审核面板留证。",
+        "Use the new file's content, name, folder, and Vault relationship graph to verify related notes, summarize long content, and add missing links only for strong confirmed relations. Change only clearly disorganized or useful parts, with evidence in the dedicated session and Review Gate."
       ),
       prompt: `${buildVaultCurationPrompt()}\n\n${promptLanguage}`,
       schedule: "hourly",
@@ -52849,6 +53340,8 @@ function buildMemoryDreamPrompt(): string {
     "",
     "第一阶段：记忆整理。",
     "1. 先调用 command cancip.memoryDream，参数 days=30、compactExperience=true，整理近期成功、失败、用户反馈、经验和 Skill 索引。",
+    "1.1. 来源必须覆盖：会话中的用户要求/纠正、工具与最终回答结果、用户近期改动文件和内容线索、审核通过/取消/修正/人工覆盖、推荐按钮、自动补全展示/采用/未采用、自动化运行结果；明确纠正和审核决定优先于模型推断。",
+    "1.2. 按反馈内容更新或合并现有记忆、Wiki、经验、Skill、自动化路线和索引；重复验证成功才晋升 Skill，反复未采用只作降权证据，待判定记录不能视为不喜欢。",
     "2. 稳定规则保持短小；不保存密钥、token、隐私全文或整段聊天；压缩低价值经验前先归档，不删除用户笔记。",
     "1.5. 同步更新当前设置的核心记忆目录中的 WIKI.md：把有可靠来源、可复用、相对稳定的项目事实、插件/API 路线、工作方法和已验证避坑提炼成少量原子知识卡。每张卡写短标题、主题、结论、关键事实、来源路径、置信度和更新时间；同类知识合并更新，不重复堆积。",
     "1.6. Wiki 只维护机器区，保留人工维护区原文；临时事件、一次性任务、未经验证推断、情绪猜测、医疗细节、密钥、token、账号和整段会话不得进入 Wiki。来源不足时宁缺毋滥，不能为了凑卡片编造。",
@@ -52996,26 +53489,27 @@ function upsertObsidianOrganizationMemoryContent(existing: string, block: string
 function buildVaultCurationPrompt(): string {
   return [
     `内部版本：${VAULT_CURATION_AUTOMATION_PROMPT_MARKER}。`,
-    "任务：主动整理“Vault Curation Programmatic Scan Pack”列出的新建 Markdown 文件。插件已程序化维护新文件队列；大部分普通新笔记默认做一次小而有用的整理，不要扫描旧文件、最近修改文件或整个 Vault。",
+    "任务：主动整理“Vault Curation Programmatic Scan Pack”列出的新建 Markdown 文件。插件已程序化维护新文件队列，并已从全库元数据关系图按文件名、所在目录、标题、标签、出链和反链筛选相关笔记；不要重新全库扫正文，只按需读取少量高分候选核实。",
     "",
     "三类动作流水线：",
     "A. 美化整理重构：整理 Markdown 标题层级、段落、列表、表格、代码块、引用、待办、空行和 frontmatter 格式；可做轻量结构重构，但不改变事实含义，不删除实质内容。",
-    "B. 笔记属性与知识连接：只在需要时补充或规范 properties/frontmatter；tag 依据已有分类体系少量稳定添加；摘要只给超过一个屏幕的长篇/复杂笔记，并只写入属性，不新增正文摘要/知识关系段落；summary 一句话，link_count/link_relations/related_candidates 等关系属性只在明确有价值时少量短写，写不短或价值不明就跳过；链接只加明确相关但缺失连接的 Obsidian 双链/相关链接/出链，必要时读取少量相关笔记核对，不凭空乱挂链接。",
+    "B. 笔记属性与知识连接：结合文件名、所在目录、标题、标签、正文主题、出链、反链和已筛出的相关笔记理解新文件；只在需要时补充或规范 properties/frontmatter。长篇/复杂笔记用一句 summary 提炼核心，不新增正文摘要/知识关系段落；tag 依据既有分类体系少量稳定添加。只有正文明确提及，或共享标签与多个题名/路径主题词同时吻合，并经读取目标笔记确认语义关系时，才补缺失的 Obsidian 双链/相关链接；纯同目录、单个共同词或模型猜测必须跳过。",
     "C. 文件重命名：根据正文内容、标题、日期、项目上下文提出更清晰文件名；文件名要扼要简短且全面；需要改名时用 move/rename，保持原扩展名，避免频繁改名；改名后必须验证当前文件路径、双链、反链/引用和同轮变更列表。",
     "",
     "执行顺序：",
     "1. 只读取扫描包中的新文件候选。",
-    "2. 对每个候选按 A/B/C 判断实际需要，但只能执行 Scan Pack 中该文件 allowedActions 明确授权的类别；优先做一个基于现有 Vault 分类/结构的小改良并输出 cancip-action，只有已整理完善或没有可靠改良点时才跳过。",
-    "3. 每次只处理少量文件，先 read，再小步 patch/write/move，并读回验证；目标不清时只允许对该目标用一次 cancip.findTarget。",
-    "4. 最终只写实际处理结果、改动文件和验证；不存在的项目不写，不解释空池或未发生的动作。",
+    "2. 对每个候选按 A/B/C 判断实际需要，但只能执行 Scan Pack 中该文件 allowedActions 明确授权的类别。先判断是否真的乱、摘要是否真能降低阅读成本、关系是否有双重证据；没有可靠收益就跳过，不能为了完成自动化制造改动。",
+    "3. 每次只处理少量文件；扫描包已附新文件正文，除非被截断不要重复 read。验证链接时只读取最强的少量相关候选，再小步 patch/write/move，并读回验证；目标不清时只允许对该目标用一次 cancip.findTarget。",
+    "4. 最终按文件记录：实际改动、摘要/链接依据、读回验证和审核状态；跳过时写具体原因。不要另建日志，自动化专属会话、审核项和状态文件就是可追溯记录。",
     "5. 某个候选确认无需改动时，必须在最终回答末尾为该路径追加一行隐藏标记：<!-- cancip-curation-skip:原始完整路径 -->。只有实际判断过且无需改动的候选才能标记。",
     "",
     "边界与审核：",
     "- 不删除实质内容，不改事实含义，不合并/拆分/删除文件，除非用户明确要求。",
-    "- 不要为了凑动作而挂无依据的 tag、摘要、链接或重命名；普通新笔记默认积极整理，但每项改良必须能说明具体收益。",
+    "- 每个普通新笔记都要主动分析，但不能仅因文件是新建的就改动；不要为了凑动作而挂无依据的 tag、摘要、链接、格式或重命名，每项改良必须有明确证据和具体收益。",
     "- 用户在文件中明确写“不需要整理/无需整理/不要整理”或关闭 cancip_curation 时必须跳过。模板、高被引笔记、插件语法和生成文件已由程序保护，不得绕过 candidatePathsJson 处理。",
     "- allowedActions 是逐文件硬边界：格式问题不能顺带授权 tag、摘要、链接或改名，其他类别同理。",
-    "- Scan Pack 已提供 composition/linkRelations：优先使用这些程序化事实；需要补链时先核对 suggested 关系，不要把弱相关候选写成确定关系。",
+    "- Scan Pack 已提供 composition/linkRelations，并已用全库文件名、目录、标题、标签、出链和反链做候选排序；需要补链时先核对 suggested 目标正文，不要把弱相关候选写成确定关系。",
+    "- 关联核实后优先只在新文件的合适位置挂一个语义明确的 wikilink，Obsidian 反链会自动形成双向关系；不要为了形式对称而顺带改旧笔记。",
     "- 摘要、链接数、链接关系、推测关联只能写进 properties/frontmatter；不要新增或改写正文里的摘要/知识关系段落。",
     "- 属性要尽可能短又不失关键信息：summary 一句话，link_relations/related_candidates 最多几条短项；不明确、不高价值、不好短写就不写。",
     "- 普通可见 Vault 笔记改动必须进入 Cancip 审核面板，原文基线保留最后人工版本。",
@@ -67297,7 +67791,7 @@ async function buildDocumentSnapshot(app: App, file: TFile): Promise<DocumentSna
     if (file.stat.size > 4 * 1024 * 1024) warnings.push(I18N.zh?.documentLargeFile || EN.documentLargeFile);
     const mhtmlHtml = kind === "mhtml" ? extractMhtmlHtml(sourceText, warnings) : "";
     const previewHtml = kind === "html" || kind === "mhtml"
-      ? isolatedHtmlPreview(kind === "mhtml" ? mhtmlHtml : sourceText)
+      ? isolatedHtmlPreview(app, file, kind === "mhtml" ? mhtmlHtml : sourceText)
       : "";
     return {
       file,
@@ -67391,7 +67885,7 @@ async function buildDocumentSnapshot(app: App, file: TFile): Promise<DocumentSna
 
   const normalizedMarkdown = trimContext(markdown, DOCUMENT_MARKDOWN_MAX_CHARS);
   const officePreview = kind === "docx" || kind === "xlsx" || kind === "pptx"
-    ? documentMarkdownToPreviewHtml(normalizedMarkdown, file.basename)
+    ? documentMarkdownToPreviewHtml(app, file, normalizedMarkdown, file.basename)
     : "";
   return {
     file,
@@ -67532,7 +68026,7 @@ function spreadsheetColumnIndex(reference: string): number {
   return Math.max(0, value - 1);
 }
 
-function documentMarkdownToPreviewHtml(markdown: string, title: string): string {
+function documentMarkdownToPreviewHtml(app: App, file: TFile, markdown: string, title: string): string {
   const lines = markdown.split(/\r?\n/);
   const output: string[] = [`<article class="cancip-office-preview"><h1>${escapeHtml(title)}</h1>`];
   let index = 0;
@@ -67610,7 +68104,7 @@ function documentMarkdownToPreviewHtml(markdown: string, title: string): string 
     output.push(`<p>${paragraph.map(renderDocumentMarkdownInline).join("<br>")}</p>`);
   }
   output.push("</article>");
-  return isolatedHtmlPreview(output.join("\n"));
+  return isolatedHtmlPreview(app, file, output.join("\n"));
 }
 
 function renderDocumentMarkdownInline(value: string): string {
@@ -67626,30 +68120,227 @@ function renderDocumentMarkdownInline(value: string): string {
   return escaped;
 }
 
-function isolatedHtmlPreview(source: string): string {
-  const parsed = new DOMParser().parseFromString(source || "<p></p>", "text/html");
-  parsed.querySelectorAll("noscript,base,object,embed,applet,meta[http-equiv]").forEach((node) => node.remove());
-  parsed.querySelectorAll("script").forEach((node) => {
-    if (node.getAttribute("src")) node.remove();
+function decodeUriComponentSafely(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function normalizeHtmlPreviewVaultPath(path: string): string {
+  const segments: string[] = [];
+  for (const segment of path.replace(/\\/g, "/").split("/")) {
+    if (!segment || segment === ".") continue;
+    if (segment === "..") {
+      segments.pop();
+      continue;
+    }
+    segments.push(segment);
+  }
+  return normalizePath(segments.join("/"));
+}
+
+function resolveHtmlPreviewVaultPath(sourcePath: string, href: string): string {
+  const rawPath = href.trim().split(/[?#]/, 1)[0] ?? "";
+  if (!rawPath || /^[a-z][a-z0-9+.-]*:/i.test(rawPath)) return "";
+  const decoded = decodeUriComponentSafely(rawPath).replace(/\\/g, "/");
+  const combined = decoded.startsWith("/")
+    ? decoded.slice(1)
+    : `${vaultPathParent(sourcePath)}/${decoded}`;
+  return normalizeHtmlPreviewVaultPath(combined);
+}
+
+function obsidianOpenUriFilePath(href: string): string {
+  try {
+    const url = new URL(href);
+    const path = url.searchParams.get("file") || url.searchParams.get("path") || "";
+    return path ? normalizeHtmlPreviewVaultPath(decodeUriComponentSafely(path).replace(/^\/+/, "")) : "";
+  } catch {
+    return "";
+  }
+}
+
+function resolveHtmlPreviewAssetUrl(app: App, file: TFile, value: string, baseHref = ""): string {
+  const raw = value.trim();
+  if (!raw || raw.startsWith("#")) return raw;
+  if (/^(?:javascript:|file:|data:text\/html)/i.test(raw)) return "";
+  if (/^[a-z][a-z0-9+.-]*:/i.test(raw) || raw.startsWith("//")) return raw;
+  if (/^(?:https?:)?\/\//i.test(baseHref)) {
+    try {
+      return new URL(raw, baseHref.startsWith("//") ? `https:${baseHref}` : baseHref).href;
+    } catch {
+      // Fall back to a Vault-relative resource below.
+    }
+  }
+  const match = raw.match(/^([^?#]*)([?#].*)?$/);
+  let path = "";
+  const localBase = baseHref.trim().split(/[?#]/, 1)[0] ?? "";
+  if (localBase && !/^[a-z][a-z0-9+.-]*:/i.test(localBase) && !localBase.startsWith("//")) {
+    const basePath = resolveHtmlPreviewVaultPath(file.path, localBase);
+    const baseFolder = localBase.endsWith("/") ? basePath : vaultPathParent(basePath);
+    const relativePath = decodeUriComponentSafely(match?.[1] ?? raw).replace(/\\/g, "/");
+    path = relativePath.startsWith("/")
+      ? normalizeHtmlPreviewVaultPath(relativePath.slice(1))
+      : normalizeHtmlPreviewVaultPath(`${baseFolder}/${relativePath}`);
+  }
+  if (!path) path = resolveHtmlPreviewVaultPath(file.path, match?.[1] ?? raw);
+  const target = path ? app.vault.getAbstractFileByPath(path) : null;
+  return target instanceof TFile ? `${app.vault.getResourcePath(target)}${match?.[2] ?? ""}` : raw;
+}
+
+function rewriteHtmlPreviewCssUrls(app: App, file: TFile, css: string, baseHref = ""): string {
+  return css.replace(/url\(\s*(["']?)([^"')]+)\1\s*\)/gi, (full, _quote: string, value: string) => {
+    const resolved = resolveHtmlPreviewAssetUrl(app, file, value, baseHref);
+    return resolved ? `url("${resolved.replace(/"/g, "%22")}")` : full;
   });
+}
+
+function rewriteHtmlPreviewResources(app: App, file: TFile, parsed: Document, baseHref = ""): void {
+  const resourceAttributes: Array<[string, string]> = [
+    ["script[src]", "src"],
+    ["link[href]", "href"],
+    ["img[src]", "src"],
+    ["source[src]", "src"],
+    ["video[src]", "src"],
+    ["video[poster]", "poster"],
+    ["audio[src]", "src"],
+    ["track[src]", "src"],
+    ["iframe[src]", "src"],
+    ["object[data]", "data"],
+    ["embed[src]", "src"],
+    ["input[src]", "src"]
+  ];
+  for (const [selector, attribute] of resourceAttributes) {
+    parsed.querySelectorAll<HTMLElement>(selector).forEach((element) => {
+      const original = element.getAttribute(attribute) ?? "";
+      const resolved = resolveHtmlPreviewAssetUrl(app, file, original, baseHref);
+      if (resolved) element.setAttribute(attribute, resolved);
+      else element.removeAttribute(attribute);
+    });
+  }
+  parsed.querySelectorAll<HTMLElement>("[srcset]").forEach((element) => {
+    const source = element.getAttribute("srcset") ?? "";
+    if (!source || /data:/i.test(source)) return;
+    const resolved = source.split(",").map((candidate) => {
+      const parts = candidate.trim().split(/\s+/);
+      const url = parts.shift() ?? "";
+      return [resolveHtmlPreviewAssetUrl(app, file, url, baseHref), ...parts].filter(Boolean).join(" ");
+    }).filter(Boolean).join(", ");
+    if (resolved) element.setAttribute("srcset", resolved);
+  });
+  parsed.querySelectorAll<HTMLElement>("[style]").forEach((element) => {
+    element.setAttribute("style", rewriteHtmlPreviewCssUrls(app, file, element.getAttribute("style") ?? "", baseHref));
+  });
+  parsed.querySelectorAll("style").forEach((element) => {
+    element.textContent = rewriteHtmlPreviewCssUrls(app, file, element.textContent ?? "", baseHref);
+  });
+  if (/^https?:/i.test(baseHref)) {
+    parsed.querySelectorAll<HTMLAnchorElement>("a[href]").forEach((anchor) => {
+      const href = anchor.getAttribute("href") ?? "";
+      if (!href || href.startsWith("#") || /^[a-z][a-z0-9+.-]*:/i.test(href)) return;
+      try {
+        anchor.setAttribute("href", new URL(href, baseHref).href);
+      } catch {
+        // The parent bridge reports malformed links only when the user clicks them.
+      }
+    });
+  }
+}
+
+function htmlPreviewAttributes(element: Element, excluded: string[] = []): string {
+  const blocked = new Set(excluded.map((name) => name.toLowerCase()));
+  return Array.from(element.attributes)
+    .filter((attribute) => !blocked.has(attribute.name.toLowerCase()))
+    .map((attribute) => ` ${attribute.name}="${escapeHtmlAttribute(attribute.value)}"`)
+    .join("");
+}
+
+function isolatedHtmlPreview(app: App, file: TFile, source: string): string {
+  const parsed = new DOMParser().parseFromString(source || "<p></p>", "text/html");
+  const baseHref = parsed.querySelector("base[href]")?.getAttribute("href")?.trim() ?? "";
+  parsed.querySelectorAll("noscript,base,applet,meta[http-equiv],meta[name='viewport']").forEach((node) => node.remove());
   parsed.querySelectorAll("*").forEach((element) => {
     for (const attribute of Array.from(element.attributes)) {
-      if ((attribute.name === "href" || attribute.name === "src" || attribute.name === "poster") && /^\s*(?:https?:|file:|javascript:|data:text\/html)/i.test(attribute.value)) {
+      if (["href", "src", "poster", "data", "action", "formaction"].includes(attribute.name.toLowerCase())
+        && /^\s*(?:file:|javascript:|data:text\/html)/i.test(attribute.value)) {
         element.removeAttribute(attribute.name);
       }
     }
   });
-  const direction = parsed.documentElement.getAttribute("dir") || "auto";
-  return `<!doctype html><html dir="${escapeHtmlAttribute(direction)}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data: blob:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"><style>html{color-scheme:light dark}body{margin:0;padding:18px;font:16px/1.6 system-ui,sans-serif;color:CanvasText;background:Canvas}img,video{max-width:100%;height:auto}table{border-collapse:collapse;display:block;overflow:auto}th,td{border:1px solid GrayText;padding:5px 9px;text-align:left;vertical-align:top}pre{overflow:auto;white-space:pre-wrap;padding:12px;border:1px solid GrayText;border-radius:6px}article{max-width:1080px;margin:0 auto}.cancip-office-preview h1{font-size:1.35em}.cancip-file-embed,.cancip-file-link{color:GrayText;font-family:ui-monospace,monospace}[contenteditable="true"],[contenteditable="plaintext-only"]{outline:2px solid Highlight;outline-offset:2px}</style>${parsed.head.innerHTML}</head><body>${parsed.body.innerHTML}${documentHtmlPreviewBridgeScript()}</body></html>`;
+  rewriteHtmlPreviewResources(app, file, parsed, baseHref);
+  const htmlAttributes = htmlPreviewAttributes(parsed.documentElement);
+  const headAttributes = htmlPreviewAttributes(parsed.head);
+  const bodyAttributes = htmlPreviewAttributes(parsed.body);
+  const doctype = source.match(/^\s*(<!doctype[^>]*>)/i)?.[1] ?? "<!doctype html>";
+  const csp = [
+    "default-src 'none'",
+    "script-src 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' * data: blob: app: capacitor:",
+    "style-src 'unsafe-inline' * data: blob: app: capacitor:",
+    "img-src * data: blob: app: capacitor:",
+    "media-src * data: blob: app: capacitor:",
+    "font-src * data: blob: app: capacitor:",
+    "connect-src * data: blob: ws: wss: app: capacitor:",
+    "frame-src * data: blob: app: capacitor:",
+    "worker-src * data: blob: app: capacitor:",
+    "child-src * data: blob: app: capacitor:",
+    "object-src * data: blob: app: capacitor:",
+    "base-uri 'none'",
+    "form-action *"
+  ].join("; ");
+  const responsiveStyle = `<style data-cancip-workbench>html{color-scheme:light dark;width:100%!important;max-width:100%!important;min-width:0!important}body{box-sizing:border-box;max-width:100%!important;min-width:0!important;overflow-wrap:anywhere}*,*::before,*::after{box-sizing:border-box}body>*,main,header,footer,nav,section,article,aside{max-width:100%}img,picture,video,audio,canvas,svg,iframe,object,embed{max-width:100%;height:auto}iframe,object,embed{width:100%}table,pre{max-width:100%;overflow:auto}input,textarea,select,button{max-width:100%;font:inherit}button,input,select,textarea,[role="button"]{min-height:40px}article{margin-inline:auto}.cancip-office-preview h1{font-size:1.35em}.cancip-file-embed,.cancip-file-link{color:GrayText;font-family:ui-monospace,monospace}[contenteditable="true"],[contenteditable="plaintext-only"]{outline:2px solid Highlight;outline-offset:2px}@media(max-width:600px){body{width:100%!important;margin-inline:0!important;padding-inline:min(4vw,18px)!important}body>*,main,header,footer,nav,section,article,aside{min-width:0!important;max-width:100%!important}table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch}}</style>`;
+  return `${doctype}<html${htmlAttributes}><head${headAttributes}><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta http-equiv="Content-Security-Policy" content="${escapeHtmlAttribute(csp)}">${documentHtmlPreviewBootstrapScript()}${parsed.head.innerHTML}${responsiveStyle}</head><body${bodyAttributes}>${parsed.body.innerHTML}${documentHtmlPreviewBridgeScript()}</body></html>`;
 }
 
 function normalizeHtmlPreviewEditText(value: string): string {
   return value.replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
 }
 
+function documentHtmlPreviewBootstrapScript(): string {
+  const channel = JSON.stringify(DOCUMENT_HTML_PREVIEW_CHANNEL);
+  return `<script data-cancip-bootstrap>(()=>{
+    const channel=${channel};
+    const post=(action,data={})=>{parent.postMessage({channel,type:"action",action,...data},"*");return true};
+    const storage=()=>{const values=new Map();return{get length(){return values.size},clear(){values.clear()},getItem(key){key=String(key);return values.has(key)?values.get(key):null},key(index){return Array.from(values.keys())[Number(index)]??null},removeItem(key){values.delete(String(key))},setItem(key,value){values.set(String(key),String(value))}}};
+    for(const name of ["localStorage","sessionStorage"]){try{window[name].length}catch{try{Object.defineProperty(window,name,{configurable:true,value:storage()})}catch{}}}
+    const api={
+      sendToCancip(prompt=""){const value=String(prompt??"").trim();return value?post("ask",{prompt:value}):post("send-to-cancip")},
+      ask(prompt){return post("ask",{prompt:String(prompt??"").trim()})},
+      editSource(){return post("edit-source")},
+      preview(){return post("preview")},
+      save(){return post("save")},
+      open(href){return post("open",{href:String(href??"").trim()})},
+      runCommand(command){return post("command",{command:String(command??"").trim()})}
+    };
+    window.Cancip=Object.assign(window.Cancip||{},api);
+  })()</script>`;
+}
+
 function documentHtmlPreviewBridgeScript(): string {
   const channel = JSON.stringify(DOCUMENT_HTML_PREVIEW_CHANNEL);
-  return `<script>(()=>{const channel=${channel};const editableSelector="p,h1,h2,h3,h4,h5,h6,li,td,th,blockquote,pre,code,figcaption,label,summary,span,strong,em,b,i,u,s,mark,small,a,div,section,article";let active=null;let originalText="";let editMode=false;let heightFrame=0;const sendHeight=()=>{if(heightFrame)return;heightFrame=requestAnimationFrame(()=>{heightFrame=0;const root=document.documentElement;const body=document.body;const height=Math.max(root.scrollHeight,root.offsetHeight,body?body.scrollHeight:0,body?body.offsetHeight:0);parent.postMessage({channel,type:"height",height},"*")})};const sendEditMode=()=>parent.postMessage({channel,type:"edit-mode",enabled:editMode},"*");const selectorFor=element=>{const parts=[];let current=element;while(current&&current!==document.body){const tag=current.tagName.toLowerCase();let index=1;for(let sibling=current.previousElementSibling;sibling;sibling=sibling.previousElementSibling)if(sibling.tagName===current.tagName)index+=1;parts.unshift(tag+":nth-of-type("+index+")");current=current.parentElement}return parts.length?"body>"+parts.join(">"):""};const finish=commit=>{if(!active)return;const element=active;const before=originalText;const after=element.innerText||element.textContent||"";const selector=selectorFor(element);active=null;originalText="";element.removeAttribute("contenteditable");element.removeAttribute("spellcheck");if(commit&&before!==after)parent.postMessage({channel,type:"commit",selector,originalText:before,editedText:after},"*");sendHeight()};const editableAt=(x,y)=>{const target=document.elementFromPoint(x,y);if(!target||target.closest("script,style,noscript,svg,canvas,img,video,audio,input,textarea,select,button"))return null;return target.closest(editableSelector)};const begin=(element,x,y)=>{if(!element)return;finish(true);const text=element.innerText||element.textContent||"";if(!text.trim())return;active=element;originalText=text;element.setAttribute("contenteditable","plaintext-only");element.setAttribute("spellcheck","true");element.focus({preventScroll:true});const selection=getSelection();const range=document.caretRangeFromPoint?document.caretRangeFromPoint(x,y):null;if(selection&&range){selection.removeAllRanges();selection.addRange(range)}};addEventListener("message",event=>{if(event.source!==parent||!event.data||event.data.channel!==channel)return;if(event.data.action==="edit-on"){editMode=true;sendEditMode();return}if(event.data.action==="edit-off"){editMode=false;finish(true);sendEditMode();return}if(event.data.action==="find"){const query=String(event.data.query||"");if(!query){getSelection()?.removeAllRanges();return}const found=window.find?.(query,false,event.data.backwards===true,true,false,false,false)??false;const node=getSelection()?.focusNode?.parentElement;if(found&&node)node.scrollIntoView({block:"center",inline:"nearest"});parent.postMessage({channel,type:"find-result",found},"*");return}if(event.data.action!=="edit-at")return;begin(editableAt(Number(event.data.x)||0,Number(event.data.y)||0),Number(event.data.x)||0,Number(event.data.y)||0)});addEventListener("pointerdown",event=>{if(!editMode||active?.contains(event.target))return;const element=event.target?.closest?.(editableSelector);if(!element||element.closest("script,style,noscript,svg,canvas,img,video,audio,input,textarea,select,button"))return;event.preventDefault();event.stopPropagation();begin(element,event.clientX,event.clientY)},true);addEventListener("keydown",event=>{if(!active)return;if(event.key==="Escape"){event.preventDefault();active.innerText=originalText;finish(false)}else if(event.key==="Enter"&&(event.ctrlKey||event.metaKey)){event.preventDefault();finish(true)}});addEventListener("focusout",()=>setTimeout(()=>{if(active&&!active.contains(document.activeElement))finish(true)},0),true);addEventListener("load",()=>{sendHeight();sendEditMode()});addEventListener("resize",sendHeight);new MutationObserver(sendHeight).observe(document.documentElement,{subtree:true,childList:true,attributes:true,characterData:true});if(typeof ResizeObserver==="function")new ResizeObserver(sendHeight).observe(document.documentElement);sendHeight();sendEditMode()})()</script>`;
+  return `<script data-cancip-bridge>(()=>{
+    const channel=${channel};
+    const editableSelector="p,h1,h2,h3,h4,h5,h6,li,td,th,blockquote,pre,code,figcaption,label,summary,span,strong,em,b,i,u,s,mark,small,a,div,section,article";
+    let active=null;let originalText="";let editMode=false;let heightFrame=0;
+    const post=(type,data={})=>parent.postMessage({channel,type,...data},"*");
+    const sendHeight=()=>{if(heightFrame)return;heightFrame=requestAnimationFrame(()=>{heightFrame=0;const root=document.documentElement;const body=document.body;const height=Math.max(root.scrollHeight,root.offsetHeight,body?body.scrollHeight:0,body?body.offsetHeight:0);post("height",{height})})};
+    const sendEditMode=()=>post("edit-mode",{enabled:editMode});
+    const selectorFor=element=>{const parts=[];let current=element;while(current&&current!==document.body){const tag=current.tagName.toLowerCase();let index=1;for(let sibling=current.previousElementSibling;sibling;sibling=sibling.previousElementSibling)if(sibling.tagName===current.tagName)index+=1;parts.unshift(tag+":nth-of-type("+index+")");current=current.parentElement}return parts.length?"body>"+parts.join(">") :""};
+    const finish=commit=>{if(!active)return;const element=active;const before=originalText;const after=element.innerText||element.textContent||"";const selector=selectorFor(element);active=null;originalText="";element.removeAttribute("contenteditable");element.removeAttribute("spellcheck");if(commit&&before!==after)post("commit",{selector,originalText:before,editedText:after});sendHeight()};
+    const editableAt=(x,y)=>{const target=document.elementFromPoint(x,y);if(!target||target.closest("script,style,noscript,svg,canvas,img,video,audio,input,textarea,select,button"))return null;return target.closest(editableSelector)};
+    const begin=(element,x,y)=>{if(!element)return;finish(true);const text=element.innerText||element.textContent||"";if(!text.trim())return;active=element;originalText=text;element.setAttribute("contenteditable","plaintext-only");element.setAttribute("spellcheck","true");element.focus({preventScroll:true});const selection=getSelection();const range=document.caretRangeFromPoint?document.caretRangeFromPoint(x,y):null;if(selection&&range){selection.removeAllRanges();selection.addRange(range)}};
+    const promptFor=element=>{const literal=element.getAttribute("data-cancip-prompt");if(literal!==null)return literal;const selector=element.getAttribute("data-cancip-prompt-from");if(selector){try{const field=document.querySelector(selector);if(field&&"value" in field)return String(field.value??"")}catch{}}const form=element.closest("form");const field=form?.querySelector('textarea[name="prompt"],input[name="prompt"],textarea[name="message"],input[name="message"],textarea[name="query"],input[name="query"],textarea,input[type="text"]');return field&&"value" in field?String(field.value??""):""};
+    const actionFor=element=>{const command=element.getAttribute("data-cancip-command")||element.getAttribute("data-obsidian-command")||element.getAttribute("data-plugin-command")||"";const href=element.getAttribute("data-cancip-href")||element.getAttribute("href")||"";const prompt=promptFor(element);let action=element.getAttribute("data-cancip-action")||"";if(!action&&command)action="command";if(!action&&element.hasAttribute("data-cancip-prompt"))action="ask";return action?{action,prompt,command,href}:null};
+    addEventListener("message",event=>{if(event.source!==parent||!event.data||event.data.channel!==channel)return;if(event.data.action==="edit-on"){editMode=true;sendEditMode();return}if(event.data.action==="edit-off"){editMode=false;finish(true);sendEditMode();return}if(event.data.action==="find"){const query=String(event.data.query||"");if(!query){getSelection()?.removeAllRanges();return}const found=window.find?.(query,false,event.data.backwards===true,true,false,false,false)??false;const node=getSelection()?.focusNode?.parentElement;if(found&&node)node.scrollIntoView({block:"center",inline:"nearest"});post("find-result",{found});return}if(event.data.action!=="edit-at")return;begin(editableAt(Number(event.data.x)||0,Number(event.data.y)||0),Number(event.data.x)||0,Number(event.data.y)||0)});
+    addEventListener("click",event=>{const target=event.target instanceof Element?event.target:null;if(!target)return;const actionElement=target.closest("[data-cancip-action],[data-cancip-prompt],[data-cancip-command],[data-obsidian-command],[data-plugin-command]");const action=actionElement?actionFor(actionElement):null;if(action){event.preventDefault();event.stopPropagation();post("action",action);return}if(event.defaultPrevented||event.button!==0)return;const anchor=target.closest("a[href]");if(!anchor)return;const href=anchor.getAttribute("href")?.trim()||"";if(!href||href.startsWith("#")||anchor.hasAttribute("download"))return;event.preventDefault();post("link",{href})},true);
+    addEventListener("submit",event=>{const form=event.target instanceof HTMLFormElement?event.target:null;if(!form)return;const actionElement=form.matches("[data-cancip-action],[data-cancip-prompt],[data-cancip-command],[data-obsidian-command],[data-plugin-command]")?form:form.querySelector("[data-cancip-action],[data-cancip-prompt],[data-cancip-command],[data-obsidian-command],[data-plugin-command]");const action=actionElement?actionFor(actionElement):null;if(action){event.preventDefault();post("action",action);return}if(event.defaultPrevented||String(form.method).toLowerCase()==="dialog")return;const href=form.getAttribute("action")?.trim()||"";if(!href||href.startsWith("#")){event.preventDefault();return}if(String(form.method).toLowerCase()==="get"){event.preventDefault();try{const url=new URL(href,location.href);for(const [key,value] of new FormData(form))url.searchParams.append(key,typeof value==="string"?value:value.name);post("link",{href:url.href})}catch{post("link",{href})}return}if(/^https?:/i.test(href)){form.target="_blank";return}event.preventDefault();post("link",{href})});
+    addEventListener("pointerdown",event=>{if(!editMode||active?.contains(event.target))return;const element=event.target?.closest?.(editableSelector);if(!element||element.closest("script,style,noscript,svg,canvas,img,video,audio,input,textarea,select,button"))return;event.preventDefault();event.stopPropagation();begin(element,event.clientX,event.clientY)},true);
+    addEventListener("keydown",event=>{if(!active)return;if(event.key==="Escape"){event.preventDefault();active.innerText=originalText;finish(false)}else if(event.key==="Enter"&&(event.ctrlKey||event.metaKey)){event.preventDefault();finish(true)}});
+    addEventListener("focusout",()=>setTimeout(()=>{if(active&&!active.contains(document.activeElement))finish(true)},0),true);
+    addEventListener("load",()=>{sendHeight();sendEditMode()});addEventListener("resize",sendHeight);
+    new MutationObserver(sendHeight).observe(document.documentElement,{subtree:true,childList:true,characterData:true});if(typeof ResizeObserver==="function")new ResizeObserver(sendHeight).observe(document.documentElement);
+    sendHeight();sendEditMode();
+  })()</script>`;
 }
 
 function htmlToMarkdown(source: string, fallbackTitle: string): string {
