@@ -5358,6 +5358,129 @@ details.obcc-process-step {
   display: none;
 }
 
+.obcc-context-edit-bubble {
+  position: fixed;
+  z-index: 1001;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 42px;
+  padding: 5px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-primary);
+  box-shadow: 0 6px 20px var(--background-modifier-box-shadow);
+  flex-wrap: wrap;
+}
+
+.obcc-context-edit-bubble.is-loading .obcc-context-edit-action svg {
+  animation: obcc-spin 0.8s linear infinite;
+}
+
+.obcc-context-edit-input {
+  min-width: 0;
+  flex: 1 1 auto;
+  height: 30px;
+  padding: 0 8px;
+  border: 0;
+  background: transparent;
+  color: var(--text-normal);
+  font: inherit;
+}
+
+.obcc-context-edit-input:focus {
+  outline: 0;
+  box-shadow: none;
+}
+
+.obcc-context-edit-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.obcc-context-edit-action.is-secondary {
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.obcc-context-edit-action svg {
+  width: 16px;
+  height: 16px;
+}
+
+.obcc-context-edit-action.is-hidden {
+  display: none;
+}
+
+.obcc-context-edit-proposal {
+  display: flex;
+  flex: 1 0 100%;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  max-height: min(44vh, 320px);
+}
+
+.obcc-context-edit-diff {
+  min-width: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border-top: 1px solid var(--background-modifier-border);
+  padding-top: 4px;
+  font-family: var(--font-monospace);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.obcc-context-edit-diff-path {
+  overflow: hidden;
+  padding: 2px 4px;
+  color: var(--text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.obcc-context-edit-diff-line {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  gap: 2px;
+  padding: 1px 4px;
+}
+
+.obcc-context-edit-diff-line.is-added {
+  background: color-mix(in srgb, var(--color-green) 14%, transparent);
+  color: var(--color-green);
+}
+
+.obcc-context-edit-diff-line.is-removed {
+  background: color-mix(in srgb, var(--color-red) 14%, transparent);
+  color: var(--color-red);
+}
+
+.obcc-context-edit-diff-line.is-structure {
+  color: var(--text-muted);
+}
+
+.obcc-context-edit-diff-text {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.obcc-context-edit-proposal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
 .obcc-simple-git-section {
   min-height: 0;
   overflow: auto;
@@ -8358,6 +8481,30 @@ body.is-phone .obcc-review-leaf .obcc-review-detail-rail {
   min-width: 0;
   padding-top: 7px;
   border-top: 1px solid var(--background-modifier-border);
+}
+
+.obcc-process-detail-field > summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.obcc-process-detail-field > summary::-webkit-details-marker {
+  display: none;
+}
+
+.obcc-process-detail-field > summary::after {
+  content: "";
+  width: 14px;
+  height: 14px;
+  margin-inline-start: auto;
+  background: currentColor;
+  opacity: 0.7;
+  clip-path: polygon(25% 35%, 50% 60%, 75% 35%, 84% 44%, 50% 78%, 16% 44%);
+  transition: transform 120ms ease;
+}
+
+.obcc-process-detail-field[open] > summary::after {
+  transform: rotate(180deg);
 }
 
 .obcc-process-inline-section {

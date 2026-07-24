@@ -58,8 +58,5 @@ export function isBundledSystemPrompt(value: string): boolean {
   if (routeNavigationMatch?.[1] && normalized === previousRouteSystemPromptForNavigationPath(routeNavigationMatch[1]).trim()) return true;
   const previousNavigationMatch = normalized.match(/缺资料先查\s+(.+?\/CANCIP_NAV\.md)，路线不明查 cancip\.tools\.index/);
   if (previousNavigationMatch?.[1] && normalized === previousShortSystemPromptForNavigationPath(previousNavigationMatch[1]).trim()) return true;
-  return normalized.startsWith("你是 Cancip：Vault 内移动端 AI 开发助手。目标：手机低 token 管理 Vault、插件、会话、记忆和自动化。")
-    && normalized.includes("CANCIP_INDEX.md")
-    && normalized.includes("cancip.tools.index")
-    && (normalized.includes("cancip-choices") || normalized.includes("推荐按钮"));
+  return false;
 }
