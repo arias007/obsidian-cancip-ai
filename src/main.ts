@@ -3489,7 +3489,7 @@ const EN = {
   searchIndexStatus: "Index {indexed}/{total}",
   searchLoadedSession: "Session loaded",
   finalConclusionFallback: "{summary}",
-  finalAnswerFormatPrompt: "For implementation/change/tool tasks, do not write a \"Final answer\" heading and do not write elapsed time, token counts, character counts, or a changed-files section; Cancip appends those programmatically. Before closing, silently compare the original user request with actual actions, changed targets, and tool readback; do not show this checklist. Lead with the concrete result. If the user supplied a required answer template or the current context clearly contains one, use that template and keep only filled useful fields. Otherwise use natural short sentences for one or two facts, and a compact numbered list for three or more. Include only facts that exist: completed actions, actual verification, a concrete blocker, or a newly stored rule. Omit empty, none, not-applicable, unchanged, unread, hypothetical, and generic completion statements; do not list read or changed files in the prose. Do not explain hidden reasoning or process. If more tool work is possible, continue with one cancip-action instead of closing. Add one to three hidden model-written choices only when genuinely useful. Keep tool details folded; never expose raw action JSON.",
+  finalAnswerFormatPrompt: "For implementation/change/tool tasks, do not write a \"Final answer\" heading and do not write elapsed time, token counts, character counts, or a changed-files section; Cancip appends those programmatically. Before closing, silently compare the original user request with actual actions, changed targets, tool readback, and any visible Plan todos; do not show this checklist. If a model-created Plan exists, keep its exact order and answer with matching numbered items, one concrete result, verification, or exact blocker per item. Do not mark complete while a Plan item is still unresolved. If no Plan exists, lead with the concrete result; use natural short sentences for one or two facts and a compact numbered list for three or more. If the user supplied a required answer template or the current context clearly contains one, use that template and keep only filled useful fields. Include only facts that exist: completed actions, actual verification, a concrete blocker, or a newly stored rule. Omit empty, none, not-applicable, unchanged, unread, hypothetical, and generic completion statements; do not list read or changed files in the prose. Do not explain hidden reasoning or process. If more tool work is possible, continue with one cancip-action instead of closing. Add one to three hidden model-written choices only when genuinely useful. Keep tool details folded; never expose raw action JSON.",
   emptyApiReply: "The API returned an empty response.",
   emptyApiReplyWithSuppressedTools: "The API returned tool/action instructions but no visible assistant reply. For simple chat, Cancip does not execute hidden actions.",
   modelContinuationFailed: "Model follow-up failed: {reason}",
@@ -4003,7 +4003,7 @@ const EN = {
   emptyContext: "No context",
   sourceAdded: "Added to context",
   modePromptSearch: "Current mode: Search. List matched note paths first, then answer.",
-  modePromptPlan: "Plan feature: keep the plan/todos current and output an executable plan when useful. Plan is not a mode and does not change permissions: access mode still decides whether read/write tool actions run or need approval. Do not claim execution unless a tool result confirms it.",
+  modePromptPlan: "Plan feature: the model decides whether a Plan is useful. For a multi-step task, organize the user's requirements into ordered, verifiable todos with stable step IDs, keep their order aligned with the Plan panel, update each completed step from real results, and do not stop while another concrete action can advance an unfinished step. Trivial answers need no Plan. Plan is not a mode and does not change permissions: access mode still decides whether read/write tool actions run or need approval. Do not claim execution unless a tool result confirms it.",
   modePromptEdit: "Current mode: Edit. Provide copyable patches or Markdown edit suggestions. If a Vault write action is needed, follow the current access mode and the Vault note review rule.",
   modePromptAsk: "Current mode: Cancip. Answer directly and cite source paths when useful.",
   settingsLanguage: "Language",
@@ -4454,7 +4454,7 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     searchIndexStatus: "索引 {indexed}/{total}",
     searchLoadedSession: "已加载会话",
     finalConclusionFallback: "{summary}",
-    finalAnswerFormatPrompt: "实现、改动、工具类最终回答不要写“最终结论”标题，也不要写耗时、token 数、字数或改动文件模块；这些由 Cancip 程序化追加。收尾前在内部把用户原要求、实际动作、改动目标和工具读回结果逐项核对一致，但不要把核对清单写进正文。开头直接给具体结果：如果用户给了必用模板，或当前上下文明确有模板，就按模板填写且只保留有用字段；否则一两项有效信息用自然短句，三项以上用精简编号。只写真实存在的干货：已完成动作、实际验证、具体阻塞或新增规则。空项、无、未涉及、未改动、仅读取、假设和“已完成你的请求”之类套话全部省略；正文不要列读取或改动文件，不展示隐藏思维链。如果还能继续用工具推进，就继续输出一个 cancip-action，不要提前收尾。推荐按钮只在确有用处时生成一到三个隐藏选项；正文不显示推荐列表。工具细节留在折叠过程，不暴露原始 action JSON。",
+    finalAnswerFormatPrompt: "实现、改动、工具类最终回答不要写“最终结论”标题，也不要写耗时、token 数、字数或改动文件模块；这些由 Cancip 程序化追加。收尾前在内部把用户原要求、实际动作、改动目标、工具读回结果和计划面板待办逐项核对一致，但不要把核对清单写进正文。模型已经建立计划时，最终回答必须保持计划原顺序，用对应序号逐项写清具体结果、验证或精确阻塞；仍有可推进的未完成项时不得标记完成。没有计划时，开头直接给具体结果：如果用户给了必用模板，或当前上下文明确有模板，就按模板填写且只保留有用字段；否则一两项有效信息用自然短句，三项以上用精简编号。只写真实存在的干货：已完成动作、实际验证、具体阻塞或新增规则。空项、无、未涉及、未改动、仅读取、假设和“已完成你的请求”之类套话全部省略；正文不要列读取或改动文件，不展示隐藏思维链。如果还能继续用工具推进，就继续输出一个 cancip-action，不要提前收尾。推荐按钮只在确有用处时生成一到三个隐藏选项；正文不显示推荐列表。工具细节留在折叠过程，不暴露原始 action JSON。",
     emptyApiReply: "API 返回了空回复。",
     emptyApiReplyWithSuppressedTools: "API 只返回了工具/动作指令，没有给普通可见回复。简单聊天不会执行隐藏动作。",
     modelContinuationFailed: "模型续答失败：{reason}",
@@ -4983,7 +4983,7 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     emptyContext: "暂无上下文",
     sourceAdded: "已加入上下文",
     modePromptSearch: "当前模式：Search。先列出命中的笔记路径，再回答。",
-    modePromptPlan: "计划功能：按需维护计划/待办并输出可执行计划。计划不是模式，也不改变权限；读写动作是否执行或排队确认，只由确认/全权访问模式决定。除非工具结果确认，否则不要声称已执行。",
+    modePromptPlan: "计划功能：是否需要计划由模型判断。多步骤任务把用户要求整理成有顺序、可验收、带稳定步骤 ID 的待办，顺序与计划面板保持一致；每次根据真实结果更新已完成步骤，只要未完成步骤仍能推进就继续执行。简单回答不要建计划。计划不是模式，也不改变权限；读写动作是否执行或排队确认，只由确认/全权访问模式决定。除非工具结果确认，否则不要声称已执行。",
     modePromptEdit: "当前模式：Edit。给出可复制补丁/Markdown 修改建议；若要写入 Vault，按当前权限和 Vault 笔记审核规则执行。",
     modePromptAsk: "当前模式：Cancip。直接回答，必要时引用来源路径。",
     settingsLanguage: "语言",
@@ -22788,8 +22788,10 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     return true;
   }
 
-  private async createAdditionalChatView(): Promise<CancipView | null> {
-    const leaf = this.app.workspace.getRightLeaf(true) ?? this.app.workspace.getLeaf("tab");
+  private async createAdditionalChatView(exclude?: CancipView): Promise<CancipView | null> {
+    let leaf = this.app.workspace.getRightLeaf(true) ?? this.app.workspace.getLeaf("tab");
+    if (leaf.view === exclude) leaf = this.app.workspace.getLeaf("tab");
+    if (leaf.view === exclude) return null;
     await leaf.setViewState({ type: VIEW_TYPE, active: true });
     await sleep(0);
     if (!(leaf.view instanceof CancipView)) {
@@ -22814,9 +22816,9 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     return view ? await view.loadSessionHistoryEntry(entry, { saveCurrent: false }) : false;
   }
 
-  async openNewChatInAdditionalView(): Promise<void> {
-    const view = await this.createAdditionalChatView();
-    if (view) await view.newChat({ force: true });
+  async openNewChatInAdditionalView(source?: CancipView): Promise<void> {
+    const view = await this.createAdditionalChatView(source);
+    if (view && view !== source) await view.newChat({ force: true, skipSaveCurrent: true });
   }
 
   async restoreDocumentWorkbenchLeaves(): Promise<number> {
@@ -26203,6 +26205,8 @@ class CancipView extends ItemView {
   private sessionPersistenceSignatures = new Map<string, string>();
   private sessionPersistedSizes = new Map<string, number>();
   private foregroundWarmupCancel: (() => void) | null = null;
+  private newChatPromise: Promise<void> | null = null;
+  private lastNewChatTriggerAt = 0;
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -26645,18 +26649,38 @@ class CancipView extends ItemView {
   }
 
   async newChat(options: { force?: boolean; skipSaveCurrent?: boolean; focus?: boolean } = {}): Promise<void> {
+    if (this.newChatPromise) return await this.newChatPromise;
+    const now = Date.now();
+    if (!options.force && now - this.lastNewChatTriggerAt < 500) return;
+    this.lastNewChatTriggerAt = now;
+    const operation = this.startNewChat(options);
+    this.newChatPromise = operation;
+    try {
+      await operation;
+    } finally {
+      if (this.newChatPromise === operation) this.newChatPromise = null;
+    }
+  }
+
+  private async startNewChat(options: { force?: boolean; skipSaveCurrent?: boolean; focus?: boolean }): Promise<void> {
     if (!options.force && this.ownsSessionRequest()) {
-      await this.plugin.openNewChatInAdditionalView();
+      await this.plugin.openNewChatInAdditionalView(this);
       return;
     }
+    // A newly created view starts restoring the latest session asynchronously.
+    // Invalidate that load before resetting the UI so it cannot overwrite the
+    // new blank session after the user has already started typing.
+    this.initialSessionRestoreDone = true;
+    this.sessionLoadSequence += 1;
     const inheritedIncludeCurrentFile = this.currentSessionIncludesCurrentFile();
     this.queuedPrompts = [];
     this.editingQueuedPromptId = null;
     this.editingManualTodoId = null;
     this.renderQueueStatus();
     if (!options.skipSaveCurrent) void this.saveCurrentSession();
-    this.sessionId = sessionExportId(new Date());
-    this.sessionCreatedAt = new Date().toISOString();
+    const createdAt = new Date();
+    this.sessionId = sessionExportId(createdAt);
+    this.sessionCreatedAt = createdAt.toISOString();
     this.sessionStartedAt = "";
     this.sessionCompletedAt = "";
     this.sessionStoppedAt = "";
@@ -26695,6 +26719,7 @@ class CancipView extends ItemView {
     this.syncRequestControls();
     this.syncSessionChrome();
     this.plugin.schedulePersonalizationRefresh(0);
+    this.cancelAutocompleteNetworkRequests();
     this.renderMessages();
     this.renderSources([]);
     this.setStatus("");
@@ -31745,9 +31770,11 @@ class CancipView extends ItemView {
     if (this.initialSessionRestoreDone) return false;
     this.initialSessionRestoreDone = true;
     if (this.messages.length || this.draftContext.length) return false;
+    const restoreSequence = this.sessionLoadSequence;
     const entries = (await this.readSessionHistoryIndex({ mergeFiles: false }))
       .filter((entry) => !entry.eventOnly && !entry.archived && entry.path && entry.messageCount > 0)
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    if (restoreSequence !== this.sessionLoadSequence || this.messages.length || this.draftContext.length) return false;
     const latest = entries[0];
     if (!latest) return false;
     const wasInterrupted = latest.status === "running";
@@ -38014,8 +38041,8 @@ class CancipView extends ItemView {
   private toolPromptForPolicy(policy: PromptPayloadPolicy): string {
     const routeIndex = policy.includeDetailedToolProtocol ? this.actionRouteIndexPrompt() : this.compactActionRouteIndexPrompt();
     const responseContract = isChineseLanguage(this.plugin.language())
-      ? "响应协议：你直接判断本轮是回答、单步行动还是多步骤任务。需要工具时只输出一个 cancip-action 动作块；多步骤任务由你在同一 actions 数组先给 todo set（2-5 个具体步骤），紧接着给第一项实际动作，不能只建待办；简单任务不要建待办，后续进展用 todo update 更新。todo 只维护计划面板并立即生效，但不批准后续文件或命令动作。无需工具时直接给最终回答。简短问候要像熟人一样自然短答，不自我介绍 Cancip、不列能力、不用“有什么可以帮你”“需要我做什么”“随时准备”等客服式邀约、不复述系统定位；没有具体近况时简单打招呼或关心近况即可。不要用文字承诺稍后执行。最终回答只写新增的具体有效信息，不复述问题或默认机制，不加套话。Cancip 只执行你的结构化决定，不按用户提示词关键词替你判断。"
-      : "Response protocol: decide whether this turn needs a direct answer, one action, or a multi-step task. When tools are needed, output exactly one cancip-action block. For a multi-step task, put a concrete 2-5 item todo set first in the same actions array, immediately followed by the first real action; never stop after creating todos. Do not create todos for simple tasks, and update progress later with todo update. Todo actions update the Plan panel immediately but never approve subsequent file or command actions. Otherwise answer directly. Keep brief greetings natural and familiar: do not introduce Cancip, list capabilities, invite the user to ask for help, say that you are ready to help, or restate the system role. Without concrete recent context, simply greet the user or ask how they are. Do not promise later execution. Final answers contain only new concrete information, with no restatement, default-mechanism explanation, or filler. Cancip executes your structured decision and does not infer complexity from prompt keywords.";
+      ? "响应协议：你直接判断本轮是回答、单步行动还是多步骤任务。需要工具时只输出一个 cancip-action 动作块；多步骤任务由你把用户要求整理成有顺序、可验收的 2-8 项；用户已明确列出更多独立要求时应完整保留，最多 20 项。在同一 actions 数组先给 todo set，每项使用稳定 id（step-1、step-2……），紧接第一项实际动作，不能只建待办。简单任务不要建待办。后续每轮把真实工具结果与对应待办核对：完成一项就在同一 actions 数组用相同 id 做 todo update done:true，再紧接下一项实际动作；失败但仍可推进时换路线，不得提前结束。最终复核时，complete 要求所有待办已完成；最终回答按相同序号和顺序逐项写具体结果、验证或精确阻塞。todo 只维护计划面板并立即生效，不批准后续文件或命令动作。无需工具时直接给最终回答。简短问候要像熟人一样自然短答，不自我介绍 Cancip、不列能力、不用“有什么可以帮你”“需要我做什么”“随时准备”等客服式邀约、不复述系统定位；没有具体近况时简单打招呼或关心近况即可。不要用文字承诺稍后执行。最终回答只写新增的具体有效信息，不复述问题或默认机制，不加套话。Cancip 只执行你的结构化决定，不按用户提示词关键词替你判断。"
+      : "Response protocol: decide whether this turn needs a direct answer, one action, or a multi-step task. When tools are needed, output exactly one cancip-action block. For a multi-step task, organize the user's requirements into 2-8 ordered, verifiable items; preserve a longer explicit list of independent requirements when the user supplied one, up to 20 items. In the same actions array put a todo set first, using stable IDs step-1, step-2, and so on, then immediately include the first real action; never stop after creating todos. Do not create todos for simple tasks. On every continuation, compare the real tool result with the matching todo: when one item is complete, update that same ID with done:true and include the next real action in the same actions array. If work can still advance after a failure, change route instead of ending early. A complete final review requires every todo to be done, and the final answer must use the same numbering and order with one concrete result, verification, or exact blocker per item. Todo actions update the Plan panel immediately but never approve subsequent file or command actions. Otherwise answer directly. Keep brief greetings natural and familiar: do not introduce Cancip, list capabilities, invite the user to ask for help, say that you are ready to help, or restate the system role. Without concrete recent context, simply greet the user or ask how they are. Do not promise later execution. Final answers contain only new concrete information, with no restatement, default-mechanism explanation, or filler. Cancip executes your structured decision and does not infer complexity from prompt keywords.";
     if (policy.includeDetailedToolProtocol) return `${responseContract}\n\n${routeIndex}\n\n${this.toolCatalogPrompt()}\n\n${this.t("toolProtocol")}`;
     return `${responseContract}\n\n${routeIndex}\n\n${this.toolCatalogPrompt()}`;
   }
@@ -40293,7 +40320,7 @@ class CancipView extends ItemView {
     const modelTodos = agentTodos.length ? agentTodos : manualModelTodos;
     const overallPlan = modelTodos.length
       ? modelTodos
-          .slice(0, 5)
+          .slice(0, 20)
           .map((todo, index) => `${index + 1}. ${todo.done ? "done" : "todo"}: ${trimContext(todo.text.replace(/\s+/g, " "), 76)}`)
           .join("\n")
       : "";
@@ -41448,7 +41475,7 @@ class CancipView extends ItemView {
       return actions.slice(0, 2);
     }
     if (capabilityPromptMentionsSessionHistory(text)) {
-      const sessionId = text.match(/session-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z/i)?.[0];
+      const sessionId = text.match(/session-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z(?:-\d{2,})?/i)?.[0];
       const listLimit = requestedResultCount(text, 12, 80);
       add({
         type: "command",
@@ -41958,14 +41985,14 @@ class CancipView extends ItemView {
         "上一步真实工具结果：",
         summary,
         `原任务：${trimContext(originalPrompt.replace(/\s+/g, " "), 240)}`,
-        "只判断一个具体下一步：若已完成或确实阻塞，直接给精简最终回答；若未完成，只输出一个 cancip-action 动作块。已有计划时，在同一 actions 数组先用 todo update 标记刚完成的步骤，再紧接一个实际下一动作，不能只更新计划。失败要换更小路线，不能重复同一失败动作；写入后必须读回验证。不要输出空泛过程话。"
+        "只判断一个具体下一步。已有计划时，先按稳定 step id 把真实结果对应到计划项：完成该项就在同一 actions 数组 todo update done:true，再紧接下一项实际动作；尚未完成就不要勾选，仍能推进时换更小路线继续。所有计划项完成后，最终回答必须按计划原序号逐项写结果与验证；确实阻塞时也按序号指出阻塞项、原因和必要措施。不能只更新计划，不能重复同一失败动作，写入后必须读回验证，不要输出空泛过程话。没有计划时，若已完成或确实阻塞就精简回答，否则只输出一个实际 cancip-action。"
       ].join("\n\n");
     }
     return [
       "Latest real tool result:",
       summary,
       `Original task: ${trimContext(originalPrompt.replace(/\s+/g, " "), 240)}`,
-      "Choose one concrete next step. If complete or objectively blocked, give a concise final answer; otherwise output exactly one cancip-action block. When a plan exists, first update the completed todo and then include one real next action in the same actions array; never stop after only updating the plan. On failure use a smaller route, never repeat the same failed action, and verify writes by reading back. No vague process narration."
+      "Choose one concrete next step. When a Plan exists, map the real result to its stable step ID: if that item is complete, update the same ID with done:true and include the next real action in the same actions array; otherwise leave it incomplete and use a smaller route while progress remains possible. After every Plan item is complete, answer in the Plan's original numbered order with one result and verification per item. If objectively blocked, keep the blocked item incomplete and identify its number, reason, and necessary measure. Never stop after only updating the Plan, never repeat the same failed action, and verify writes by reading back. Without a Plan, answer concisely when complete or blocked; otherwise output exactly one real cancip-action. No vague process narration."
     ].join("\n\n");
   }
 
@@ -42336,17 +42363,25 @@ class CancipView extends ItemView {
       && result.runs.every((run) => isReadOnlyAction(run.action));
     const compactFileFinal = directFileReadFinal || directFileMutationFinal || compactInformationalFinal;
     const relevantContext = trimPromptPayload(context.contextText, 1400);
+    const planState = this.agentPlanTodos()
+      .filter((todo) => todo.sendToModel !== false)
+      .map((todo, index) => `${index + 1}. [${todo.done ? "done" : "todo"}] ${trimContext(todo.text.replace(/\s+/g, " "), 120)} (${todo.id})`)
+      .join("\n");
     const reviewInstruction = [
       "Final review: silently compare the original request, relevant context, and actual tool results.",
       "If available work can still advance the request, return exactly one executable cancip-action and no final marker.",
       "Otherwise include exactly one hidden marker such as <!-- cancip-final {\"status\":\"complete\"} -->. Valid status values are complete, awaiting-approval, blocked, and failed; mark complete only when every requested result is verified.",
-      "Then give at most four concise lines: result and verification, or the exact blocker and necessary user action. Do not repeat process narration or programmatic changed-file cards."
+      planState
+        ? "A Plan exists. Before marking complete, every item must be done from verified results. The visible final answer must keep the same numbering and order, with one concise but specific result and verification per item; for a blocked/failed item, give its exact blocker and necessary measure."
+        : "Then give at most four concise lines: result and verification, or the exact blocker and necessary user action.",
+      "Do not repeat process narration or programmatic changed-file cards."
     ].join("\n");
     const goalState = this.toolGoalStateForModel(result.runs, originalPrompt);
     const basePrompt = compactFileFinal
       ? [
           `Original user request:\n${originalPrompt}`,
           relevantContext ? `Relevant context:\n${relevantContext}` : "",
+          planState ? `Current Plan:\n${planState}` : "",
           "Actual tool results:",
           this.toolRunsForPrompt(result.runs, compactInformationalFinal ? 2600 : 1400, compactInformationalFinal ? 4 : 2),
           directFileMutationFinal
@@ -42358,6 +42393,8 @@ class CancipView extends ItemView {
           `Original user request:\n${originalPrompt}`,
           "",
           relevantContext ? `Relevant context:\n${relevantContext}` : "",
+          "",
+          planState ? `Current Plan:\n${planState}` : "",
           "",
           result.runs.length ? "Latest tool results:" : "Current model response is process-only, empty, or has not finished the task.",
           result.runs.length ? this.toolRunsForPrompt(result.runs, 4200, 6) : "",
@@ -42490,6 +42527,13 @@ class CancipView extends ItemView {
     if (!visible || isOnlyRunStatsText(visible) || this.isActionOnlyFallbackMessage(visible)) {
       return "missing a concrete user-visible result";
     }
+    const planTodos = this.agentPlanTodos().filter((todo) => todo.sendToModel !== false);
+    if (planTodos.length) {
+      for (let index = 0; index < planTodos.length; index += 1) {
+        const marker = new RegExp(`(?:^|\\n)\\s*(?:\\*\\*)?${index + 1}[.、)）．]\\s*`, "m");
+        if (!marker.test(visible)) return `final answer is missing numbered result ${index + 1} for the active Plan`;
+      }
+    }
     const terminalFailure = runs.some((run) => run.status === "failed" || run.status === "blocked" || run.status === "rejected");
     const pending = runs.some((run) => run.status === "pending" || run.status === "executing");
     const verifiedTargetNotFound = vaultTargetDiscoveryCouldNotFindRequestedOpen(originalPrompt, runs)
@@ -42536,6 +42580,10 @@ class CancipView extends ItemView {
     if (!status) return "missing hidden final-review status";
     const pending = runs.some((run) => run.status === "pending" || run.status === "executing");
     const terminalFailure = runs.some((run) => run.status === "failed" || run.status === "blocked" || run.status === "rejected");
+    const unfinishedPlan = this.agentPlanTodos().filter((todo) => todo.sendToModel !== false && !todo.done);
+    if (status === "complete" && unfinishedPlan.length) {
+      return `final review marked complete with unfinished Plan items: ${unfinishedPlan.map((todo) => todo.id).join(", ")}`;
+    }
     if (status === "complete" && pending) return "final review marked complete while work is still pending";
     if (status === "complete" && terminalFailure) return "final review marked complete despite failed or blocked work";
     if (status === "awaiting-approval" && !pending) return "final review marked awaiting approval without pending work";
@@ -44883,7 +44931,7 @@ class CancipView extends ItemView {
 
     if (action.op === "clear") {
       this.manualTodos = this.manualTodos.filter((todo) => todo.source !== "programmatic");
-      this.refreshPlanPanelIfOpen();
+      this.commitAgentPlanMutation();
       return this.t("todoActionResult", { summary: this.planTodosSummary() });
     }
 
@@ -44891,8 +44939,8 @@ class CancipView extends ItemView {
       const items = action.items ?? [];
       const now = new Date().toISOString();
       const nextAgentTodos = items
-        .map((item) => ({
-          id: item.id?.trim() || crypto.randomUUID(),
+        .map((item, index) => ({
+          id: item.id?.trim() || `step-${index + 1}`,
           text: item.text.trim(),
           done: Boolean(item.done),
           sendToModel: item.sendToModel !== false,
@@ -44901,7 +44949,7 @@ class CancipView extends ItemView {
         }))
         .filter((item) => item.text);
       this.manualTodos = dedupeManualTodos([...this.manualTodos.filter((todo) => todo.source !== "programmatic"), ...nextAgentTodos]);
-      this.refreshPlanPanelIfOpen();
+      this.commitAgentPlanMutation();
       return this.t("todoActionResult", { summary: this.planTodosSummary() });
     }
 
@@ -44911,10 +44959,11 @@ class CancipView extends ItemView {
       const sendToModel = action.items?.some((item) => item.sendToModel === false) ? false : true;
       const now = new Date().toISOString();
       for (const line of text.split(/\r?\n/).map((item) => item.trim()).filter(Boolean)) {
-        this.manualTodos.push({ id: crypto.randomUUID(), text: line, done: Boolean(action.done), sendToModel, source: "programmatic", createdAt: now });
+        const nextIndex = this.agentPlanTodos().length + 1;
+        this.manualTodos.push({ id: `step-${nextIndex}`, text: line, done: Boolean(action.done), sendToModel, source: "programmatic", createdAt: now });
       }
       this.manualTodos = dedupeManualTodos(this.manualTodos);
-      this.refreshPlanPanelIfOpen();
+      this.commitAgentPlanMutation();
       return this.t("todoActionResult", { summary: this.planTodosSummary() });
     }
 
@@ -44923,21 +44972,29 @@ class CancipView extends ItemView {
       if (todo) {
         if (typeof action.text === "string" && action.text.trim()) todo.text = action.text.trim();
         if (typeof action.done === "boolean") todo.done = action.done;
-        if (typeof action.items?.[0]?.sendToModel === "boolean") todo.sendToModel = action.items[0].sendToModel;
+        if (typeof action.sendToModel === "boolean") todo.sendToModel = action.sendToModel;
+        else if (typeof action.items?.[0]?.sendToModel === "boolean") todo.sendToModel = action.items[0].sendToModel;
       } else {
         const fallbackText = action.text?.trim() || action.items?.map((item) => item.text.trim()).find(Boolean) || action.id?.trim();
         if (fallbackText) {
-          this.manualTodos.push({ id: crypto.randomUUID(), text: fallbackText, done: Boolean(action.done), sendToModel: action.items?.some((item) => item.sendToModel === false) ? false : true, source: "programmatic", createdAt: new Date().toISOString() });
+          const nextIndex = this.agentPlanTodos().length + 1;
+          this.manualTodos.push({ id: action.id?.trim() || `step-${nextIndex}`, text: fallbackText, done: Boolean(action.done), sendToModel: action.sendToModel ?? (action.items?.some((item) => item.sendToModel === false) ? false : true), source: "programmatic", createdAt: new Date().toISOString() });
         }
       }
       this.manualTodos = dedupeManualTodos(this.manualTodos);
-      this.refreshPlanPanelIfOpen();
+      this.commitAgentPlanMutation();
       return this.t("todoActionResult", { summary: this.planTodosSummary() });
     }
 
     this.manualTodos = this.manualTodos.filter((todo) => todo.source !== "programmatic" || !this.todoMatchesAction(todo, action));
-    this.refreshPlanPanelIfOpen();
+    this.commitAgentPlanMutation();
     return this.t("todoActionResult", { summary: this.planTodosSummary() });
+  }
+
+  private commitAgentPlanMutation(): void {
+    this.renderQueueStatus();
+    this.refreshPlanPanelIfOpen();
+    void this.saveCurrentSession();
   }
 
   private findAgentTodo(action: TodoAction): ManualTodo | null {
@@ -44960,7 +45017,7 @@ class CancipView extends ItemView {
   private planTodosSummary(): string {
     const agentTodos = this.agentPlanTodos();
     if (!agentTodos.length) return this.t("noManualTodos");
-    return agentTodos.map((todo) => `- [${todo.done ? "x" : " "}] ${todo.text} (${todo.id})`).join("\n");
+    return agentTodos.map((todo, index) => `${index + 1}. [${todo.done ? "x" : " "}] ${todo.text} (${todo.id})`).join("\n");
   }
 
   private async executeAutomationAction(action: AutomationAction): Promise<string> {
@@ -55204,8 +55261,18 @@ function localVersionCommitId(iso: string): string {
   return iso.replace(/\.\d{3}Z$/, "Z").replace(/[:.]/g, "-");
 }
 
+let lastSessionExportBase = "";
+let sessionExportSequence = 0;
+
 function sessionExportId(date: Date): string {
-  return `session-${localVersionCommitId(date.toISOString())}`;
+  const base = `session-${localVersionCommitId(date.toISOString())}`;
+  if (base !== lastSessionExportBase) {
+    lastSessionExportBase = base;
+    sessionExportSequence = 0;
+    return base;
+  }
+  sessionExportSequence += 1;
+  return `${base}-${String(sessionExportSequence).padStart(2, "0")}`;
 }
 
 function subagentSessionExportId(date: Date): string {
@@ -56043,7 +56110,7 @@ function tokenize(input: string): string[] {
 function extractHistoryKeyTerms(input: string): string[] {
   const text = redactSensitiveText(input);
   const pathTerms = text.match(/(?:^|[\s"'`])(?:\.?[A-Za-z0-9_\-\u4e00-\u9fff]+\/)+[A-Za-z0-9_\-\u4e00-\u9fff.]+/g) ?? [];
-  const codeTerms = text.match(/(?:session-\d{4}-\d{2}-\d{2}T[\d-]+Z|\.cancip|Obsidian config|Cancip|ntfy|nfty|Obsidian|GitHub|API|RAG|Vault|Plan|Full access|Ask for approval|Responses|compatible|Claude Code)/gi) ?? [];
+  const codeTerms = text.match(/(?:session-\d{4}-\d{2}-\d{2}T[\d-]+Z(?:-\d{2,})?|\.cancip|Obsidian config|Cancip|ntfy|nfty|Obsidian|GitHub|API|RAG|Vault|Plan|Full access|Ask for approval|Responses|compatible|Claude Code)/gi) ?? [];
   const naturalTerms = tokenize(text)
     .filter((token) => token.length >= 2 && token.length <= 36)
     .filter((token) => !/^\d+$/.test(token));
