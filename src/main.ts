@@ -26096,6 +26096,10 @@ class CancipView extends ItemView {
   private statusTextEl: HTMLElement | null = null;
   private statusChangesButtonEl: HTMLButtonElement | null = null;
   private statusPlanButtonEl: HTMLButtonElement | null = null;
+  // Status must survive a settings/sync redraw; the DOM node is intentionally replaceable.
+  private composerStatusText = "";
+  private composerStatusMetaSignature = "";
+  private queueStatusSignature = "";
   private contextEl: HTMLElement | null = null;
   private queueEl: HTMLElement | null = null;
   private scrollBottomButtonEl: HTMLButtonElement | null = null;
@@ -26313,6 +26317,7 @@ class CancipView extends ItemView {
       this.syncCurrentFileHiddenState();
       this.syncModeButtons();
       this.syncRequestControls();
+      this.refreshComposerModelButton();
       this.refreshOpenComposerMenuFromVaultSync();
       if (this.canRenderForVaultSync()) {
         this.render();
@@ -26351,7 +26356,15 @@ class CancipView extends ItemView {
     if (this.ownsSessionRequest()) return false;
     if (this.activeMenu && this.menuEl && !this.menuEl.hasClass("is-hidden")) return false;
     if (this.activeHeaderMenu && this.headerMenuEl && !this.headerMenuEl.hasClass("is-hidden")) return false;
-    if (this.inputEl?.value.trim()) return false;
+    // Replacing a focused mobile textarea dismisses the keyboard and can move the
+    // composer to another leaf. Keep the current DOM until the user leaves it.
+    if (this.composerInputHasFocus() || this.inputEl?.value) return false;
+    const activeElement = this.contentEl.ownerDocument.activeElement;
+    if (
+      activeElement instanceof HTMLElement
+      && activeElement.matches("input, textarea, select, [contenteditable='true']")
+      && (Boolean(this.footerEl?.contains(activeElement)) || Boolean(this.overlayLayerEl?.contains(activeElement)))
+    ) return false;
     if (this.editingQueuedPromptId || this.editingManualTodoId) return false;
     if (this.userInteractingWithMessages) return false;
     return true;
@@ -27158,13 +27171,15 @@ class CancipView extends ItemView {
     this.statusTextEl = null;
     this.statusChangesButtonEl = null;
     this.statusPlanButtonEl = null;
+    this.composerStatusMetaSignature = "";
+    this.queueStatusSignature = "";
     const root = this.contentEl;
     root.empty();
     root.addClass("obcc-root", "obcc-background-runner");
     root.setAttr("aria-hidden", "true");
     this.messagesEl = root.createDiv({ cls: "obcc-background-runner-messages" });
     this.statusEl = root.createDiv({ cls: "obcc-background-runner-status" });
-    this.setStatus("");
+    this.setStatus(this.composerStatusText);
   }
 
   private render(): void {
@@ -27319,6 +27334,7 @@ class CancipView extends ItemView {
       event.stopPropagation();
       this.toggleAuditMenu();
     });
+    this.composerStatusMetaSignature = "";
     const form = footer.createEl("form", { cls: "obcc-composer" });
     this.contextEl = form.createDiv({ cls: "obcc-composer-context obcc-context-strip is-hidden" });
     const inputShell = form.createDiv({ cls: "obcc-input-shell" });
@@ -27343,6 +27359,7 @@ class CancipView extends ItemView {
 
     this.composerSuggestionsEl = form.createDiv({ cls: "obcc-composer-suggestions is-hidden" });
     this.queueEl = form.createDiv({ cls: "obcc-queue-status is-hidden" });
+    this.queueStatusSignature = "";
     const composerBar = form.createDiv({ cls: "obcc-composer-bar" });
     const leftControls = composerBar.createDiv({ cls: "obcc-composer-left" });
     const addButton = leftControls.createEl("button", {
@@ -27455,7 +27472,7 @@ class CancipView extends ItemView {
       void this.submit();
     });
 
-    this.setStatus("");
+    this.setStatus(this.composerStatusText);
     this.renderContextChips();
     this.renderQueueStatus();
     this.syncRequestControls();
@@ -27785,13 +27802,20 @@ class CancipView extends ItemView {
 
   private renderQueueStatus(): void {
     if (!this.queueEl) return;
-    this.queueEl.empty();
     const count = this.queuedPrompts.length;
     const planTodos = this.agentPlanTodos().filter((todo) => todo.sendToModel !== false);
     const visiblePlan = planTodos.length ? planTodos : this.visibleManualTodos().filter((todo) => todo.sendToModel !== false);
     const liveFiles = this.liveChangedFileEntries();
     this.renderHeaderLiveStatus(visiblePlan, liveFiles);
     this.renderComposerStatusMeta(visiblePlan, liveFiles);
+    const signature = JSON.stringify({
+      queue: this.queuedPrompts.map((item) => [item.id, item.prompt, item.held]),
+      plan: visiblePlan.map((todo) => [todo.id, todo.text, todo.done]),
+      files: liveFiles.map((file) => [file.path, file.added, file.removed])
+    });
+    if (signature === this.queueStatusSignature) return;
+    this.queueStatusSignature = signature;
+    this.queueEl.empty();
     this.queueEl.toggleClass("is-hidden", count === 0 && visiblePlan.length === 0);
 
     if (visiblePlan.length) {
@@ -29709,6 +29733,12 @@ class CancipView extends ItemView {
 
   private async toggleHistoryMenu(): Promise<void> {
     if (!this.headerMenuEl) return;
+    if (this.historyMenuLoading) {
+      if (this.activeHeaderMenu !== "history" || this.headerMenuEl.hasClass("is-hidden")) {
+        this.historyMenuOpenPending = true;
+      }
+      return;
+    }
     if (this.activeHeaderMenu === "history" && !this.headerMenuEl.hasClass("is-hidden")) {
       this.closeHeaderMenu();
       return;
@@ -29719,8 +29749,12 @@ class CancipView extends ItemView {
   private async openHistoryMenu(options: { ensureVisible?: boolean } = {}): Promise<void> {
     if (!this.headerMenuEl) return;
     if (this.historyMenuLoading) {
-      if (options.ensureVisible) this.historyMenuOpenPending = true;
-      else if (this.activeHeaderMenu === "history" && !this.headerMenuEl.hasClass("is-hidden")) this.historyMenuRefreshPending = true;
+      const alreadyVisible = this.activeHeaderMenu === "history" && !this.headerMenuEl.hasClass("is-hidden");
+      if (options.ensureVisible) {
+        if (!alreadyVisible) this.historyMenuOpenPending = true;
+        return;
+      }
+      if (alreadyVisible) this.historyMenuRefreshPending = true;
       return;
     }
     this.historyMenuLoading = true;
@@ -29732,7 +29766,8 @@ class CancipView extends ItemView {
       const shouldRefresh = this.historyMenuRefreshPending;
       this.historyMenuOpenPending = false;
       this.historyMenuRefreshPending = false;
-      if (shouldOpen) {
+      const alreadyVisible = this.activeHeaderMenu === "history" && Boolean(this.headerMenuEl && !this.headerMenuEl.hasClass("is-hidden"));
+      if (shouldOpen && !alreadyVisible) {
         void this.openHistoryMenu({ ensureVisible: true });
       } else if (shouldRefresh && this.activeHeaderMenu === "history" && this.headerMenuEl && !this.headerMenuEl.hasClass("is-hidden")) {
         this.scheduleHistoryMenuRefresh(250);
@@ -30670,6 +30705,17 @@ class CancipView extends ItemView {
   private renderComposerStatusMeta(todos: ManualTodo[], files: LiveChangedFileEntry[]): void {
     if (!this.statusChangesButtonEl || !this.statusPlanButtonEl) return;
     const totals = this.liveChangedFileTotals(files);
+    const signature = JSON.stringify({
+      files: files.map((file) => [file.path, file.added, file.removed]),
+      totalAdded: totals.added,
+      totalRemoved: totals.removed,
+      todos: todos.map((todo) => [todo.id, todo.done])
+    });
+    if (signature === this.composerStatusMetaSignature) {
+      this.syncComposerStatusVisibility();
+      return;
+    }
+    this.composerStatusMetaSignature = signature;
     const changedLabel = `+${totals.added} -${totals.removed}`;
     this.statusChangesButtonEl.empty();
     this.statusChangesButtonEl.createSpan({ cls: "is-added", text: `+${totals.added}` });
@@ -31579,6 +31625,11 @@ class CancipView extends ItemView {
     const loadSequence = ++this.sessionLoadSequence;
     try {
       const switchingSession = entry.id !== this.sessionId;
+      // A running session already has an owner. Revealing that view avoids a
+      // duplicate disk reload racing its live progress updates.
+      if (switchingSession && this.plugin.sessionRequestOwner(entry.id)) {
+        return await this.plugin.openSessionInAdditionalView(entry);
+      }
       if (entry.id !== this.sessionId && this.ownsSessionRequest()) {
         return await this.plugin.openSessionInAdditionalView(entry);
       }
@@ -51443,8 +51494,9 @@ class CancipView extends ItemView {
   }
 
   private setStatus(text: string): void {
-    if (!this.statusEl) return;
     const compact = compactComposerStatusText(text);
+    this.composerStatusText = compact;
+    if (!this.statusEl) return;
     if (this.statusTextEl?.isConnected) this.statusTextEl.setText(compact);
     else this.statusEl.setText(compact);
     this.syncComposerStatusVisibility();
