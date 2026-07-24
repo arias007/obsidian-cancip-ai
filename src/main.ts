@@ -1954,6 +1954,10 @@ type AiVaultMutationCaptureHandle = {
   id: string;
 };
 
+type PendingActionSnapshot = AiVaultMutationSnapshot & {
+  capturedAt: number;
+};
+
 type AiVaultAdapterMethod = "write" | "append" | "process" | "writeBinary" | "appendBinary" | "rename" | "copy" | "remove" | "removeFile" | "rmdir" | "trashLocal" | "trashSystem";
 type AiVaultAdapterFunction = (...args: unknown[]) => Promise<unknown>;
 
@@ -7995,6 +7999,7 @@ export default class CancipPlugin extends Plugin {
   private automationStateCache: { at: number; tasks: AutomationTask[] } | null = null;
   private automationStateReadPromise: Promise<AutomationTask[]> | null = null;
   private automationStateWriteQueue: Promise<void> = Promise.resolve();
+  private automationMutationQueue: Promise<void> = Promise.resolve();
   private automationExecutionQueue: Promise<void> = Promise.resolve();
   private automationQueuedIds = new Set<string>();
   private dismissedAutomationTemplateIds = new Set<string>();
@@ -8037,6 +8042,8 @@ export default class CancipPlugin extends Plugin {
   private editorAutocompleteMemoryGeneration = 0;
   private startupMaintenanceCancel: (() => void) | null = null;
   private startupMaintenanceStarted = false;
+  private settingsSavePromise: Promise<void> | null = null;
+  private settingsSaveQueuedSnapshot: Settings | null = null;
   private settingTab: CancipSettingTab | null = null;
   private activeUtterance: SpeechSynthesisUtterance | null = null;
   private activeTtsParts: string[] = [];
@@ -13143,7 +13150,12 @@ export default class CancipPlugin extends Plugin {
       nextSettings.systemPrompt = DEFAULT_SYSTEM_PROMPT;
     }
 
-    const configSettings = await this.loadCancipConfig();
+    const configSnapshot = await this.loadCancipConfigSnapshot();
+    const dataPath = `${this.pluginInstallDir()}/data.json`;
+    const dataMtime = saved ? (await this.app.vault.adapter.stat(dataPath).catch(() => null))?.mtime ?? 0 : -1;
+    const configSettings = configSnapshot && (!saved || configSnapshot.mtime > dataMtime)
+      ? configSnapshot.settings
+      : null;
     if (configSettings) {
       const combined: Partial<Settings> = { ...nextSettings, ...configSettings };
       if (!configSettings.apiProfiles && hasLegacyApiProfileFields(configSettings)) {
@@ -13171,7 +13183,11 @@ export default class CancipPlugin extends Plugin {
 
     this.settings = nextSettings;
     await this.saveData(this.settings);
-    await this.writeCancipConfig();
+    try {
+      await this.writeCancipConfig(this.settings);
+    } catch {
+      // The plugin data remains usable; a later explicit save retries the sync mirror.
+    }
   }
 
   private async importNtfySettingsFromInstalledPlugin(settings: Settings): Promise<Settings> {
@@ -13203,10 +13219,18 @@ export default class CancipPlugin extends Plugin {
   }
 
   private async loadCancipConfig(): Promise<Partial<Settings> | null> {
+    return (await this.loadCancipConfigSnapshot())?.settings ?? null;
+  }
+
+  private async loadCancipConfigSnapshot(): Promise<{ settings: Partial<Settings>; mtime: number } | null> {
     try {
       if (!(await this.app.vault.adapter.exists(CANCIP_CONFIG_PATH))) return null;
       const raw = await this.app.vault.adapter.read(CANCIP_CONFIG_PATH);
-      return parseCancipConfig(JSON.parse(raw));
+      const stat = await this.app.vault.adapter.stat(CANCIP_CONFIG_PATH);
+      return {
+        settings: parseCancipConfig(JSON.parse(raw)),
+        mtime: stat?.mtime ?? 0
+      };
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       console.warn("Cancip config read failed", error);
@@ -13215,21 +13239,22 @@ export default class CancipPlugin extends Plugin {
     }
   }
 
-  private async writeCancipConfig(): Promise<void> {
+  private async writeCancipConfig(settings: Settings): Promise<void> {
     try {
       const adapter = this.app.vault.adapter;
       if (!(await adapter.exists(CANCIP_CONFIG_DIR))) {
         await adapter.mkdir(CANCIP_CONFIG_DIR);
       }
-      const content = `${JSON.stringify(settingsToCancipConfig(this.settings), null, 2)}\n`;
+      const content = `${JSON.stringify(settingsToCancipConfig(settings), null, 2)}\n`;
       if (await adapter.exists(CANCIP_CONFIG_PATH) && await adapter.read(CANCIP_CONFIG_PATH) === content) return;
-      const backupIndex = await backupConfigBeforeCancipWrite(adapter, CANCIP_CONFIG_PATH, content, true);
       await adapter.write(CANCIP_CONFIG_PATH, content);
-      await recordCancipConfigWrite(adapter, CANCIP_CONFIG_PATH, content, backupIndex);
+      const readback = await readTextWithRetry(adapter, CANCIP_CONFIG_PATH, 2);
+      if (readback !== content) throw new Error("config mirror readback mismatch");
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       console.warn("Cancip config write failed", error);
       new Notice(this.t("configWriteFailed", { reason }));
+      throw error;
     }
   }
 
@@ -13679,16 +13704,40 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
   }
 
   async saveSettings(): Promise<void> {
-    this.settings = normalizeSettings(this.settings);
-    if (!this.settings.systemPrompt || isBundledSystemPrompt(this.settings.systemPrompt)) {
-      this.settings.systemPrompt = defaultSystemPromptForNavigationPath(this.memoryPath("CANCIP_NAV.md"));
+    const snapshot = normalizeSettings(cloneJsonObject(this.settings) as Partial<Settings>);
+    if (!snapshot.systemPrompt || isBundledSystemPrompt(snapshot.systemPrompt)) {
+      snapshot.systemPrompt = defaultSystemPromptForNavigationPath(memoryPathForFolder(snapshot.memoryFolder, "CANCIP_NAV.md"));
     }
+    this.settings = snapshot;
     this.syncAutocompleteProfileState();
     this.syncEditorAutocompleteMemorySettingsState();
-    await this.saveData(this.settings);
-    await this.writeCancipConfig();
+    this.settingsSaveQueuedSnapshot = snapshot;
+    if (!this.settingsSavePromise) {
+      const operation = this.flushQueuedSettingsSaves();
+      this.settingsSavePromise = operation;
+      void operation.finally(() => {
+        if (this.settingsSavePromise === operation) this.settingsSavePromise = null;
+      }).catch(() => undefined);
+    }
+    await this.settingsSavePromise;
     this.applyStatusBarVisibility();
     this.scheduleAutomations();
+  }
+
+  private async flushQueuedSettingsSaves(): Promise<void> {
+    let latestError: unknown = null;
+    while (this.settingsSaveQueuedSnapshot) {
+      const snapshot = this.settingsSaveQueuedSnapshot;
+      this.settingsSaveQueuedSnapshot = null;
+      await this.saveData(snapshot);
+      try {
+        await this.writeCancipConfig(snapshot);
+        latestError = null;
+      } catch (error) {
+        latestError = error;
+      }
+    }
+    if (latestError) throw latestError;
   }
 
   private async playEnglishTtsPartIfAvailable(text: string, runId: number): Promise<boolean> {
@@ -21005,6 +21054,15 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     await operation;
   }
 
+  private async mutateAutomationState<T>(mutate: (tasks: AutomationTask[]) => Promise<T> | T): Promise<T> {
+    const operation = this.automationMutationQueue.then(async () => {
+      await this.automationStateWriteQueue;
+      return await mutate(await this.loadAutomations(true));
+    });
+    this.automationMutationQueue = operation.then(() => undefined, () => undefined);
+    return await operation;
+  }
+
   memoryDreamWorkflowPrompt(): string {
     return buildMemoryDreamPrompt();
   }
@@ -21013,52 +21071,53 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     try {
       const templates = cancipAutomationTemplates(this.language());
       if (!templates.length) return;
-      const tasks = await this.loadAutomations(true);
-      const activeTasks = tasks.filter((task) => !DEPRECATED_AUTOMATION_IDS.has(task.id));
-      const templatesById = new Map(templates.map((template) => [template.id, template]));
-      const nextTasks = activeTasks.map((task) => {
-        const template = templatesById.get(task.id);
-        return template ? automationWithDedicatedSession(localizeUntouchedAutomationTask(task, template)) : task;
+      await this.mutateAutomationState(async (tasks) => {
+        const activeTasks = tasks.filter((task) => !DEPRECATED_AUTOMATION_IDS.has(task.id));
+        const templatesById = new Map(templates.map((template) => [template.id, template]));
+        const nextTasks = activeTasks.map((task) => {
+          const template = templatesById.get(task.id);
+          return template ? automationWithDedicatedSession(localizeUntouchedAutomationTask(task, template)) : task;
+        });
+        const migrated = activeTasks.length !== tasks.length || nextTasks.some((task, index) => task !== activeTasks[index]);
+        const existingIds = new Set(nextTasks.map((task) => task.id));
+        const now = new Date().toISOString();
+        const additions = templates
+          .filter((template) => !existingIds.has(template.id) && !this.dismissedAutomationTemplateIds.has(template.id))
+          .map((template) => normalizeAutomationTask({
+            id: template.id,
+            title: template.title,
+            prompt: template.prompt,
+            command: template.command,
+            args: template.args,
+            schedule: template.schedule,
+            enabled: template.enabled,
+            intervalMinutes: template.intervalMinutes,
+            hour: template.hour,
+            minute: template.minute,
+            watchNewFiles: template.watchNewFiles,
+            newFilePattern: template.newFilePattern,
+            newFileDebounceSeconds: template.newFileDebounceSeconds,
+            notifyMode: template.notifyMode,
+            silent: template.silent,
+            sessionMode: "session",
+            sessionId: automationDedicatedSessionId(template.id),
+            createdAt: now,
+            updatedAt: now
+          }))
+          .filter((task): task is AutomationTask => task !== null);
+        if (!additions.length && !migrated) return;
+        await this.saveAutomations([...additions, ...nextTasks].sort((a, b) => a.title.localeCompare(b.title)));
       });
-      let migrated = activeTasks.length !== tasks.length || nextTasks.some((task, index) => task !== activeTasks[index]);
-      const existingIds = new Set(nextTasks.map((task) => task.id));
-      const now = new Date().toISOString();
-      let additions = templates
-        .filter((template) => !existingIds.has(template.id) && !this.dismissedAutomationTemplateIds.has(template.id))
-        .map((template) => normalizeAutomationTask({
-          id: template.id,
-          title: template.title,
-          prompt: template.prompt,
-          command: template.command,
-          args: template.args,
-          schedule: template.schedule,
-          enabled: template.enabled,
-          intervalMinutes: template.intervalMinutes,
-          hour: template.hour,
-          minute: template.minute,
-          watchNewFiles: template.watchNewFiles,
-          newFilePattern: template.newFilePattern,
-          newFileDebounceSeconds: template.newFileDebounceSeconds,
-          notifyMode: template.notifyMode,
-          silent: template.silent,
-          sessionMode: "session",
-          sessionId: automationDedicatedSessionId(template.id),
-          createdAt: now,
-          updatedAt: now
-        }))
-        .filter((task): task is AutomationTask => task !== null);
-      if (!additions.length && !migrated) return;
-      await this.saveAutomations([...additions, ...nextTasks].sort((a, b) => a.title.localeCompare(b.title)));
     } catch (error) {
       console.warn("Cancip default daily automation setup failed", error);
     }
   }
 
   async upsertAutomationFromAction(action: AutomationAction): Promise<AutomationTask> {
-    const tasks = await this.loadAutomations(true);
-    const now = new Date().toISOString();
-    const existing = action.id ? tasks.find((task) => task.id === action.id) : undefined;
-    if (!existing && action.op === "update") throw new Error(this.t("automationNotFound", { id: action.id ?? "" }));
+    return await this.mutateAutomationState(async (tasks) => {
+      const now = new Date().toISOString();
+      const existing = action.id ? tasks.find((task) => task.id === action.id) : undefined;
+      if (!existing && action.op === "update") throw new Error(this.t("automationNotFound", { id: action.id ?? "" }));
 
     const fallbackTitle = existing?.title ?? action.title?.trim() ?? this.t("automationTask");
     const fallbackPrompt = existing?.prompt ?? action.prompt?.trim() ?? "";
@@ -21108,35 +21167,38 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     const task: AutomationTask = normalizedTask;
     this.dismissedAutomationTemplateIds.delete(task.id);
 
-    const next = [task, ...tasks.filter((item) => item.id !== task.id)].sort((a, b) => a.title.localeCompare(b.title));
-    await this.saveAutomations(next);
-    return task;
+      const next = [task, ...tasks.filter((item) => item.id !== task.id)].sort((a, b) => a.title.localeCompare(b.title));
+      await this.saveAutomations(next);
+      return task;
+    });
   }
 
   async updateAutomationTask(id: string, patch: Partial<AutomationTask>): Promise<AutomationTask> {
-    const tasks = await this.loadAutomations(true);
-    const existing = tasks.find((task) => task.id === id);
-    if (!existing) throw new Error(this.t("automationNotFound", { id }));
-    const normalized = normalizeAutomationTask({
-      ...existing,
-      ...patch,
-      id: existing.id,
-      updatedAt: new Date().toISOString(),
-      createdAt: existing.createdAt
+    return await this.mutateAutomationState(async (tasks) => {
+      const existing = tasks.find((task) => task.id === id);
+      if (!existing) throw new Error(this.t("automationNotFound", { id }));
+      const normalized = normalizeAutomationTask({
+        ...existing,
+        ...patch,
+        id: existing.id,
+        updatedAt: new Date().toISOString(),
+        createdAt: existing.createdAt
+      });
+      if (!normalized) throw new Error("invalid automation");
+      await this.saveAutomations([normalized, ...tasks.filter((task) => task.id !== id)].sort((a, b) => a.title.localeCompare(b.title)));
+      return normalized;
     });
-    if (!normalized) throw new Error("invalid automation");
-    await this.saveAutomations([normalized, ...tasks.filter((task) => task.id !== id)].sort((a, b) => a.title.localeCompare(b.title)));
-    return normalized;
   }
 
   async removeAutomation(id: string): Promise<boolean> {
-    const tasks = await this.loadAutomations(true);
-    const next = tasks.filter((task) => task.id !== id);
-    if (cancipAutomationTemplates(this.language()).some((template) => template.id === id)) {
-      this.dismissedAutomationTemplateIds.add(id);
-    }
-    await this.saveAutomations(next);
-    return next.length !== tasks.length;
+    return await this.mutateAutomationState(async (tasks) => {
+      const next = tasks.filter((task) => task.id !== id);
+      if (cancipAutomationTemplates(this.language()).some((template) => template.id === id)) {
+        this.dismissedAutomationTemplateIds.add(id);
+      }
+      await this.saveAutomations(next);
+      return next.length !== tasks.length;
+    });
   }
 
   private installAiVaultMutationCaptureBridge(): void {
@@ -21186,6 +21248,16 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     };
     this.aiVaultMutationCaptureStack.push(state);
     return { id: state.id };
+  }
+
+  seedAiVaultMutationCapture(handle: AiVaultMutationCaptureHandle, snapshots: AiVaultMutationSnapshot[]): void {
+    const state = this.aiVaultMutationCaptureStack.find((item) => item.id === handle.id);
+    if (!state) return;
+    for (const snapshot of snapshots) {
+      const path = normalizePath(snapshot.path);
+      if (!path || state.before.has(path)) continue;
+      state.before.set(path, { path, text: snapshot.text, exists: snapshot.exists });
+    }
   }
 
   endAiVaultMutationCapture(handle: AiVaultMutationCaptureHandle): AiVaultMutationCaptureResult {
@@ -21557,21 +21629,22 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
   }
 
   async markAutomationRun(id: string, status: AutomationRunStatus, result: string, resultPath?: string): Promise<void> {
-    const tasks = await this.loadAutomations(true);
-    const now = new Date().toISOString();
-    const next = tasks.map((task) =>
-      task.id === id
-        ? {
-            ...task,
-            updatedAt: now,
-            lastRunAt: now,
-            lastStatus: status,
-            lastResult: result,
-            lastResultPath: resultPath ?? task.lastResultPath
-          }
-        : task
-    );
-    await this.saveAutomations(next);
+    await this.mutateAutomationState(async (tasks) => {
+      const now = new Date().toISOString();
+      const next = tasks.map((task) =>
+        task.id === id
+          ? {
+              ...task,
+              updatedAt: now,
+              lastRunAt: now,
+              lastStatus: status,
+              lastResult: result,
+              lastResultPath: resultPath ?? task.lastResultPath
+            }
+          : task
+      );
+      await this.saveAutomations(next);
+    });
   }
 
   async writeAutomationLog(task: AutomationTask, result: string): Promise<string> {
@@ -22141,8 +22214,11 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       await this.applyFilePins();
     }
     if (kinds.has("automations")) {
-      const refresh = this.automationStateWriteQueue.then(() => this.loadAutomations(true));
-      this.automationStateWriteQueue = refresh.then(() => undefined, () => undefined);
+      const refresh = this.automationMutationQueue.then(async () => {
+        await this.automationStateWriteQueue;
+        return await this.loadAutomations(true);
+      });
+      this.automationMutationQueue = refresh.then(() => undefined, () => undefined);
       await refresh;
       this.scheduleAutomations();
     }
@@ -22180,6 +22256,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
   }
 
   private async reloadSettingsFromCancipConfigFile(): Promise<boolean> {
+    if (this.settingsSavePromise) await this.settingsSavePromise.catch(() => undefined);
     const configSettings = await this.loadCancipConfig();
     if (!configSettings) return false;
     const before = stableCacheKey(settingsToCancipConfig(this.settings));
@@ -26147,6 +26224,7 @@ class CancipView extends ItemView {
   private mobileFirstTouchClearTimer: number | null = null;
   private liveProcessRecordActive = false;
   private readOnlyActionCache = new Map<string, ReadOnlyActionCacheEntry>();
+  private pendingActionReviewSnapshots = new WeakMap<CancipAction, Map<string, PendingActionSnapshot>>();
   private outcomeEvidenceImagesByRunId = new Map<string, ImageAttachmentContext[]>();
   private resolvedActionPathAliases = new Map<string, string>();
   private vaultAttachmentTextCache = new Map<string, VaultAttachmentParseCacheEntry>();
@@ -40512,6 +40590,7 @@ class CancipView extends ItemView {
           `session:${this.sessionId}:tool:${run.id}:${run.summary}`,
           scope.length ? `scope:${scope.join("|")}` : ""
         ].filter(Boolean).join(":"));
+        this.plugin.seedAiVaultMutationCapture(mutationCapture, this.pendingActionSnapshotsFor(run.action));
         if (this.shouldPrimeAiVaultMutationCaptureForAction(run.action)) {
           await this.plugin.primeAiVaultMutationCaptureReviewScope(mutationCapture);
         }
@@ -43860,6 +43939,7 @@ class CancipView extends ItemView {
     if (action.type === "write" || action.type === "append") {
       const path = action.type === "write" ? await this.resolveWriteActionTargetPath(action) : normalizeActionPath(action.path);
       const disk = await this.readReviewableTextSnapshot(path);
+      this.rememberPendingActionSnapshot(action, path, disk);
       const baseline = await this.manualReviewBaselineForPath(path, disk);
       const content = textWriteActionContent(action);
       const newText = action.type === "append" ? `${disk.text}${content}` : content;
@@ -43870,6 +43950,7 @@ class CancipView extends ItemView {
       const path = await this.resolveActionExistingPath(action.path);
       action.path = path;
       const disk = await this.readReviewableTextSnapshot(path);
+      this.rememberPendingActionSnapshot(action, path, disk);
       if (!disk.exists) throw new Error(`patch target not found: ${path}`);
       const baseline = await this.manualReviewBaselineForPath(path, disk);
       if (!action.find) throw new Error("patch action requires a non-empty find field");
@@ -43891,6 +43972,7 @@ class CancipView extends ItemView {
         return [await this.makeFolderReviewItem(action.type, sourcePath, newPath)];
       }
       const disk = await this.readReviewableTextSnapshot(sourcePath);
+      this.rememberPendingActionSnapshot(action, sourcePath, disk);
       const baseline = await this.manualReviewBaselineForPath(sourcePath, disk);
       return [{
         ...this.makeReviewGateItem(newPath, baseline.text, disk.text, action.type),
@@ -43911,6 +43993,8 @@ class CancipView extends ItemView {
       }
       const sourceDisk = await this.readReviewableTextSnapshot(sourcePath);
       const targetDisk = await this.readReviewableTextSnapshot(newPath);
+      this.rememberPendingActionSnapshot(action, sourcePath, sourceDisk);
+      this.rememberPendingActionSnapshot(action, newPath, targetDisk);
       const targetBaseline = await this.manualReviewBaselineForPath(newPath, targetDisk);
       const changes = ["copy"];
       if (!targetBaseline.exists) changes.push("create");
@@ -43932,6 +44016,7 @@ class CancipView extends ItemView {
         return [await this.makeFolderReviewItem("delete", path, "")];
       }
       const disk = await this.readReviewableTextSnapshot(path);
+      this.rememberPendingActionSnapshot(action, path, disk);
       const baseline = await this.manualReviewBaselineForPath(path, disk);
       return [this.makeReviewGateItem(path, baseline.text, "", "delete")];
     }
@@ -44057,36 +44142,23 @@ class CancipView extends ItemView {
   private async findPendingReviewBaselineItemForPaths(paths: string[]): Promise<ReviewGateManifestItem | null> {
     const targets = uniqueStrings(paths.map((path) => normalizeActionPath(path)).filter(Boolean));
     if (!targets.length) return null;
-    const adapter = this.app.vault.adapter;
-    let packages: string[] = [];
+    let snapshot: ReviewGateSnapshot;
     try {
-      packages = await this.plugin.reviewGatePackagePaths();
+      snapshot = await this.plugin.prewarmReviewGateData();
     } catch {
       return null;
     }
-    for (const reviewPath of packages) {
-      if (isReviewGateAttentionExcluded(reviewPath)) continue;
-      try {
-        const folder = reviewGatePackageFolder(reviewPath);
-        const rawManifest = await adapter.read(`${folder}/manifest.json`);
-        const manifest = JSON.parse(rawManifest) as unknown;
-        const items = filterStoredReviewGateItems(normalizeReviewGateItems(isRecord(manifest) ? manifest.items : []));
-        if (!items.length) continue;
-        const decided = await this.reviewGateTerminalDecisionPaths(folder);
-        for (const item of items) {
-          if (decided.has(normalizePath(item.path))) continue;
-          if (!isReviewGateItemChanged(item) || !isStoredReviewGateItemVisible(item)) continue;
-          if (targets.some((target) => this.reviewGateItemBaselineTouchesPath(item, target))) return item;
-        }
-      } catch {
-        // Ignore stale or malformed review packages; they must not block new work.
+    for (const reviewPath of snapshot.packages) {
+      const entry = snapshot.byPath.get(reviewGateLogicalPathKey(reviewPath));
+      if (!entry) continue;
+      const pendingKeys = new Set([...entry.pendingPaths].map(reviewGateLogicalPathKey));
+      for (const item of entry.data.items) {
+        if (!pendingKeys.has(reviewGateLogicalPathKey(item.path))) continue;
+        if (!isReviewGateItemChanged(item) || !isStoredReviewGateItemVisible(item)) continue;
+        if (targets.some((target) => this.reviewGateItemBaselineTouchesPath(item, target))) return item;
       }
     }
     return null;
-  }
-
-  private async findPendingReviewBaselineItem(path: string): Promise<ReviewGateManifestItem | null> {
-    return await this.findPendingReviewBaselineItemForPaths([path]);
   }
 
   private pendingReviewExpectedStateForPath(item: ReviewGateManifestItem, path: string): { text: string; exists: boolean } | null {
@@ -44094,45 +44166,26 @@ class CancipView extends ItemView {
     return expected ? { text: expected.text, exists: expected.exists } : null;
   }
 
-  private async reviewGateTerminalDecisionPaths(folder: string): Promise<Set<string>> {
-    const decided = new Set<string>();
-    const rawDecisions = await readTextIfExists(this.app.vault.adapter, `${folder}/review-corrections/pending.jsonl`, "");
-    for (const line of rawDecisions.split(/\r?\n/)) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      try {
-        const parsed = JSON.parse(trimmed) as unknown;
-        if (!isRecord(parsed) || typeof parsed.path !== "string" || typeof parsed.decision !== "string") continue;
-        if (isTerminalReviewGateDecision(parsed.decision)) decided.add(normalizePath(parsed.path));
-      } catch {
-        // Ignore malformed review records.
-      }
-    }
-    return decided;
-  }
-
   private async supersedePendingReviewItemsForNewItems(newItems: ReviewGateManifestItem[], sourceRunId: string): Promise<void> {
     if (!newItems.length) return;
     const newPaths = uniqueStrings(newItems.flatMap((item) => this.reviewGateItemSupersedePaths(item)));
     if (!newPaths.length) return;
     const adapter = this.app.vault.adapter;
-    let packages: string[] = [];
+    let snapshot: ReviewGateSnapshot;
     try {
-      packages = await this.plugin.reviewGatePackagePaths();
+      snapshot = await this.plugin.prewarmReviewGateData();
     } catch {
       return;
     }
     const stateUpdates: Array<{ manifestPath: string; itemPaths: string[] }> = [];
-    for (const reviewPath of packages) {
-      if (isReviewGateAttentionExcluded(reviewPath)) continue;
+    for (const reviewPath of snapshot.packages) {
       try {
-        const folder = reviewGatePackageFolder(reviewPath);
-        const manifest = JSON.parse(await adapter.read(`${folder}/manifest.json`)) as unknown;
-        const items = filterStoredReviewGateItems(normalizeReviewGateItems(isRecord(manifest) ? manifest.items : []));
-        if (!items.length) continue;
-        const decided = await this.reviewGateTerminalDecisionPaths(folder);
-        const superseded = items.filter((item) =>
-          !decided.has(normalizePath(item.path))
+        const entry = snapshot.byPath.get(reviewGateLogicalPathKey(reviewPath));
+        if (!entry) continue;
+        const folder = entry.folder;
+        const pendingKeys = new Set([...entry.pendingPaths].map(reviewGateLogicalPathKey));
+        const superseded = entry.data.items.filter((item) =>
+          pendingKeys.has(reviewGateLogicalPathKey(item.path))
           && isReviewGateItemChanged(item)
           && isStoredReviewGateItemVisible(item)
           && newPaths.some((path) => this.reviewGateItemSupersedePaths(item).some((candidate) => this.pathsTouchForReview(candidate, path)))
@@ -44283,7 +44336,9 @@ class CancipView extends ItemView {
     if (isPrimaryConfig && action.replace) {
       throw new Error(`${CANCIP_CONFIG_PATH} does not support replace:true; use set/unset so API profiles and keys are not wiped.`);
     }
-    const oldText = await readTextIfExists(adapter, path, "{}");
+    const disk = await this.readReviewableTextSnapshot(path);
+    this.rememberPendingActionSnapshot(action, path, disk);
+    const oldText = disk.exists ? disk.text : "{}";
     let parsed: unknown;
     try {
       parsed = oldText.trim() ? JSON.parse(oldText) : {};
@@ -44331,8 +44386,10 @@ class CancipView extends ItemView {
     if (action.type !== "write" && action.type !== "append" && action.type !== "patch") return "";
     const adapter = this.app.vault.adapter;
     const path = normalizeActionPath(action.path);
-    if (!(await adapter.exists(path))) return "";
-    const current = await adapter.read(path);
+    const cached = this.pendingActionSnapshot(action, path);
+    if (cached && !cached.exists) return "";
+    if (!cached && !(await adapter.exists(path))) return "";
+    const current = cached?.text ?? await adapter.read(path);
     let next = "";
     if (action.type === "write") {
       next = textWriteActionContent(action);
@@ -44406,7 +44463,7 @@ class CancipView extends ItemView {
     if (action.type === "patch") {
       const currentPath = await this.resolveActionExistingPath(path);
       action.path = currentPath;
-      const current = await readTextWithRetry(adapter, currentPath);
+      const current = this.pendingActionSnapshot(action, currentPath)?.text ?? await readTextWithRetry(adapter, currentPath);
       if (!action.find) throw new Error("patch action requires a non-empty find field");
       const updated = action.regex
         ? this.applyRegexPatch(currentPath, current, action)
@@ -44486,8 +44543,9 @@ class CancipView extends ItemView {
       return this.withSelfPatchNotice(path, this.t("actionWriteDetailed", { path, chars: content.length, chunks: chunks.length }));
     }
 
-    const existed = await adapter.exists(path);
-    const before = existed ? await readTextWithRetry(adapter, path) : "";
+    const cached = this.pendingActionSnapshot(action, path);
+    const existed = cached?.exists ?? await adapter.exists(path);
+    const before = existed ? cached?.text ?? await readTextWithRetry(adapter, path) : "";
     const backupIndex = await backupConfigBeforeCancipWrite(adapter, path, `${before}${content}`, true);
     if (!existed) {
       await adapter.write(path, "");
@@ -44538,6 +44596,29 @@ class CancipView extends ItemView {
       const reason = error instanceof Error ? error.message : String(error);
       return `workbench open failed: ${path} · ${reason}`;
     }
+  }
+
+  private rememberPendingActionSnapshot(
+    action: CancipAction,
+    path: string,
+    snapshot: { text: string; exists: boolean }
+  ): void {
+    const normalized = normalizeActionPath(path);
+    const snapshots = this.pendingActionReviewSnapshots.get(action) ?? new Map<string, PendingActionSnapshot>();
+    snapshots.set(normalized, { path: normalized, text: snapshot.text, exists: snapshot.exists, capturedAt: Date.now() });
+    this.pendingActionReviewSnapshots.set(action, snapshots);
+  }
+
+  private pendingActionSnapshot(action: CancipAction, path: string): AiVaultMutationSnapshot | null {
+    const snapshot = this.pendingActionReviewSnapshots.get(action)?.get(normalizeActionPath(path));
+    if (!snapshot || Date.now() - snapshot.capturedAt > 10000) return null;
+    return snapshot;
+  }
+
+  private pendingActionSnapshotsFor(action: CancipAction): AiVaultMutationSnapshot[] {
+    const now = Date.now();
+    return [...(this.pendingActionReviewSnapshots.get(action)?.values() ?? [])]
+      .filter((snapshot) => now - snapshot.capturedAt <= 10000);
   }
 
   private async waitForVaultFile(path: string, timeoutMs = 5000): Promise<TFile | null> {
@@ -44739,7 +44820,10 @@ class CancipView extends ItemView {
     if (isPrimaryConfig && action.replace) {
       throw new Error(`${CANCIP_CONFIG_PATH} does not support replace:true; use set/unset so API profiles and keys are not wiped.`);
     }
-    const raw = await adapter.exists(path) ? await readTextWithRetry(adapter, path) : "{}";
+    const cached = this.pendingActionSnapshot(action, path);
+    const raw = cached
+      ? cached.exists ? cached.text : "{}"
+      : await adapter.exists(path) ? await readTextWithRetry(adapter, path) : "{}";
     let parsed: unknown;
     try {
       parsed = raw.trim() ? JSON.parse(raw) : {};
