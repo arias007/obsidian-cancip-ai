@@ -24,7 +24,7 @@ check("UI routes support click input select toggle and key", ["input", "select",
 check("UI actions report before after and verification", source.includes("before: ${safeJsonishDisplay(before)}") && source.includes("after: ${safeJsonishDisplay(after)}") && source.includes("verification: ${safeJsonishDisplay(verification)}"));
 check("inconclusive UI effects do not claim success", source.includes('status: observable ? "passed" : "inconclusive"'));
 check("compatibility settings default on", ["pluginCompatibilityEnabled", "pluginCompatibilityAutoLearn", "pluginCompatibilityUiFallback"].every((key) => source.includes(`${key}: true`)));
-check("fixed Vault guide and schema paths exist", source.includes('.cancip/guides/PLUGIN_COMPATIBILITY.md') && source.includes('.cancip/guides/cancip-plugin.schema.json'));
+check("canonical plugin guide and schema paths are derived from plugin data root", source.includes('let CANCIP_PLUGIN_GUIDE_PATH = `${CANCIP_CONFIG_DIR}/guides/PLUGIN_COMPATIBILITY.md`') && source.includes('let CANCIP_PLUGIN_SCHEMA_PATH = `${CANCIP_CONFIG_DIR}/guides/cancip-plugin.schema.json`') && source.includes('CANCIP_PLUGIN_GUIDE_PATH = `${CANCIP_CONFIG_DIR}/guides/PLUGIN_COMPATIBILITY.md`'));
 check("guide documents observe act verify and ambiguity", guide.includes("observe -> act -> verify") && guide.includes("Ambiguous controls are not clicked"));
 check("JSON schema requires risk and route", schema?.properties?.actions?.items?.required?.includes("risk") && schema?.properties?.actions?.items?.required?.includes("route"));
 check("JSON schema accepts all three declarative routes", ["command", "api", "ui"].every((route) => schema?.properties?.actions?.items?.properties?.route?.properties?.type?.enum?.includes(route)));

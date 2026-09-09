@@ -2275,6 +2275,31 @@ type CancipArchiveIndex = {
   entries: CancipArchiveEntry[];
 };
 
+type SessionRetentionRecord = {
+  key: string;
+  sourcePath: string;
+  sourceHash: string;
+  extractedAt: string;
+  memoryItems: number;
+};
+
+type SessionRetentionLedger = {
+  schemaVersion: number;
+  updatedAt: string;
+  records: SessionRetentionRecord[];
+};
+
+type SessionRetentionCandidate = {
+  key: string;
+  path: string;
+  raw: string;
+  title: string;
+  kind: CancipArchiveKind;
+  session?: SessionHistoryEntry;
+  hotSessionId?: string;
+  archiveEntryId?: string;
+};
+
 type UniversalSearchDocumentKind = "note" | "memory" | "session" | "config" | "pdf" | "image" | "office" | "archive" | "file";
 
 type UniversalSearchDocument = {
@@ -3103,6 +3128,7 @@ type CancipAction =
   | { type: "command"; command: string; args?: Record<string, unknown> };
 
 type PromptIntent = "trivial" | "informational" | "implementation";
+type SessionCleanupSchedule = "never" | "daily" | "weekly" | "monthly";
 
 type Settings = {
   language: LanguageMode;
@@ -3235,6 +3261,8 @@ type Settings = {
   dailyLocalVersioning: boolean;
   localVersionHour: number;
   localVersionMaxFileBytes: number;
+  sessionCleanupSchedule: SessionCleanupSchedule;
+  sessionCleanupRetentionDays: number;
   automationsEnabled: boolean;
   automationCheckMinutes: number;
   automationStartupGraceEnabled: boolean;
@@ -4182,6 +4210,8 @@ const DEFAULT_SETTINGS: Settings = {
   dailyLocalVersioning: true,
   localVersionHour: 4,
   localVersionMaxFileBytes: 524288,
+  sessionCleanupSchedule: "weekly",
+  sessionCleanupRetentionDays: 30,
   automationsEnabled: true,
   automationCheckMinutes: 15,
   automationStartupGraceEnabled: true,
@@ -4230,8 +4260,8 @@ let CANCIP_SKILLS_INDEX_PATH = `${CANCIP_MACHINE_INDEX_DIR}/skills-index.json`;
 const CANCIP_SKILLS_INDEX_SCHEMA_VERSION = 1;
 let CANCIP_PLUGIN_LEARNING_INDEX_PATH = `${CANCIP_MACHINE_INDEX_DIR}/plugin-learning.json`;
 const CANCIP_PLUGIN_LEARNING_INDEX_SCHEMA_VERSION = 2;
-const CANCIP_PLUGIN_GUIDE_PATH = ".cancip/guides/PLUGIN_COMPATIBILITY.md";
-const CANCIP_PLUGIN_SCHEMA_PATH = ".cancip/guides/cancip-plugin.schema.json";
+let CANCIP_PLUGIN_GUIDE_PATH = `${CANCIP_CONFIG_DIR}/guides/PLUGIN_COMPATIBILITY.md`;
+let CANCIP_PLUGIN_SCHEMA_PATH = `${CANCIP_CONFIG_DIR}/guides/cancip-plugin.schema.json`;
 const CANCIP_PLUGIN_DESCRIPTOR_FILE = "cancip-plugin.json";
 let CANCIP_GENERATED_SKILLS_DIR = `${CANCIP_CONFIG_DIR}/skills/generated`;
 let CANCIP_BUILTIN_CURATION_SKILL_PATH = `${CANCIP_CONFIG_DIR}/skills/vault-curation-specified-scope.skill.md`;
@@ -4332,6 +4362,13 @@ const CANCIP_ARCHIVE_AFTER_MS = CANCIP_ARCHIVE_AFTER_DAYS * 24 * 60 * 60 * 1000;
 const CANCIP_ARCHIVE_MAINTENANCE_INTERVAL_MS = 12 * 60 * 60 * 1000;
 const CANCIP_ARCHIVE_SESSION_SCAN_BATCH = 36;
 const CANCIP_ARCHIVE_SESSION_MOVE_BATCH = 12;
+const CANCIP_SESSION_RETENTION_SCHEMA_VERSION = 1;
+const CANCIP_SESSION_RETENTION_BATCH = 24;
+const CANCIP_SESSION_RETENTION_MAX_RECORDS = 20000;
+const CANCIP_SESSION_CLEANUP_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
+let CANCIP_SESSION_RETENTION_MEMORY_PATH = `${CANCIP_CONFIG_DIR}/memory/session-retention.md`;
+let CANCIP_SESSION_RETENTION_LEDGER_PATH = `${CANCIP_CONFIG_DIR}/memory/session-retention.json`;
+let CANCIP_SESSION_CLEANUP_STATE_PATH = `${CANCIP_CONFIG_DIR}/session-cleanup.json`;
 let UNIVERSAL_SEARCH_INDEX_PATH = `${CANCIP_MACHINE_INDEX_DIR}/universal-search.json`;
 let UNIVERSAL_SEARCH_INDEX_DIR = `${CANCIP_MACHINE_INDEX_DIR}/universal-search`;
 const UNIVERSAL_SEARCH_SCHEMA_VERSION = 5;
@@ -4454,6 +4491,8 @@ function configureCancipStorageRoot(storageDir: string): void {
   CANCIP_OUTCOME_EVIDENCE_DIR = `${CANCIP_CONFIG_DIR}/evidence`;
   CANCIP_SKILLS_INDEX_PATH = `${CANCIP_MACHINE_INDEX_DIR}/skills-index.json`;
   CANCIP_PLUGIN_LEARNING_INDEX_PATH = `${CANCIP_MACHINE_INDEX_DIR}/plugin-learning.json`;
+  CANCIP_PLUGIN_GUIDE_PATH = `${CANCIP_CONFIG_DIR}/guides/PLUGIN_COMPATIBILITY.md`;
+  CANCIP_PLUGIN_SCHEMA_PATH = `${CANCIP_CONFIG_DIR}/guides/cancip-plugin.schema.json`;
   CANCIP_GENERATED_SKILLS_DIR = `${CANCIP_CONFIG_DIR}/skills/generated`;
   CANCIP_BUILTIN_CURATION_SKILL_PATH = `${CANCIP_CONFIG_DIR}/skills/vault-curation-specified-scope.skill.md`;
   CANCIP_EXPERIENCE_RECIPES_INDEX_PATH = `${CANCIP_MACHINE_INDEX_DIR}/experience-recipes.md`;
@@ -4474,6 +4513,9 @@ function configureCancipStorageRoot(storageDir: string): void {
   CANCIP_ARCHIVE_EVENTS_DIR = `${CANCIP_ARCHIVE_DIR}/session-events`;
   CANCIP_ARCHIVE_EXPERIENCE_DIR = `${CANCIP_ARCHIVE_DIR}/experience`;
   CANCIP_ARCHIVE_INDEX_PATH = `${CANCIP_ARCHIVE_DIR}/index.json`;
+  CANCIP_SESSION_RETENTION_MEMORY_PATH = `${CANCIP_CONFIG_DIR}/memory/session-retention.md`;
+  CANCIP_SESSION_RETENTION_LEDGER_PATH = `${CANCIP_CONFIG_DIR}/memory/session-retention.json`;
+  CANCIP_SESSION_CLEANUP_STATE_PATH = `${CANCIP_CONFIG_DIR}/session-cleanup.json`;
   UNIVERSAL_SEARCH_INDEX_PATH = `${CANCIP_MACHINE_INDEX_DIR}/universal-search.json`;
   UNIVERSAL_SEARCH_INDEX_DIR = `${CANCIP_MACHINE_INDEX_DIR}/universal-search`;
   AUTOMATION_DIR = `${CANCIP_CONFIG_DIR}/automations`;
@@ -5281,7 +5323,7 @@ const EN = {
   contextBuildFailed: "Context build failed: {reason}",
   contextStepSkipped: "Skipped {step}: {reason}",
   repairRunning: "Repairing basic chat...",
-  repairNoApi: "/修复 cannot run because API URL/key/model is incomplete. Fill them in settings or .cancip/config.json first.",
+  repairNoApi: "/修复 cannot run because API URL/key/model is incomplete. Fill them in settings or .obsidian/plugins/cancip/data/config.json first.",
   repairNoSettingChanges: "no setting changes needed",
   repairSuccess: "/修复 completed.\n\n- Basic API probe: OK ({apiMode}, {model})\n- Safe basic chat settings: {changes}\n- Heavy automatic context is off by default now. Manual @ context, Search mode, Plan, command bus, and settings remain available.\n\nSend `测试` now.",
   repairFailed: "/修复 failed: {reason}",
@@ -5297,7 +5339,7 @@ const EN = {
   none: "None",
   activeSkills: "Active Skills",
   activeSkillContext: "Skill instructions",
-  skillsNone: "No Skills found. Add SKILL.md, *.skill.md, or Markdown files under .cancip/skills, AI/Cancip/Skills, skills, SkillOB, 技能, or 能力 folders.",
+  skillsNone: "No Skills found. Add SKILL.md, *.skill.md, or Markdown files under .obsidian/plugins/cancip/data/skills, AI/Cancip/Skills, skills, SkillOB, 技能, or 能力 folders.",
   skillsIndexed: "{count} Skill(s) indexed",
   skillsIndexWritten: "{count} Skill(s) indexed -> {path}",
   coreMemory: "Core memory",
@@ -5486,7 +5528,7 @@ const EN = {
   settingsGithubOwner: "GitHub owner",
   settingsGithubRepo: "GitHub repo",
   settingsGithubToken: "GitHub token",
-  settingsGithubTokenDesc: "Stored in .cancip/config.json on this vault. Exports only record whether it is configured.",
+  settingsGithubTokenDesc: "Stored in .obsidian/plugins/cancip/data/config.json on this vault. Exports only record whether it is configured.",
   settingsAutoContinueAfterTools: "Auto-continue after tools",
   settingsAutoContinueAfterToolsDesc: "After tool runs finish, call the model again with tool results. Max iterations prevents loops.",
   settingsMaxToolIterations: "Max tool iterations",
@@ -5586,21 +5628,29 @@ const EN = {
   settingsMaxSkillContextChars: "Explicit Skill characters",
   settingsMaxAutoSkillContextChars: "Auto Skill characters",
   settingsSkillExperienceHarvest: "Harvest successful runs into Skills",
-  settingsSkillExperienceHarvestDesc: "Keeps a mobile-safe generated Skill/recipe cache under .cancip/skills/generated for repeated workflows.",
+  settingsSkillExperienceHarvestDesc: "Keeps a mobile-safe generated Skill/recipe cache under .obsidian/plugins/cancip/data/skills/generated for repeated workflows.",
   harvestExperienceSkills: "Harvest experience Skills",
   experienceSkillsHarvested: "{count} experience Skill(s) generated -> {path}",
   refreshSkillIndex: "Refresh Skill index",
   settingsDailyLocalVersioning: "Daily local versioning",
-  settingsDailyLocalVersioningDesc: "Creates one lightweight snapshot per day under .cancip/versions when Obsidian is open. First daily run initializes a hash baseline without copying the whole vault.",
+  settingsDailyLocalVersioningDesc: "Creates one lightweight incremental snapshot per day under .obsidian/plugins/cancip/data/versions when Obsidian is open. It stores an index, commit metadata, and copies of changed small text files; it is not a full Vault copy.",
   settingsLocalVersionHour: "Daily version hour",
   settingsLocalVersionMaxFileBytes: "Max versioned file bytes",
-  settingsReviewSystemDesc: "Review state is shared through .cancip/review-state.json. Open pending items here and rebuild the shared count if another device looks different.",
+  settingsSessionCleanupSchedule: "Session and archive cleanup",
+  settingsSessionCleanupScheduleDesc: "Runs during idle time. Before an expired session or archive item is removed, useful decisions and outcomes are distilled into verified long-term memory.",
+  settingsSessionCleanupNever: "Never delete",
+  settingsSessionCleanupDaily: "Daily",
+  settingsSessionCleanupWeekly: "Weekly (default)",
+  settingsSessionCleanupMonthly: "Monthly",
+  settingsSessionCleanupRetentionDays: "Session and archive retention days",
+  settingsSessionCleanupRetentionDaysDesc: "Only inactive, unpinned items older than this age are eligible. Running, pinned, and open sessions are always protected.",
+  settingsReviewSystemDesc: "Review state is shared through .obsidian/plugins/cancip/data/review-state.json. Open pending items here and rebuild the shared count if another device looks different.",
   settingsReviewPendingCount: "{count} pending item(s)",
   settingsReviewOpenPending: "Open pending review",
   settingsReviewOpenLatest: "Open latest review",
   settingsReviewRebuildState: "Rebuild shared count",
   settingsReviewStateRebuilt: "Review count rebuilt: {count}",
-  settingsFilePinsDesc: "Files and folders pinned from the native File Explorer are saved in .cancip/file-pins.json and rendered inside the normal file list.",
+  settingsFilePinsDesc: "Files and folders pinned from the native File Explorer are saved in .obsidian/plugins/cancip/data/file-pins.json and rendered inside the normal file list.",
   settingsFilePinsSummary: "Pinned files and folders",
   settingsFilePinsRefresh: "Refresh file list",
   settingsFilePinsSortActiveFolder: "Sort active folder",
@@ -5744,14 +5794,14 @@ const EN = {
   supportCodesNote: "Optional support for maintenance. These images are built-in local plugin resources and are not included in prompts.",
   supportCodeMissing: "Image path not configured",
   settingsSystemPrompt: "System prompt",
-  settingsSystemPromptDesc: "Sent with every model call. Keep it short. Edits are saved permanently and synced to .cancip/config.json like a normal config file.",
+  settingsSystemPromptDesc: "Sent with every model call. Keep it short. Edits are saved permanently and synced to .obsidian/plugins/cancip/data/config.json like a normal config file.",
   selectionFrom: "Selection from {path}",
   currentFileLabel: "Current file {path}",
   score: "score {score}",
   accessPromptAsk: "Access: approval mode. Read/search/list/help/status actions run without asking and belong in process records; do not show prose like \"I will read first\" as a user-facing answer. For write/move/delete/config/plugin/automation/external-write tasks, do not ask permission in prose; output the needed action block so the UI shows the approval card. Only UI or .cancip/config.json changes permission. Claim execution only after a tool result.",
   accessPromptFull: "Access: full. Implemented tools may read/write the Vault, dot folders, Obsidian config, .cancip, installed Cancip files, and authorized external bridges. Do not claim unavailable before trying the indexed route. Execute small auditable actions and verify from tool results; plugin hot patches are valid when source build is unavailable.",
-  configWriteFailed: "Could not write .cancip/config.json: {reason}",
-  configReadFailed: "Could not read .cancip/config.json: {reason}",
+  configWriteFailed: "Could not write .obsidian/plugins/cancip/data/config.json: {reason}",
+  configReadFailed: "Could not read .obsidian/plugins/cancip/data/config.json: {reason}",
   toolProtocol: "Tool protocol: Choose tools by user intent, not by rigid greeting/simple-chat rules. For read/list/explain/analyze questions, even if they mention plugins, settings, config, folders, GitHub, or commands, use only read-only actions such as read, search, list, status, or help, then answer directly from the tool result; do not create reports or run write-like actions unless the user explicitly asks to create, modify, move, delete, configure, install, execute, or fix something. If an action is genuinely needed, output exactly one fenced block named cancip-action containing JSON like {\"actions\":[{\"type\":\"todo\",\"op\":\"set\",\"items\":[{\"text\":\"inspect files\"},{\"text\":\"apply patch\"}]},{\"type\":\"automation\",\"op\":\"add\",\"title\":\"Daily review\",\"prompt\":\"Review open todos\",\"schedule\":\"daily\",\"hour\":9,\"minute\":15,\"sessionMode\":\"new\",\"model\":\"gpt-5\"},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"query\":\"anchor\",\"maxChars\":8000},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"startLine\":120,\"endLine\":180},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"aroundLine\":240,\"maxChars\":4000},{\"type\":\"write\",\"path\":\"Folder/Note.md\",\"content\":\"...\"},{\"type\":\"write\",\"path\":\"Folder/Large.md\",\"chunks\":[\"part 1\",\"part 2\"]},{\"type\":\"move\",\"path\":\"Folder/Old.md\",\"newPath\":\"Folder/New.md\"},{\"type\":\"move\",\"path\":\"Folder/Old.md\",\"newPath\":\"Archive\"},{\"type\":\"delete\",\"path\":\"Folder/Old.md\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"find\":\"old\",\"replace\":\"new\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"regex\":true,\"find\":\"old\\\\s+pattern\",\"replace\":\"new\",\"flags\":\"m\"},{\"type\":\"config\",\"set\":{\"maxToolIterations\":6},\"unset\":[\"oldSetting\"]},{\"type\":\"command\",\"command\":\"cancip.findTarget\",\"args\":{\"query\":\"target or command name\",\"limit\":10}}]}. Supported action types: read, write, append, patch, config, todo, automation, mkdir, rename, move, copy, delete, command. Read supports query, occurrence, startLine, endLine, aroundLine, and maxChars for focused line-numbered snippets from large/minified files; prefer query or line ranges over whole-file reads, and reading a folder returns a direct child listing. Write and append support content or chunks:[\"part1\",\"part2\"]; for large files prefer chunks because Cancip writes/appends sequentially and verifies the result by reading it back. Move is the normal file/folder move action; rename is kept as an alias. If newPath is a folder path, Cancip keeps the original file/folder name under that folder. Delete moves to trash by default; if platform trash is unavailable, Cancip moves the target to Cancip trash; only use permanent:true when the user explicitly asks for permanent deletion. Patch supports exact find/replace or regex:true with optional flags; if patch text is not found, do not retry the same find text, read the current file with a focused query or line range and use a smaller anchored patch. Config safely deep-merges JSON into Cancip config by default, supports optional path, set, unset, replace, writes formatted JSON, and verifies by reading JSON back; use it for large config files instead of fragile string patches. Todo operations are set, add, update, remove, list, clear and update the visible Plan panel. Automation operations are add, update, remove, list, run; schedules are manual, hourly, daily and daily supports hour+minute; sessionMode can be current, new, or session with sessionId, condition stores an optional trigger note, and model selects a task-specific model while empty values follow the current model and its globally bound source. File actions use Vault-relative paths only, including dot folders, Obsidian config, Cancip installed files, and .cancip session JSON. Command actions use a named command bus: cancip.findTarget, cancip.tools.index, obsidian.listCommands, obsidian.execute, obsidian.js.help, obsidian.js.probe, obsidian.eval/js.eval/javascript.eval/browser.eval, obsidian.currentView, obsidian.dom.snapshot, obsidian.dom.click, obsidian.dom.input, obsidian.ui.buttons, obsidian.ui.buttonRules, obsidian.ui.applyButtonRules, obsidian.tags, obsidian.tags.pin, obsidian.tags.unpin, obsidian.tags.deleteUnpinned, obsidian.tabs, obsidian.tabs.pin, obsidian.tabs.unpin, obsidian.tabs.closeUnpinned, obsidian.tabs.closeAll, cancip.reviewGate, cancip.reviewGate.list, cancip.reviewGate.testMarkdown, cancip.sessionEvents, cancip.sessionHistory, cancip.subagents.start/list/status/stop/open, cancip.installedPlugins, cancip.pluginCapabilities, cancip.skills.list, cancip.skills.read, cancip.skills.refresh, cancip.experience.list, cancip.experience.harvest, cancip.attachment.help, cancip.tts.help/probe/voices/status/installLocal/speak/readActive/pause/resume/seek/stop, cancip.externalFiles.help, cancip.automation.templates, cancip.automation.addTemplate, cancip.searchVault, cancip.rebuildIndex, cancip.previewVaultSearch, cancip.localVersionCommit, cancip.importCapabilityPack, cancip.newsBrief, cancip.vaultDailyReport, cancip.automation.list, cancip.automation.add, cancip.automation.update, cancip.automation.addNewsBrief, cancip.automation.addVaultDailyReport, cancip.automation.addVaultCuration, cancip.automation.run, cancip.automation.remove, web.search, web.fetch, github.help, github.status, github.repo, github.issues, github.pulls, github.releases, github.workflowRuns, github.branches, github.file, github.createIssue, github.installObsidianPlugin. Use cancip.findTarget first when the file, folder, attachment, content, or Obsidian command target is unclear; it combines weak filename/path/folder inference, content hits, attachment metadata, and command fuzzy matches. Use cancip.tools.index when the route is unclear; it maps user intent to the right action/help/list command. Use obsidian.js.help/probe for JS bridge capability; use obsidian.eval only for explicit Obsidian app/workspace/vault/plugin API glue, with args.code/script/js/body or args.expression. It exposes app, workspace, vault, metadataCache, activeDocument, window, args, plugins, activeFile, activeLeaf, activeView, and helpers.plugin/api/runCommand/openPath/notice/query/click/input/sleep/snapshot. Use cancip.pluginCapabilities with pluginId/name/query for plugin feature requests; it returns installed plugin matches, Obsidian commands, runtime API surface, plugin files/settings, and command/UI/API/config/web routes. Use cancip.sessionHistory with all:true to list sessions, sessionId to read any saved session, path for .cancip/sessions/*.json, and mode:'full', includeContext:true when exact prior prompts/context are needed. Use cancip.subagents.start/list/status/stop/open to split long work into child sessions; children are visible under their parent in session history. Use obsidian.ui.buttons to inspect active note/PDF/more buttons; use obsidian.ui.applyButtonRules with selector rules to hide/show/order/rename/re-icon buttons and menu items. Use obsidian.tags to inspect right-sidebar tags, obsidian.tags.pin/unpin for fixed tags, and obsidian.tags.deleteUnpinned with dryRun:false only when the user asks to remove non-pinned tags from notes. Use obsidian.tabs to inspect workspace tabs/leaves, obsidian.tabs.pin/unpin to pin pages, obsidian.tabs.closeUnpinned to close non-pinned pages, and obsidian.tabs.closeAll to close all scoped pages without deleting files. Use cancip.skills.list/read/refresh to inspect available Skills when the task asks about capabilities or when a matching Skill is not already injected; use cancip.experience.harvest after repeated successful workflows so future runs can reuse a generated recipe. For settings/UI/plugin/self-fix requests, first inspect the relevant source/config with read/search actions, then patch/write/config and verify. If desktop source is unavailable, use the installed plugin files as the mobile hot-patch implementation surface; do not stop merely because npm build/restart/source sync is unavailable. Installed Cancip plugin file edits require reload/restart before visible effect. Use cancip.findTarget before cancip.searchVault when the target is unclear; use cancip.searchVault only when long-term memory and supplied context are insufficient and content search is the next step; then read only the necessary matched files. Keep action batches small and wait for results. If a tool fails, use the error as authoritative context and explain or correct the next step. Access mode controls execution: approval mode queues write-like actions in the visible Run/Reject box and notifies the user; full access runs implemented tools automatically. Use cancip.reviewGate only when the user explicitly wants review or the task is risky vault organization; it creates native Cancip review-panel data, not a prompt-only or external HTML workflow. Plan panel only adds planning/todo behavior and never changes access permission. JS is limited to the Obsidian WebView/API bridge and is not an OS shell.",
   actionsNeedApproval: "Action block queued for approval. Nothing has run yet.\n\n{summary}",
   actionsExecuted: "Tool results:\n\n{summary}",
@@ -6505,7 +6555,7 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     contextBuildFailed: "上下文构建失败：{reason}",
     contextStepSkipped: "已跳过 {step}：{reason}",
     repairRunning: "正在修复基础对话...",
-    repairNoApi: "/修复 不能执行：API URL/key/model 不完整。先在设置或 .cancip/config.json 里填好。",
+    repairNoApi: "/修复 不能执行：API URL/key/model 不完整。先在设置或 .obsidian/plugins/cancip/data/config.json 里填好。",
     repairNoSettingChanges: "无需修改设置",
     repairSuccess: "/修复 已完成。\n\n- 基础 API 探测：通过（{apiMode}，{model}）\n- 基础对话安全设置：{changes}\n- 现在默认关闭重型自动上下文；手动 @ 上下文、Search mode、Plan、命令总线和设置仍可用。\n\n现在发送 `测试`。",
     repairFailed: "/修复 失败：{reason}",
@@ -6521,7 +6571,7 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     none: "无",
     activeSkills: "已启用 Skill",
     activeSkillContext: "Skill 指令",
-    skillsNone: "没有找到 Skill。可添加 SKILL.md、*.skill.md，或把 Markdown 放到 .cancip/skills、AI/Cancip/Skills、skills、SkillOB、技能、能力文件夹。",
+    skillsNone: "没有找到 Skill。可添加 SKILL.md、*.skill.md，或把 Markdown 放到 .obsidian/plugins/cancip/data/skills、AI/Cancip/Skills、skills、SkillOB、技能、能力文件夹。",
     skillsIndexed: "已索引 {count} 个 Skill",
     skillsIndexWritten: "已索引 {count} 个 Skill -> {path}",
     coreMemory: "核心记忆",
@@ -6673,13 +6723,13 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     contextEditPasteUnavailable: "系统阻止了剪贴板读取，请在编辑视图中使用系统粘贴。",
     contextEditPasteAmbiguous: "无法唯一映射这个阅读位置，请扩大原文选区或在编辑视图中粘贴。",
     contextEditPasteUnsupported: "当前文件视图不支持直接粘贴。",
-    settingsReviewSystemDesc: "审核状态通过 .cancip/review-state.json 在设备间共享。这里可打开待审核项；如果手机和电脑数字不一致，可重建共享计数。",
+    settingsReviewSystemDesc: "审核状态通过 .obsidian/plugins/cancip/data/review-state.json 在设备间共享。这里可打开待审核项；如果手机和电脑数字不一致，可重建共享计数。",
     settingsReviewPendingCount: "{count} 个待审核项",
     settingsReviewOpenPending: "打开待审核",
     settingsReviewOpenLatest: "打开最近审核",
     settingsReviewRebuildState: "重建共享计数",
     settingsReviewStateRebuilt: "审核计数已重建：{count}",
-    settingsFilePinsDesc: "从原生文件列表置顶的文件和文件夹保存在 .cancip/file-pins.json，并直接渲染回普通文件列表。",
+    settingsFilePinsDesc: "从原生文件列表置顶的文件和文件夹保存在 .obsidian/plugins/cancip/data/file-pins.json，并直接渲染回普通文件列表。",
     settingsFilePinsSummary: "已置顶文件和文件夹",
     settingsFilePinsRefresh: "刷新文件列表",
     settingsFilePinsSortActiveFolder: "排序当前文件夹",
@@ -6706,7 +6756,7 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     settingsGithubOwner: "GitHub owner",
     settingsGithubRepo: "GitHub repo",
     settingsGithubToken: "GitHub token",
-    settingsGithubTokenDesc: "保存在本库 .cancip/config.json。导出只记录是否已配置，不导出明文 token。",
+    settingsGithubTokenDesc: "保存在本库 .obsidian/plugins/cancip/data/config.json。导出只记录是否已配置，不导出明文 token。",
     settingsAutoContinueAfterTools: "工具完成后自动继续",
     settingsAutoContinueAfterToolsDesc: "工具执行完成后，把工具结果回喂给模型继续推理。最大迭代数用于防止循环。",
     settingsMaxToolIterations: "最大工具迭代次数",
@@ -6806,14 +6856,22 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     settingsMaxSkillContextChars: "显式 Skill 字符数",
     settingsMaxAutoSkillContextChars: "自动 Skill 字符数",
     settingsSkillExperienceHarvest: "成功经验自动沉淀 Skill",
-    settingsSkillExperienceHarvestDesc: "把重复成功流程生成到 .cancip/skills/generated，手机端可按需自动复用。",
+    settingsSkillExperienceHarvestDesc: "把重复成功流程生成到 .obsidian/plugins/cancip/data/skills/generated，手机端可按需自动复用。",
     harvestExperienceSkills: "收割经验 Skill",
     experienceSkillsHarvested: "已生成 {count} 个经验 Skill -> {path}",
     refreshSkillIndex: "刷新 Skill 索引",
     settingsDailyLocalVersioning: "每日本地版本",
-    settingsDailyLocalVersioningDesc: "Obsidian 打开时每天在 .cancip/versions 下创建一个轻量快照。首次每日运行只建立 hash 基线，不复制整个库。",
+    settingsDailyLocalVersioningDesc: "Obsidian 打开时每天在 .obsidian/plugins/cancip/data/versions 下创建一次轻量增量快照；里面是索引、提交元数据和发生变化的小型文本副本，不是完整 Vault 副本。",
     settingsLocalVersionHour: "每日版本小时",
     settingsLocalVersionMaxFileBytes: "版本单文件上限字节",
+    settingsSessionCleanupSchedule: "会话与归档自动清理",
+    settingsSessionCleanupScheduleDesc: "空闲时运行。删除过期会话或归档前，先把有价值的决定和结果提炼到长期记忆并读回校验。",
+    settingsSessionCleanupNever: "永不删除",
+    settingsSessionCleanupDaily: "每日",
+    settingsSessionCleanupWeekly: "每周（默认）",
+    settingsSessionCleanupMonthly: "每月",
+    settingsSessionCleanupRetentionDays: "会话与归档保留天数",
+    settingsSessionCleanupRetentionDaysDesc: "只有超过此期限且未固定、未运行、未打开的数据才会清理；正在使用的会话始终受保护。",
     settingsAutomationsEnabled: "启用自动化任务",
     settingsAutomationCheckMinutes: "自动化检查间隔分钟",
     settingsAutomationStartupGraceEnabled: "Obsidian 启动后延迟自动化",
@@ -6953,14 +7011,14 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     supportCodesNote: "可选打赏支持维护。图片作为插件内置本机资源显示，不会进入提示词。",
     supportCodeMissing: "未配置图片路径",
   settingsSystemPrompt: "系统提示词",
-  settingsSystemPromptDesc: "每次模型调用都会发送。尽量保持短；修改会像普通配置一样永久保存并同步到 .cancip/config.json。",
+  settingsSystemPromptDesc: "每次模型调用都会发送。尽量保持短；修改会像普通配置一样永久保存并同步到 .obsidian/plugins/cancip/data/config.json。",
     selectionFrom: "选中文本：{path}",
     currentFileLabel: "当前文件 {path}",
     score: "score {score}",
     accessPromptAsk: "权限：确认模式。读取/搜索/列出/help/status 不需要批准，属于过程记录；不要反问是否允许读取，也不要把“我先读取/随后写回”当成用户可见回答。需要读就直接输出只读动作，读完再基于结果回答。写入/移动/删除/配置/插件/自动化/库外写入也不要用自然语言问确认；需要写就输出动作块，UI 会显示批准/拒绝卡。只有 UI 或 .cancip/config.json 能改权限；工具结果确认前不要声称已执行。",
     accessPromptFull: "权限：全权。已实现工具可读写 Vault、点开头目录、Obsidian 配置、.cancip、Cancip 已安装文件和授权库外桥接。不要没查索引路线就说不能；小步执行、读回验证。源码构建不可用时，可先做已安装插件热补丁。",
-    configWriteFailed: "无法写入 .cancip/config.json：{reason}",
-    configReadFailed: "无法读取 .cancip/config.json：{reason}",
+    configWriteFailed: "无法写入 .obsidian/plugins/cancip/data/config.json：{reason}",
+    configReadFailed: "无法读取 .obsidian/plugins/cancip/data/config.json：{reason}",
   toolProtocol: "工具协议：普通问候、测试、身份问题、泛泛聊天不要输出 cancip-action。读取、清单、解释、分析类问题，即使提到插件、设置、配置、文件夹、GitHub 或命令，也只用 read/search/list/status/help 等只读动作，然后根据工具结果直接回答；除非用户明确要求新建、修改、移动、删除、配置、安装、执行或修复，否则不要创建报告或执行写入类动作。确实需要动作时，只输出一个名为 cancip-action 的 fenced block，JSON 形如 {\"actions\":[{\"type\":\"todo\",\"op\":\"set\",\"items\":[{\"text\":\"检查文件\"},{\"text\":\"应用补丁\"}]},{\"type\":\"automation\",\"op\":\"add\",\"title\":\"每日复盘\",\"prompt\":\"复盘未完成待办\",\"schedule\":\"daily\",\"hour\":9,\"minute\":15,\"sessionMode\":\"new\",\"model\":\"gpt-5\"},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"query\":\"锚点\",\"maxChars\":8000},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"startLine\":120,\"endLine\":180},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"aroundLine\":240,\"maxChars\":4000},{\"type\":\"write\",\"path\":\"Folder/Note.md\",\"content\":\"...\"},{\"type\":\"write\",\"path\":\"Folder/Large.md\",\"chunks\":[\"第 1 段\",\"第 2 段\"]},{\"type\":\"move\",\"path\":\"Folder/旧.md\",\"newPath\":\"Folder/新.md\"},{\"type\":\"move\",\"path\":\"Folder/旧.md\",\"newPath\":\"归档\"},{\"type\":\"delete\",\"path\":\"Folder/旧.md\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"find\":\"旧内容\",\"replace\":\"新内容\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"regex\":true,\"find\":\"旧内容\\\\s+模式\",\"replace\":\"新内容\",\"flags\":\"m\"},{\"type\":\"config\",\"set\":{\"maxToolIterations\":6},\"unset\":[\"oldSetting\"]},{\"type\":\"command\",\"command\":\"cancip.searchVault\",\"args\":{\"query\":\"关键词\",\"limit\":8}}]}。支持动作：read、write、append、patch、config、todo、automation、mkdir、rename、move、copy、delete、command。read 支持 query、occurrence、startLine、endLine、aroundLine、maxChars，用来精确读取带行号的大文件/压缩构建文件片段；优先用 query 或行号范围，不要轻易整文件读取；读取文件夹会返回直接子项列表。write/append 支持 content 或 chunks:[\"part1\",\"part2\"]；写大文件优先用 chunks，Cancip 会顺序写入/追加并读回校验。move 是正常移动文件/文件夹动作，rename 保留为别名；如果 newPath 是文件夹路径，工具层会保留原文件/文件夹名放进该文件夹。delete 默认进入回收站；平台回收站不可用时移入 Cancip 回收目录；只有用户明确要求永久删除时才使用 permanent:true。patch 支持精确 find/replace，也支持 regex:true 和可选 flags；如果 patch 提示 find text was not found，绝对不要重复同一个 find，必须先用 query 或行号范围读取当前文件片段，再换更小锚点或正则补丁。config 默认安全深度合并写入 Cancip 配置文件，可选 path、set、unset、replace，会格式化 JSON 并读回校验；改大型配置文件优先用 config，不要靠脆弱字符串 patch。todo 支持 set、add、update、remove、list、clear，并会更新可见 Plan 面板。automation 支持 add、update、remove、list、run；schedule 可用 manual、hourly、daily；daily 支持 hour+minute；sessionMode 可用 current、new、session，session 需要 sessionId，condition 保存额外触发条件说明，model 指定单任务模型，空值沿用当前模型及其全局绑定模型源。文件动作只能使用 Vault 相对路径，包括点开头文件夹、Obsidian 配置、Cancip 已安装文件和 .cancip 会话 JSON。命令动作走命令总线：cancip.tools.index、obsidian.listCommands、obsidian.execute、obsidian.currentView、obsidian.dom.snapshot、obsidian.dom.click、obsidian.dom.input、obsidian.ui.buttons、obsidian.ui.buttonRules、obsidian.ui.applyButtonRules、obsidian.tags、obsidian.tags.pin、obsidian.tags.unpin、obsidian.tags.deleteUnpinned、obsidian.tabs、obsidian.tabs.pin、obsidian.tabs.unpin、obsidian.tabs.closeUnpinned、obsidian.tabs.closeAll、cancip.reviewGate、cancip.reviewGate.list、cancip.reviewGate.testMarkdown、cancip.sessionEvents、cancip.sessionHistory、cancip.subagents.start/list/status/stop/open、cancip.installedPlugins、cancip.skills.list、cancip.skills.read、cancip.skills.refresh、cancip.experience.list、cancip.experience.harvest、cancip.attachment.help、cancip.tts.help/probe/voices/status/installLocal/speak/readActive/pause/resume/seek/stop、cancip.externalFiles.help、cancip.automation.templates、cancip.automation.addTemplate、cancip.searchVault、cancip.rebuildIndex、cancip.previewVaultSearch、cancip.localVersionCommit、cancip.importCapabilityPack、cancip.newsBrief、cancip.vaultDailyReport、cancip.automation.list、cancip.automation.add、cancip.automation.update、cancip.automation.addNewsBrief、cancip.automation.addVaultDailyReport、cancip.automation.addVaultCuration、cancip.automation.run、cancip.automation.remove、web.search、web.fetch、github.help、github.status、github.repo、github.issues、github.pulls、github.releases、github.workflowRuns、github.branches、github.file、github.createIssue、github.installObsidianPlugin。不确定路线时先用 cancip.tools.index，它会把用户意图映射到应该查的 action/help/list 命令。用 cancip.subagents.start/list/status/stop/open 可把长任务拆成子会话；子会话会在父会话历史下默认折叠显示。用 obsidian.ui.buttons 检查当前笔记/PDF/官方更多菜单按钮和菜单项；用 obsidian.ui.applyButtonRules 按 selector 规则显示、隐藏、排序、改名、换图标。可用 obsidian.tabs 查看工作区标签页，obsidian.tabs.pin/unpin 固定/取消固定页，obsidian.tabs.closeUnpinned 关闭非固定页，obsidian.tabs.closeAll 关闭指定范围全部页，均不删除文件。需要读取历史/任意会话时，用 cancip.sessionHistory：all:true 列出会话，sessionId 读取任意保存会话，path 读取 .cancip/sessions/*.json，mode:'full' + includeContext:true 可带原始上下文。需要查看能力或本轮没有注入匹配 Skill 时，用 cancip.skills.list/read/refresh 程序化检查可用 Skill；成功流程可用 cancip.experience.harvest 生成 .cancip/skills/generated 下的经验 Skill。设置/界面/插件/自身修复类任务，先用 read/search 检查相关源码或配置，再 patch/write/config 并验证；若桌面源码不可用，就把已安装插件文件作为手机热补丁实现面，不能仅因 npm build/重启/源码同步不可用就停止。写已安装 Cancip 插件文件后必须说明需要重载/重启才有可见效果。只有长期记忆和已提供上下文不够时才用 cancip.searchVault 搜库，然后只读取必要命中文件。动作批次要小，等待工具结果后继续。工具失败就是权威上下文，必须解释失败或改用更小的下一步。访问模式控制执行：确认模式把写入类动作放进可见 Run/Reject 确认框并通知用户等待；全权模式自动执行已实现工具。只有用户明确要求审核或任务属于高风险 Vault 整理时，才用 cancip.reviewGate 程序化生成 Cancip 原生审核面板数据；它不是提示词，也不是外部 HTML 流程。Plan panel 只增加计划/待办层，不改变访问权限。原始 JavaScript eval 阻止。",
     actionsNeedApproval: "动作块已进入确认队列，尚未执行。\n\n{summary}",
     actionsExecuted: "工具执行结果：\n\n{summary}",
@@ -9901,6 +9959,7 @@ export default class CancipPlugin extends Plugin {
   private editorAutocompleteMemoryGeneration = 0;
   private startupMaintenanceCancel: (() => void) | null = null;
   private startupMaintenanceStarted = false;
+  private sessionRetentionCleanupPromise: Promise<{ deletedSessions: number; deletedArchiveEntries: number; skipped: boolean }> | null = null;
   private agentBridge: CancipAgentBridge | null = null;
   private agentBridgeBoundPort = 0;
   private agentBridgeLastError = "";
@@ -10386,11 +10445,7 @@ export default class CancipPlugin extends Plugin {
     await ensureFolder(adapter, CANCIP_CONFIG_DIR);
     const legacyStat = await adapter.stat(LEGACY_CANCIP_CONFIG_DIR);
     const markerExists = await adapter.exists(CANCIP_STORAGE_MIGRATION_MARKER_PATH);
-    if (markerExists) {
-      if (legacyStat?.type !== "folder") return;
-      const missingCriticalPath = await firstMissingCancipStorageCriticalPath(adapter);
-      if (!missingCriticalPath) return;
-    }
+    if (markerExists && legacyStat?.type !== "folder") return;
 
     const stats: CancipStorageMigrationStats = {
       sourceFiles: 0,
@@ -10401,16 +10456,19 @@ export default class CancipPlugin extends Plugin {
     };
     if (legacyStat?.type === "folder") {
       await copyMissingCancipStoragePath(adapter, LEGACY_CANCIP_CONFIG_DIR, CANCIP_CONFIG_DIR, stats);
-      const missingCriticalPath = await firstMissingCancipStorageCriticalPath(adapter);
-      if (missingCriticalPath) throw new Error(`missing migrated data: ${missingCriticalPath}`);
+      const unverifiedPath = await firstUnverifiedLegacyCancipStoragePath(adapter, LEGACY_CANCIP_CONFIG_DIR, CANCIP_CONFIG_DIR);
+      if (unverifiedPath) throw new Error(`unverified migrated data: ${unverifiedPath}`);
+      await adapter.rmdir(LEGACY_CANCIP_CONFIG_DIR, true);
+      if (await adapter.exists(LEGACY_CANCIP_CONFIG_DIR)) throw new Error("legacy storage removal verification failed");
     }
 
     const marker = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       migratedAt: new Date().toISOString(),
       source: LEGACY_CANCIP_CONFIG_DIR,
       target: CANCIP_CONFIG_DIR,
       sourcePresent: legacyStat?.type === "folder",
+      legacyRemoved: legacyStat?.type === "folder",
       ...stats
     };
     await adapter.write(CANCIP_STORAGE_MIGRATION_MARKER_PATH, `${JSON.stringify(marker, null, 2)}\n`);
@@ -10427,9 +10485,8 @@ export default class CancipPlugin extends Plugin {
       await this.migrateLegacyCancipStorage();
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
-      console.error("Cancip data migration failed; retaining legacy storage", error);
+      console.error("Cancip legacy data migration failed; standard plugin storage remains authoritative", error);
       this.devErrors.push(`data migration failed: ${reason}`);
-      configureCancipStorageRoot(LEGACY_CANCIP_CONFIG_DIR);
     }
     try {
       await this.loadSettings();
@@ -10936,6 +10993,11 @@ export default class CancipPlugin extends Plugin {
     this.scheduleCancipStatePolling();
     this.installCancipResumeStateRefresh();
     this.scheduleStartupMaintenance();
+    this.registerInterval(window.setInterval(() => {
+      void this.cleanupExpiredSessionData(false).catch((error) => {
+        console.warn("Cancip scheduled session cleanup failed", error);
+      });
+    }, CANCIP_SESSION_CLEANUP_CHECK_INTERVAL_MS));
   }
 
   private installStartupUiEnhancements(): void {
@@ -11401,6 +11463,9 @@ export default class CancipPlugin extends Plugin {
     await run("archiveColdCancipData", async () => {
       await this.archiveColdCancipData(false);
     });
+    await run("cleanupExpiredSessionData", async () => {
+      await this.cleanupExpiredSessionData(false);
+    });
     this.scheduleUniversalSearchBuild(1200);
     this.scheduleCodexMemoryAutoImport();
     this.scheduleDailyLocalVersioning();
@@ -11533,6 +11598,212 @@ export default class CancipPlugin extends Plugin {
     this.universalSearchInventoryCache = null;
     this.scheduleUniversalSearchBuild(100);
     return { sessions, events, experience, skipped: false };
+  }
+
+  private async readSessionRetentionLedger(): Promise<SessionRetentionLedger> {
+    const raw = await readTextIfExists(this.app.vault.adapter, CANCIP_SESSION_RETENTION_LEDGER_PATH, "");
+    if (!raw.trim()) return emptySessionRetentionLedger();
+    try {
+      return normalizeSessionRetentionLedger(JSON.parse(raw) as unknown);
+    } catch {
+      return emptySessionRetentionLedger();
+    }
+  }
+
+  private async preserveSessionRetentionBatch(candidates: SessionRetentionCandidate[]): Promise<void> {
+    if (!candidates.length) return;
+    const adapter = this.app.vault.adapter;
+    const ledger = await this.readSessionRetentionLedger();
+    const byKey = new Map(ledger.records.map((record) => [record.key, record]));
+    let memory = await readTextIfExists(adapter, CANCIP_SESSION_RETENTION_MEMORY_PATH, "# Cancip 会话长期记忆\n");
+    if (!memory.trim()) memory = "# Cancip 会话长期记忆\n";
+    const requiredMarkers: string[] = [];
+    const requiredKeys: string[] = [];
+    const extractedAt = new Date().toISOString();
+
+    for (const candidate of candidates) {
+      const sourceHash = await sha256Text(candidate.raw);
+      const recordKey = `${candidate.key}:${sourceHash}`;
+      const lines = distillSessionRetentionMemory(candidate);
+      const marker = sessionRetentionMemoryMarker(recordKey);
+      if (lines.length) {
+        requiredMarkers.push(marker);
+        if (!memory.includes(marker)) {
+          const block = sessionRetentionMemoryBlock(candidate, recordKey, lines, extractedAt);
+          if (block) memory = `${memory.trimEnd()}\n\n${block}\n`;
+        }
+      }
+      requiredKeys.push(recordKey);
+      byKey.set(recordKey, {
+        key: recordKey,
+        sourcePath: normalizePath(candidate.path),
+        sourceHash,
+        extractedAt,
+        memoryItems: lines.length
+      });
+    }
+
+    if (requiredMarkers.length) {
+      await ensureParentFolder(adapter, CANCIP_SESSION_RETENTION_MEMORY_PATH);
+      await adapter.write(CANCIP_SESSION_RETENTION_MEMORY_PATH, memory);
+      const verifiedMemory = await adapter.read(CANCIP_SESSION_RETENTION_MEMORY_PATH);
+      const missingMarker = requiredMarkers.find((marker) => !verifiedMemory.includes(marker));
+      if (missingMarker) throw new Error(`session memory verification failed: ${missingMarker}`);
+    }
+
+    const records = [...byKey.values()]
+      .sort((left, right) => left.extractedAt.localeCompare(right.extractedAt) || left.key.localeCompare(right.key))
+      .slice(-CANCIP_SESSION_RETENTION_MAX_RECORDS);
+    const payload: SessionRetentionLedger = {
+      schemaVersion: CANCIP_SESSION_RETENTION_SCHEMA_VERSION,
+      updatedAt: extractedAt,
+      records
+    };
+    await ensureParentFolder(adapter, CANCIP_SESSION_RETENTION_LEDGER_PATH);
+    await adapter.write(CANCIP_SESSION_RETENTION_LEDGER_PATH, `${JSON.stringify(payload)}\n`);
+    const verifiedLedger = normalizeSessionRetentionLedger(JSON.parse(await adapter.read(CANCIP_SESSION_RETENTION_LEDGER_PATH)) as unknown);
+    const verifiedKeys = new Set(verifiedLedger.records.map((record) => record.key));
+    const missingKey = requiredKeys.find((key) => !verifiedKeys.has(key));
+    if (missingKey) throw new Error(`session retention ledger verification failed: ${missingKey}`);
+  }
+
+  async cleanupExpiredSessionData(force: boolean): Promise<{ deletedSessions: number; deletedArchiveEntries: number; skipped: boolean }> {
+    if (this.sessionRetentionCleanupPromise) return await this.sessionRetentionCleanupPromise;
+    const schedule = normalizeSessionCleanupSchedule(this.settings.sessionCleanupSchedule);
+    if (schedule === "never" && !force) return { deletedSessions: 0, deletedArchiveEntries: 0, skipped: true };
+    const operation = (async () => {
+      const adapter = this.app.vault.adapter;
+      const stateRaw = await readTextIfExists(adapter, CANCIP_SESSION_CLEANUP_STATE_PATH, "");
+      let lastCompletedAt = "";
+      try {
+        const state = stateRaw ? JSON.parse(stateRaw) as unknown : null;
+        if (isRecord(state) && typeof state.lastCompletedAt === "string") lastCompletedAt = state.lastCompletedAt;
+      } catch {
+        lastCompletedAt = "";
+      }
+      const intervalMs = sessionCleanupScheduleIntervalMs(schedule);
+      const lastCompletedMs = Date.parse(lastCompletedAt);
+      if (!force && Number.isFinite(lastCompletedMs) && Date.now() - lastCompletedMs < intervalMs) {
+        return { deletedSessions: 0, deletedArchiveEntries: 0, skipped: true };
+      }
+
+      const cutoff = Date.now() - Math.max(1, this.settings.sessionCleanupRetentionDays) * 24 * 60 * 60 * 1000;
+      const openSessionIds = new Set(
+        this.app.workspace.getLeavesOfType(VIEW_TYPE)
+          .map((leaf) => leaf.view instanceof CancipView ? leaf.view.currentSessionIdForArchive() : "")
+          .filter(Boolean)
+      );
+      const candidates: SessionRetentionCandidate[] = [];
+      if (await adapter.exists(SESSION_HISTORY_DIR)) {
+        const listing = await adapter.list(SESSION_HISTORY_DIR);
+        for (const path of listing.files
+          .filter((item) => /\/session-[^/]+\.json$/i.test(item) && normalizePath(item) !== normalizePath(SESSION_HISTORY_INDEX_PATH))
+          .sort((left, right) => left.localeCompare(right))) {
+          try {
+            const raw = await adapter.read(path);
+            const entry = sessionHistoryEntryFromSnapshot(JSON.parse(raw) as unknown, path);
+            if (!entry || entry.pinned || entry.status === "running" || this.sessionRequests.has(entry.id) || openSessionIds.has(entry.id)) continue;
+            const lastUsedMs = Date.parse(cancipLatestTimestamp(entry.lastOpenedAt, entry.updatedAt, entry.createdAt));
+            if (!Number.isFinite(lastUsedMs) || lastUsedMs >= cutoff) continue;
+            candidates.push({ key: `session:${entry.id}`, path, raw, title: entry.title, kind: "session", session: entry, hotSessionId: entry.id });
+          } catch (error) {
+            console.warn(`Cancip session retention skipped unreadable source: ${path}`, error);
+          }
+          if (candidates.length % CANCIP_SESSION_RETENTION_BATCH === 0) await sleep(0);
+        }
+      }
+
+      const archiveIndex = await this.readCancipArchiveIndex();
+      for (const entry of archiveIndex.entries) {
+        if (entry.kind === "session" && (entry.session?.pinned || entry.session?.status === "running" || (entry.session?.id && openSessionIds.has(entry.session.id)))) continue;
+        const lastUsedMs = Date.parse(entry.lastUsedAt || entry.archivedAt);
+        if (!Number.isFinite(lastUsedMs) || lastUsedMs >= cutoff || !(await adapter.exists(entry.path))) continue;
+        try {
+          const raw = await adapter.read(entry.path);
+          candidates.push({
+            key: entry.kind === "session" && entry.session?.id ? `session:${entry.session.id}` : `archive:${entry.id}`,
+            path: entry.path,
+            raw,
+            title: entry.title,
+            kind: entry.kind,
+            session: entry.session,
+            archiveEntryId: entry.id
+          });
+        } catch (error) {
+          console.warn(`Cancip archive retention skipped unreadable source: ${entry.path}`, error);
+        }
+        if (candidates.length % CANCIP_SESSION_RETENTION_BATCH === 0) await sleep(0);
+      }
+
+      let hotIndex = await this.readSessionHistoryIndexForPlugin();
+      let deletedSessions = 0;
+      let deletedArchiveEntries = 0;
+      for (let offset = 0; offset < candidates.length; offset += CANCIP_SESSION_RETENTION_BATCH) {
+        const batch = candidates.slice(offset, offset + CANCIP_SESSION_RETENTION_BATCH);
+        await this.preserveSessionRetentionBatch(batch);
+        const deletedHotIds = new Set<string>();
+        const deletedArchiveIds = new Set<string>();
+        for (const candidate of batch) {
+          try {
+            await adapter.remove(candidate.path);
+            if (await adapter.exists(candidate.path)) throw new Error(`retention delete verification failed: ${candidate.path}`);
+            if (candidate.hotSessionId) {
+              deletedHotIds.add(candidate.hotSessionId);
+              deletedSessions += 1;
+            }
+            if (candidate.archiveEntryId) {
+              deletedArchiveIds.add(candidate.archiveEntryId);
+              deletedArchiveEntries += 1;
+            }
+          } catch (error) {
+            console.warn(`Cancip session retention could not remove verified source: ${candidate.path}`, error);
+          }
+        }
+        if (deletedHotIds.size) {
+          hotIndex = hotIndex.filter((entry) => !deletedHotIds.has(entry.id));
+          await this.writeSessionHistoryIndexForPlugin(hotIndex);
+        }
+        if (deletedArchiveIds.size) {
+          archiveIndex.entries = archiveIndex.entries.filter((entry) => !deletedArchiveIds.has(entry.id));
+          await this.writeCancipArchiveIndex(archiveIndex);
+        }
+        await sleep(0);
+      }
+
+      for (const root of [CANCIP_ARCHIVE_SESSIONS_DIR, CANCIP_ARCHIVE_EVENTS_DIR, CANCIP_ARCHIVE_EXPERIENCE_DIR]) {
+        if (!(await adapter.exists(root))) continue;
+        const listing = await adapter.list(root).catch(() => ({ files: [], folders: [] }));
+        for (const folder of listing.folders) {
+          const children = await adapter.list(folder).catch(() => ({ files: [], folders: [] }));
+          if (!children.files.length && !children.folders.length) await adapter.rmdir(folder, false).catch(() => undefined);
+        }
+      }
+
+      const completedAt = new Date().toISOString();
+      const cleanupState = {
+        schemaVersion: 1,
+        lastCompletedAt: completedAt,
+        schedule,
+        retentionDays: this.settings.sessionCleanupRetentionDays,
+        deletedSessions,
+        deletedArchiveEntries
+      };
+      await adapter.write(CANCIP_SESSION_CLEANUP_STATE_PATH, `${JSON.stringify(cleanupState)}\n`);
+      const verifiedState = JSON.parse(await adapter.read(CANCIP_SESSION_CLEANUP_STATE_PATH)) as unknown;
+      if (!isRecord(verifiedState) || verifiedState.lastCompletedAt !== completedAt) throw new Error("session cleanup state verification failed");
+      if (deletedSessions || deletedArchiveEntries) {
+        this.universalSearchIndexCache = null;
+        this.universalSearchInventoryCache = null;
+        this.scheduleUniversalSearchBuild(1200);
+      }
+      return { deletedSessions, deletedArchiveEntries, skipped: false };
+    })();
+    this.sessionRetentionCleanupPromise = operation;
+    try {
+      return await operation;
+    } finally {
+      if (this.sessionRetentionCleanupPromise === operation) this.sessionRetentionCleanupPromise = null;
+    }
   }
 
   private async archiveColdSessionFiles(index: CancipArchiveIndex, cutoff: number): Promise<number> {
@@ -68041,7 +68312,7 @@ const SETTINGS_PAGE_KEYS: Record<string, Array<keyof Settings>> = {
     "contextCompactionUseModel", "contextCompactionShowStats", "agentBridgeEnabled", "agentBridgePort", "agentBrainEnabled",
     "agentBrainProvider", "agentBrainModel", "agentBrainTimeoutSeconds", "scoreEnabled", "scoreAccuracyWeight",
     "scoreUsageWeight", "scoreDecayDays", "scoreLayoutSuggestions", "dailyLocalVersioning", "localVersionHour",
-    "localVersionMaxFileBytes", "forceStatusBarVisible", "preventAutomaticSessionOpen", "systemPrompt"
+    "localVersionMaxFileBytes", "sessionCleanupSchedule", "sessionCleanupRetentionDays", "forceStatusBarVisible", "preventAutomaticSessionOpen", "systemPrompt"
   ],
   export: ["exportMarkdownContextSnapshots", "exportMarkdownManualTodos", "codeBlockWrap"]
 };
@@ -69677,6 +69948,25 @@ class CancipSettingTab extends PluginSettingTab {
       this.plugin.settings.localVersionMaxFileBytes = value;
       await this.plugin.saveSettings();
     });
+    new Setting(parent)
+      .setName(this.plugin.t("settingsSessionCleanupSchedule"))
+      .setDesc(this.plugin.t("settingsSessionCleanupScheduleDesc"))
+      .addDropdown((dropdown) => {
+        dropdown
+          .addOption("never", this.plugin.t("settingsSessionCleanupNever"))
+          .addOption("daily", this.plugin.t("settingsSessionCleanupDaily"))
+          .addOption("weekly", this.plugin.t("settingsSessionCleanupWeekly"))
+          .addOption("monthly", this.plugin.t("settingsSessionCleanupMonthly"))
+          .setValue(this.plugin.settings.sessionCleanupSchedule)
+          .onChange(async (value) => {
+            this.plugin.settings.sessionCleanupSchedule = normalizeSessionCleanupSchedule(value);
+            await this.plugin.saveSettings();
+          });
+      });
+    this.addNumberSetting(parent, "settingsSessionCleanupRetentionDays", this.plugin.settings.sessionCleanupRetentionDays, "30", 1, 3650, async (value) => {
+      this.plugin.settings.sessionCleanupRetentionDays = value;
+      await this.plugin.saveSettings();
+    }, "settingsSessionCleanupRetentionDaysDesc");
   }
 
   private displayAutomationSettings(parent: HTMLElement): void {
@@ -72461,6 +72751,115 @@ function stableTextHash(input: string): string {
     hash = Math.imul(hash, 16777619);
   }
   return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+function normalizeSessionCleanupSchedule(value: unknown): SessionCleanupSchedule {
+  return value === "never" || value === "daily" || value === "monthly" ? value : "weekly";
+}
+
+function sessionCleanupScheduleIntervalMs(schedule: SessionCleanupSchedule): number {
+  if (schedule === "daily") return 24 * 60 * 60 * 1000;
+  if (schedule === "monthly") return 30 * 24 * 60 * 60 * 1000;
+  if (schedule === "weekly") return 7 * 24 * 60 * 60 * 1000;
+  return Number.POSITIVE_INFINITY;
+}
+
+function emptySessionRetentionLedger(): SessionRetentionLedger {
+  return { schemaVersion: CANCIP_SESSION_RETENTION_SCHEMA_VERSION, updatedAt: "", records: [] };
+}
+
+function normalizeSessionRetentionLedger(raw: unknown): SessionRetentionLedger {
+  if (!isRecord(raw)) return emptySessionRetentionLedger();
+  const records: SessionRetentionRecord[] = [];
+  const seen = new Set<string>();
+  for (const item of Array.isArray(raw.records) ? raw.records : []) {
+    if (!isRecord(item)) continue;
+    const key = typeof item.key === "string" ? item.key.trim() : "";
+    const sourcePath = typeof item.sourcePath === "string" ? normalizePath(item.sourcePath) : "";
+    const sourceHash = typeof item.sourceHash === "string" ? item.sourceHash.trim() : "";
+    const extractedAt = typeof item.extractedAt === "string" ? item.extractedAt : "";
+    if (!key || !sourcePath || !sourceHash || seen.has(key)) continue;
+    seen.add(key);
+    records.push({
+      key,
+      sourcePath,
+      sourceHash,
+      extractedAt,
+      memoryItems: typeof item.memoryItems === "number" && Number.isFinite(item.memoryItems) ? Math.max(0, Math.floor(item.memoryItems)) : 0
+    });
+  }
+  return {
+    schemaVersion: CANCIP_SESSION_RETENTION_SCHEMA_VERSION,
+    updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : "",
+    records: records.slice(-CANCIP_SESSION_RETENTION_MAX_RECORDS)
+  };
+}
+
+function sessionRetentionCleanLine(value: unknown, maxChars = 320): string {
+  if (typeof value !== "string") return "";
+  return trimContext(redactSensitiveText(value), maxChars)
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function sessionRetentionMessageLines(content: unknown): string[] {
+  if (typeof content !== "string") return [];
+  return content
+    .replace(/```[\s\S]*?```/g, " ")
+    .split(/[\r\n]+|[。！？!?]+\s*/)
+    .map((line) => sessionRetentionCleanLine(line))
+    .filter((line) => line.length >= 4);
+}
+
+function distillSessionRetentionMemory(candidate: SessionRetentionCandidate): string[] {
+  if (candidate.kind === "session") {
+    try {
+      const snapshot = JSON.parse(candidate.raw) as unknown;
+      if (!isRecord(snapshot)) return [];
+      const messages = Array.isArray(snapshot.messages) ? snapshot.messages.filter(isRecord) : [];
+      const userLines = messages
+        .filter((message) => message.role === "user")
+        .flatMap((message) => sessionRetentionMessageLines(message.content));
+      const valuableUserLines = userLines.filter((line) => /记住|以后|默认|不要|不需要|必须|应该|改成|只要|固定|偏好|我需要|remember|prefer|default|must|should|never|always/i.test(line));
+      const lastUserLine = [...userLines].reverse().find(Boolean) ?? "";
+      const assistantLines = messages
+        .filter((message) => message.role === "assistant")
+        .flatMap((message) => sessionRetentionMessageLines(message.content));
+      const outcomeLines = assistantLines.filter((line) => /已|完成|修复|实现|成功|结果|保存|安装|发布|优化|fixed|completed|implemented|saved|installed|released/i.test(line));
+      return uniqueStrings([
+        ...valuableUserLines.slice(0, 6).map((line) => `用户决定：${line}`),
+        ...(lastUserLine && !valuableUserLines.includes(lastUserLine) ? [`最近任务：${lastUserLine}`] : []),
+        ...outcomeLines.slice(-2).map((line) => `结果：${line}`)
+      ]).slice(0, 10);
+    } catch {
+      return [];
+    }
+  }
+  if (candidate.kind === "experience" || candidate.kind === "memory") {
+    return uniqueStrings(candidate.raw
+      .split(/\r?\n/)
+      .map((line) => sessionRetentionCleanLine(line.replace(/^#{1,6}\s+|^[-*+]\s+/, ""), 360))
+      .filter((line) => line.length >= 8 && !/^Cancip (Archived )?Experience$/i.test(line)))
+      .slice(0, 12)
+      .map((line) => `经验：${line}`);
+  }
+  return [];
+}
+
+function sessionRetentionMemoryMarker(recordKey: string): string {
+  return `<!-- cancip-session-retention:${stableTextHash(recordKey)} -->`;
+}
+
+function sessionRetentionMemoryBlock(candidate: SessionRetentionCandidate, recordKey: string, lines: string[], extractedAt: string): string {
+  if (!lines.length) return "";
+  const title = sessionRetentionCleanLine(candidate.title || reviewFileName(candidate.path), 160) || "会话记忆";
+  return [
+    sessionRetentionMemoryMarker(recordKey),
+    `## ${extractedAt.slice(0, 10)} · ${title}`,
+    ...lines.map((line) => `- ${line}`)
+  ].join("\n");
 }
 
 function emptyCancipArchiveIndex(): CancipArchiveIndex {
@@ -81490,6 +81889,7 @@ function normalizeSettings(input: Partial<Settings>): Settings {
   const ocrMaxImageDimension = Number.parseInt(String(merged.ocrMaxImageDimension), 10);
   const localVersionHour = Number.parseInt(String(merged.localVersionHour), 10);
   const localVersionMaxFileBytes = Number.parseInt(String(merged.localVersionMaxFileBytes), 10);
+  const sessionCleanupRetentionDays = Number.parseInt(String(merged.sessionCleanupRetentionDays), 10);
   const automationCheckMinutes = Number.parseInt(String(merged.automationCheckMinutes), 10);
   const automationStartupGraceMinutes = Number.parseInt(String(merged.automationStartupGraceMinutes), 10);
   const personalizationGreetingCacheHours = Number.parseInt(String(merged.personalizationGreetingCacheHours), 10);
@@ -81728,6 +82128,8 @@ function normalizeSettings(input: Partial<Settings>): Settings {
     dailyLocalVersioning: typeof merged.dailyLocalVersioning === "boolean" ? merged.dailyLocalVersioning : DEFAULT_SETTINGS.dailyLocalVersioning,
     localVersionHour: Number.isFinite(localVersionHour) ? Math.max(0, Math.min(23, localVersionHour)) : DEFAULT_SETTINGS.localVersionHour,
     localVersionMaxFileBytes: Number.isFinite(localVersionMaxFileBytes) ? Math.max(1024, Math.min(5242880, localVersionMaxFileBytes)) : DEFAULT_SETTINGS.localVersionMaxFileBytes,
+    sessionCleanupSchedule: normalizeSessionCleanupSchedule(merged.sessionCleanupSchedule),
+    sessionCleanupRetentionDays: Number.isFinite(sessionCleanupRetentionDays) ? Math.max(1, Math.min(3650, sessionCleanupRetentionDays)) : DEFAULT_SETTINGS.sessionCleanupRetentionDays,
     automationsEnabled: typeof merged.automationsEnabled === "boolean" ? merged.automationsEnabled : DEFAULT_SETTINGS.automationsEnabled,
     automationCheckMinutes: Number.isFinite(automationCheckMinutes) ? Math.max(1, Math.min(1440, automationCheckMinutes)) : DEFAULT_SETTINGS.automationCheckMinutes,
     automationStartupGraceEnabled: typeof merged.automationStartupGraceEnabled === "boolean" ? merged.automationStartupGraceEnabled : DEFAULT_SETTINGS.automationStartupGraceEnabled,
@@ -81889,6 +82291,8 @@ function settingsToCancipConfig(settings: Settings): Record<string, unknown> {
     dailyLocalVersioning: settings.dailyLocalVersioning,
     localVersionHour: settings.localVersionHour,
     localVersionMaxFileBytes: settings.localVersionMaxFileBytes,
+    sessionCleanupSchedule: settings.sessionCleanupSchedule,
+    sessionCleanupRetentionDays: settings.sessionCleanupRetentionDays,
     automationsEnabled: settings.automationsEnabled,
     automationCheckMinutes: settings.automationCheckMinutes,
     automationStartupGraceEnabled: settings.automationStartupGraceEnabled,
@@ -82062,6 +82466,8 @@ function parseCancipConfig(raw: unknown): Partial<Settings> {
   if (typeof raw.dailyLocalVersioning === "boolean") config.dailyLocalVersioning = raw.dailyLocalVersioning;
   if (typeof raw.localVersionHour === "number" || typeof raw.localVersionHour === "string") config.localVersionHour = Number.parseInt(String(raw.localVersionHour), 10);
   if (typeof raw.localVersionMaxFileBytes === "number" || typeof raw.localVersionMaxFileBytes === "string") config.localVersionMaxFileBytes = Number.parseInt(String(raw.localVersionMaxFileBytes), 10);
+  if (typeof raw.sessionCleanupSchedule === "string") config.sessionCleanupSchedule = normalizeSessionCleanupSchedule(raw.sessionCleanupSchedule);
+  if (typeof raw.sessionCleanupRetentionDays === "number" || typeof raw.sessionCleanupRetentionDays === "string") config.sessionCleanupRetentionDays = Number.parseInt(String(raw.sessionCleanupRetentionDays), 10);
   if (typeof raw.automationsEnabled === "boolean") config.automationsEnabled = raw.automationsEnabled;
   if (typeof raw.automationCheckMinutes === "number" || typeof raw.automationCheckMinutes === "string") config.automationCheckMinutes = Number.parseInt(String(raw.automationCheckMinutes), 10);
   if (typeof raw.automationStartupGraceEnabled === "boolean") config.automationStartupGraceEnabled = raw.automationStartupGraceEnabled;
@@ -82118,6 +82524,7 @@ const CANCIP_CONFIG_STRING_KEYS = new Set([
   "agentBrainProvider",
   "agentBrainModel",
   "documentWorkbenchDefaultMode",
+  "sessionCleanupSchedule",
   "systemPrompt"
 ]);
 
@@ -82164,6 +82571,7 @@ const CANCIP_CONFIG_NUMBER_KEYS = new Set([
   "maxAutoSkillContextChars",
   "localVersionHour",
   "localVersionMaxFileBytes",
+  "sessionCleanupRetentionDays",
   "automationCheckMinutes",
   "automationStartupGraceMinutes",
   "personalizationGreetingCacheHours",
@@ -88455,11 +88863,69 @@ async function firstMissingCancipStorageCriticalPath(adapter: DataAdapter): Prom
   return null;
 }
 
+function legacyCancipRelativePath(sourcePath: string, sourceRoot = LEGACY_CANCIP_CONFIG_DIR): string {
+  return normalizePath(sourcePath).slice(normalizePath(sourceRoot).length).replace(/^\/+/, "");
+}
+
+async function cancipStorageFileHash(adapter: DataAdapter, path: string): Promise<string> {
+  return await sha256ArrayBuffer(await adapter.readBinary(path));
+}
+
+async function legacyCancipConflictPath(
+  adapter: DataAdapter,
+  sourcePath: string,
+  sourceHash: string,
+  sourceRoot: string,
+  targetRoot: string
+): Promise<string> {
+  const relativePath = legacyCancipRelativePath(sourcePath, sourceRoot);
+  const base = `${targetRoot}/legacy-import/${relativePath}`;
+  const existing = await adapter.stat(base);
+  if (!existing) return base;
+  if (existing.type === "file" && await cancipStorageFileHash(adapter, base) === sourceHash) return base;
+  return `${base}.${sourceHash.slice(0, 12)}.legacy`;
+}
+
+async function firstUnverifiedLegacyCancipStoragePath(
+  adapter: DataAdapter,
+  sourcePath: string,
+  targetPath: string,
+  sourceRoot = LEGACY_CANCIP_CONFIG_DIR,
+  targetRoot = CANCIP_CONFIG_DIR
+): Promise<string | null> {
+  const sourceStat = await adapter.stat(sourcePath);
+  if (!sourceStat) return null;
+  if (sourceStat.type === "file") {
+    const sourceHash = await cancipStorageFileHash(adapter, sourcePath);
+    const targetStat = await adapter.stat(targetPath);
+    if (targetStat?.type === "file" && await cancipStorageFileHash(adapter, targetPath) === sourceHash) return null;
+    const conflictPath = await legacyCancipConflictPath(adapter, sourcePath, sourceHash, sourceRoot, targetRoot);
+    const conflictStat = await adapter.stat(conflictPath);
+    return conflictStat?.type === "file" && await cancipStorageFileHash(adapter, conflictPath) === sourceHash ? null : sourcePath;
+  }
+  const listing = await adapter.list(sourcePath);
+  for (const folder of listing.folders) {
+    const childName = legacyCancipRelativePath(folder, sourcePath);
+    if (!childName) continue;
+    const missing = await firstUnverifiedLegacyCancipStoragePath(adapter, folder, `${targetPath}/${childName}`, sourceRoot, targetRoot);
+    if (missing) return missing;
+  }
+  for (const file of listing.files) {
+    const childName = legacyCancipRelativePath(file, sourcePath);
+    if (!childName) continue;
+    const missing = await firstUnverifiedLegacyCancipStoragePath(adapter, file, `${targetPath}/${childName}`, sourceRoot, targetRoot);
+    if (missing) return missing;
+  }
+  return null;
+}
+
 async function copyMissingCancipStoragePath(
   adapter: DataAdapter,
   sourcePath: string,
   targetPath: string,
-  stats: CancipStorageMigrationStats
+  stats: CancipStorageMigrationStats,
+  sourceRoot = LEGACY_CANCIP_CONFIG_DIR,
+  targetRoot = CANCIP_CONFIG_DIR
 ): Promise<void> {
   const sourceStat = await adapter.stat(sourcePath);
   if (!sourceStat) return;
@@ -88468,8 +88934,24 @@ async function copyMissingCancipStoragePath(
     const targetStat = await adapter.stat(targetPath);
     if (targetStat) {
       if (targetStat.type !== "file") throw new Error(`migration target is not a file: ${targetPath}`);
-      stats.preservedTargetFiles += 1;
-      if (sourceStat.size !== targetStat.size) stats.targetConflicts += 1;
+      const sourceHash = await cancipStorageFileHash(adapter, sourcePath);
+      const targetHash = await cancipStorageFileHash(adapter, targetPath);
+      if (sourceHash === targetHash) {
+        stats.preservedTargetFiles += 1;
+        return;
+      }
+      stats.targetConflicts += 1;
+      const conflictPath = await legacyCancipConflictPath(adapter, sourcePath, sourceHash, sourceRoot, targetRoot);
+      const conflictStat = await adapter.stat(conflictPath);
+      if (!conflictStat) {
+        await ensureParentFolder(adapter, conflictPath);
+        await adapter.copy(sourcePath, conflictPath);
+        stats.copiedFiles += 1;
+      } else if (conflictStat.type !== "file" || await cancipStorageFileHash(adapter, conflictPath) !== sourceHash) {
+        throw new Error(`migration conflict backup verification failed: ${sourcePath}`);
+      } else {
+        stats.preservedTargetFiles += 1;
+      }
       return;
     }
     await ensureParentFolder(adapter, targetPath);
@@ -88487,11 +88969,11 @@ async function copyMissingCancipStoragePath(
   const listing = await adapter.list(sourcePath);
   for (const folder of listing.folders) {
     const childName = normalizePath(folder).slice(normalizePath(sourcePath).length).replace(/^\/+/, "");
-    if (childName) await copyMissingCancipStoragePath(adapter, folder, `${targetPath}/${childName}`, stats);
+    if (childName) await copyMissingCancipStoragePath(adapter, folder, `${targetPath}/${childName}`, stats, sourceRoot, targetRoot);
   }
   for (const file of listing.files) {
     const childName = normalizePath(file).slice(normalizePath(sourcePath).length).replace(/^\/+/, "");
-    if (childName) await copyMissingCancipStoragePath(adapter, file, `${targetPath}/${childName}`, stats);
+    if (childName) await copyMissingCancipStoragePath(adapter, file, `${targetPath}/${childName}`, stats, sourceRoot, targetRoot);
   }
 }
 
