@@ -23174,7 +23174,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       // Never prune against an unavailable state: without the canonical map
       // we cannot prove that a package is completed and safe to remove.
       if (!canonical) return 0;
-      const pendingKeys = new Set((canonical?.packages ?? [])
+      const pendingKeys = new Set(canonical.packages
         .filter((entry) => entry.pendingPaths.length > 0)
         .map((entry) => reviewGateLogicalPathKey(entry.manifestPath)));
       if (markerSchema >= 3 && lastRun > 0 && now - lastRun < REVIEW_GATE_RETENTION_MAINTENANCE_INTERVAL_MS
@@ -23195,13 +23195,6 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
         for (const manifestPath of batch) {
           const folder = reviewGatePackageFolder(manifestPath);
           const stat = await adapter.stat(manifestPath).catch(() => null);
-          const correctionPath = `${folder}/review-corrections/pending.jsonl`;
-          const correctionStat = await adapter.stat(correctionPath).catch(() => null);
-          // When canonical state exists it is the authoritative pending map;
-          // an audit file by itself may contain only terminal decisions. If
-          // state is unavailable, retain such a package for a later recovery
-          // pass instead of guessing.
-          const protectedByAudit = !canonical && Boolean(correctionStat && correctionStat.size > 0);
           const bytes = await this.reviewGatePackageBytes(folder);
           const key = reviewGateLogicalPathKey(manifestPath);
           metadata.push({
@@ -23209,7 +23202,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
             folder,
             bytes,
             mtime: Number(stat?.mtime ?? 0),
-            protected: pendingKeys.has(key) || protectedByAudit
+            protected: pendingKeys.has(key)
           });
         }
         await sleep(0);
