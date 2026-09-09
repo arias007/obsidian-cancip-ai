@@ -23151,6 +23151,9 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       if (!manifestPaths.length) return 0;
 
       const canonical = await this.readReviewGateCanonicalState();
+      // Never prune against an unavailable state: without the canonical map
+      // we cannot prove that a package is completed and safe to remove.
+      if (!canonical) return 0;
       const pendingKeys = new Set((canonical?.packages ?? [])
         .filter((entry) => entry.pendingPaths.length > 0)
         .map((entry) => reviewGateLogicalPathKey(entry.manifestPath)));
@@ -23188,6 +23191,11 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       const completed = metadata
         .filter((entry) => !entry.protected)
         .sort((a, b) => b.mtime - a.mtime || b.path.localeCompare(a.path));
+      // A concurrent review decision/build may have changed the canonical
+      // state while metadata was being collected. Abort this stale pass and
+      // let the next idle run use the new baseline.
+      const latestCanonical = await this.readReviewGateCanonicalState();
+      if (!latestCanonical || latestCanonical.updatedAt !== canonical.updatedAt) return 0;
       const retained = new Set<string>(metadata.filter((entry) => entry.protected).map((entry) => entry.path));
       let retainedCompletedCount = 0;
       let retainedCompletedBytes = 0;
@@ -23499,7 +23507,14 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     const operation = this.reviewGateCanonicalStateWriteQueue.then(async () => {
       const existing = await this.readReviewGateCanonicalState();
       if (existing && !forceRebuild) {
-        result = existing;
+        const indexed = await this.reviewGatePackagePaths();
+        if (existing.packages.length > 0 || indexed.length === 0) {
+          result = existing;
+          return;
+        }
+        // Repair a stale empty state when the package index still contains
+        // review snapshots (for example after an interrupted maintenance).
+        result = await this.writeReviewGateCanonicalState(await this.deriveReviewGateCanonicalState(indexed));
         return;
       }
       const derived = await this.deriveReviewGateCanonicalState(await this.reviewGatePackagePaths());
