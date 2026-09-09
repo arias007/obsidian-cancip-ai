@@ -4312,6 +4312,15 @@ const EDITOR_AUTOCOMPLETE_MEMORY_MAX_SESSION_BYTES = 256 * 1024;
 const SESSION_HISTORY_SCHEMA_VERSION = 1;
 const SESSION_HISTORY_LIMIT = 60;
 const SESSION_EVENTS_MAX_BYTES = 384 * 1024;
+// Review Gate packages are machine-generated snapshots. Keep pending/current
+// packages intact, but bound completed snapshots so startup and history views
+// do not have to carry an ever-growing cache.
+const REVIEW_GATE_RETENTION_MAX_COMPLETED_PACKAGES = 120;
+const REVIEW_GATE_RETENTION_MAX_COMPLETED_BYTES = 96 * 1024 * 1024;
+const REVIEW_GATE_RETENTION_SCAN_BATCH = 48;
+const REVIEW_GATE_RETENTION_DELETE_BATCH = 12;
+const REVIEW_GATE_RETENTION_MIN_KEEP_COMPLETED_PACKAGES = 12;
+const REVIEW_GATE_RETENTION_MAINTENANCE_INTERVAL_MS = 12 * 60 * 60 * 1000;
 let CANCIP_ARCHIVE_DIR = `${CANCIP_CONFIG_DIR}/archive`;
 let CANCIP_ARCHIVE_SESSIONS_DIR = `${CANCIP_ARCHIVE_DIR}/sessions`;
 let CANCIP_ARCHIVE_EVENTS_DIR = `${CANCIP_ARCHIVE_DIR}/session-events`;
@@ -4411,6 +4420,7 @@ const REVIEW_GATE_DIR = `${CANCIP_AI_DIR}/Review`;
 let REVIEW_GATE_HIDDEN_DIR = `${CANCIP_CONFIG_DIR}/review-gates`;
 let REVIEW_GATE_PACKAGE_INDEX_PATH = `${CANCIP_CONFIG_DIR}/review-index.json`;
 let REVIEW_GATE_CANONICAL_STATE_PATH = `${CANCIP_CONFIG_DIR}/review-state.json`;
+let REVIEW_GATE_RETENTION_MARKER_PATH = `${CANCIP_CONFIG_DIR}/review-retention.json`;
 let REVIEW_FEEDBACK_LOG_PATH = `${CANCIP_CONFIG_DIR}/feedback/review-decisions.jsonl`;
 let VAULT_SEARCH_HISTORY_PATH = `${CANCIP_CONFIG_DIR}/search-history.json`;
 const REVIEW_FEEDBACK_LOG_MAX_BYTES = 256 * 1024;
@@ -4476,6 +4486,7 @@ function configureCancipStorageRoot(storageDir: string): void {
   REVIEW_GATE_HIDDEN_DIR = `${CANCIP_CONFIG_DIR}/review-gates`;
   REVIEW_GATE_PACKAGE_INDEX_PATH = `${CANCIP_CONFIG_DIR}/review-index.json`;
   REVIEW_GATE_CANONICAL_STATE_PATH = `${CANCIP_CONFIG_DIR}/review-state.json`;
+  REVIEW_GATE_RETENTION_MARKER_PATH = `${CANCIP_CONFIG_DIR}/review-retention.json`;
   REVIEW_FEEDBACK_LOG_PATH = `${CANCIP_CONFIG_DIR}/feedback/review-decisions.jsonl`;
   VAULT_SEARCH_HISTORY_PATH = `${CANCIP_CONFIG_DIR}/search-history.json`;
   CANCIP_STORAGE_MIGRATION_MARKER_PATH = `${CANCIP_CONFIG_DIR}/migration-from-dot-cancip-v1.json`;
@@ -9810,6 +9821,7 @@ export default class CancipPlugin extends Plugin {
   private reviewGatePackageIndexWriteQueue: Promise<void> = Promise.resolve();
   private reviewGateCanonicalStateWriteQueue: Promise<void> = Promise.resolve();
   private reviewFeedbackWriteQueue: Promise<void> = Promise.resolve();
+  private reviewGatePrunePromise: Promise<number> | null = null;
   private reviewGateManualSupersedeTimer: number | null = null;
   private reviewGateManualSupersedePaths = new Set<string>();
   private reviewGateManualSupersedeRunning = false;
@@ -11369,6 +11381,12 @@ export default class CancipPlugin extends Plugin {
     });
     await run("ensureReviewGateCanonicalState", async () => {
       await this.ensureReviewGateCanonicalState();
+    });
+    // Run retention only after the index/state are available. It is deliberately
+    // part of idle maintenance and yields between batches so Obsidian remains
+    // responsive while old machine snapshots are reclaimed.
+    await run("pruneReviewGatePackages", async () => {
+      await this.pruneReviewGatePackages();
     });
     this.scheduleAutomations();
     this.scheduleCancipStatePolling();
@@ -22942,6 +22960,11 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     await this.mergeReviewGatePackageIndex([result.indexPath], false);
     await this.registerReviewGatePackageState(result.indexPath);
     this.invalidateReviewGateSnapshot();
+    // Do not make creating a review package wait for cleanup; the next idle
+    // maintenance pass (or this best-effort task) will trim completed caches.
+    void this.pruneReviewGatePackages().catch((error) => {
+      console.warn("Cancip Review Gate retention failed", error);
+    });
     return result;
   }
 
@@ -23096,6 +23119,167 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     const packages = await this.reviewGatePackagePaths(true);
     this.invalidateReviewGateSnapshot();
     return packages;
+  }
+
+  /**
+   * Bound completed Review Gate snapshots. These packages are an internal
+   * cache, not user notes; leaving them unbounded makes startup maintenance
+   * and the review history increasingly expensive. Pending packages and any
+   * package currently cached by an open review view are never removed.
+   */
+  private async pruneReviewGatePackages(): Promise<number> {
+    if (this.reviewGatePrunePromise) return await this.reviewGatePrunePromise;
+    const operation = (async () => {
+      const adapter = this.app.vault.adapter;
+      const now = Date.now();
+      const marker = await readTextIfExists(adapter, REVIEW_GATE_RETENTION_MARKER_PATH, "");
+      const lastRun = Number((() => {
+        try {
+          const parsed = JSON.parse(marker) as unknown;
+          return isRecord(parsed) && typeof parsed.completedAt === "string" ? Date.parse(parsed.completedAt) : 0;
+        } catch {
+          return 0;
+        }
+      })());
+      const rootListing = await adapter.list(REVIEW_GATE_HIDDEN_DIR).catch(() => ({ files: [], folders: [] }));
+      const manifestPaths: string[] = [];
+      for (const folder of rootListing.folders ?? []) {
+        const normalizedFolder = normalizePath(folder);
+        const manifestPath = `${normalizedFolder}/manifest.json`;
+        if (await adapter.exists(manifestPath)) manifestPaths.push(manifestPath);
+      }
+      if (!manifestPaths.length) return 0;
+
+      const canonical = await this.readReviewGateCanonicalState();
+      const pendingKeys = new Set((canonical?.packages ?? [])
+        .filter((entry) => entry.pendingPaths.length > 0)
+        .map((entry) => reviewGateLogicalPathKey(entry.manifestPath)));
+      if (lastRun > 0 && now - lastRun < REVIEW_GATE_RETENTION_MAINTENANCE_INTERVAL_MS
+        && manifestPaths.length <= pendingKeys.size + REVIEW_GATE_RETENTION_MAX_COMPLETED_PACKAGES + REVIEW_GATE_RETENTION_MIN_KEEP_COMPLETED_PACKAGES) {
+        return 0;
+      }
+      type PackageMeta = { path: string; folder: string; bytes: number; mtime: number; protected: boolean };
+      const metadata: PackageMeta[] = [];
+      for (let index = 0; index < manifestPaths.length; index += REVIEW_GATE_RETENTION_SCAN_BATCH) {
+        const batch = manifestPaths.slice(index, index + REVIEW_GATE_RETENTION_SCAN_BATCH);
+        for (const manifestPath of batch) {
+          const folder = reviewGatePackageFolder(manifestPath);
+          const stat = await adapter.stat(manifestPath).catch(() => null);
+          const correctionPath = `${folder}/review-corrections/pending.jsonl`;
+          const correctionStat = await adapter.stat(correctionPath).catch(() => null);
+          // When canonical state exists it is the authoritative pending map;
+          // an audit file by itself may contain only terminal decisions. If
+          // state is unavailable, retain such a package for a later recovery
+          // pass instead of guessing.
+          const protectedByAudit = !canonical && Boolean(correctionStat && correctionStat.size > 0);
+          const bytes = await this.reviewGatePackageBytes(folder);
+          const key = reviewGateLogicalPathKey(manifestPath);
+          metadata.push({
+            path: manifestPath,
+            folder,
+            bytes,
+            mtime: Number(stat?.mtime ?? 0),
+            protected: pendingKeys.has(key) || protectedByAudit
+          });
+        }
+        await sleep(0);
+      }
+
+      const completed = metadata
+        .filter((entry) => !entry.protected)
+        .sort((a, b) => b.mtime - a.mtime || b.path.localeCompare(a.path));
+      const retained = new Set<string>(metadata.filter((entry) => entry.protected).map((entry) => entry.path));
+      let retainedCompletedCount = 0;
+      let retainedCompletedBytes = 0;
+      const toDelete: PackageMeta[] = [];
+      for (const entry of completed) {
+        const keepForMinimum = retainedCompletedCount < REVIEW_GATE_RETENTION_MIN_KEEP_COMPLETED_PACKAGES;
+        const keepForBudget = retainedCompletedCount < REVIEW_GATE_RETENTION_MAX_COMPLETED_PACKAGES
+          && retainedCompletedBytes + entry.bytes <= REVIEW_GATE_RETENTION_MAX_COMPLETED_BYTES;
+        if (keepForMinimum || keepForBudget) {
+          retained.add(entry.path);
+          retainedCompletedCount += 1;
+          retainedCompletedBytes += entry.bytes;
+        } else {
+          toDelete.push(entry);
+        }
+      }
+
+      let removed = 0;
+      for (let index = 0; index < toDelete.length; index += REVIEW_GATE_RETENTION_DELETE_BATCH) {
+        const batch = toDelete.slice(index, index + REVIEW_GATE_RETENTION_DELETE_BATCH);
+        for (const entry of batch) {
+          try {
+            await adapter.rmdir(entry.folder, true);
+            if (!(await adapter.exists(entry.folder))) removed += 1;
+            else retained.add(entry.path);
+          } catch (error) {
+            retained.add(entry.path);
+            console.warn("Cancip Review Gate package prune skipped", entry.folder, error);
+          }
+        }
+        await sleep(0);
+      }
+
+      const nextPackages = this.sortReviewGatePackagePaths([...retained]);
+      const indexOperation = this.reviewGatePackageIndexWriteQueue.then(async () => {
+        await ensureFolder(adapter, CANCIP_CONFIG_DIR);
+        await adapter.write(REVIEW_GATE_PACKAGE_INDEX_PATH, `${JSON.stringify({
+          schemaVersion: 1,
+          updatedAt: new Date().toISOString(),
+          packages: nextPackages
+        } satisfies ReviewGatePackageIndex, null, 2)}\n`);
+      });
+      this.reviewGatePackageIndexWriteQueue = indexOperation.catch(() => undefined);
+      await indexOperation;
+
+      if (canonical) {
+        const retainedKeys = new Set(nextPackages.map((path) => reviewGateLogicalPathKey(path)));
+        await this.mutateReviewGateCanonicalState((state) => {
+          state.packages = state.packages.filter((entry) => retainedKeys.has(reviewGateLogicalPathKey(entry.manifestPath)));
+          state.pendingPaths = uniqueReviewGatePaths(state.packages
+            .filter((entry) => !isReviewGateAttentionExcluded(entry.manifestPath))
+            .flatMap((entry) => entry.pendingPaths));
+          return state;
+        });
+      }
+      await ensureFolder(adapter, CANCIP_CONFIG_DIR);
+      await adapter.write(REVIEW_GATE_RETENTION_MARKER_PATH, `${JSON.stringify({
+        schemaVersion: 1,
+        completedAt: new Date().toISOString(),
+        removed
+      }, null, 2)}\n`);
+      if (removed) {
+        this.invalidateReviewGateSnapshot();
+        console.info(`Cancip Review Gate retention removed ${removed} completed package(s)`);
+      }
+      return removed;
+    })();
+    this.reviewGatePrunePromise = operation;
+    try {
+      return await operation;
+    } finally {
+      if (this.reviewGatePrunePromise === operation) this.reviewGatePrunePromise = null;
+    }
+  }
+
+  private async reviewGatePackageBytes(folder: string): Promise<number> {
+    const adapter = this.app.vault.adapter;
+    const pending: string[] = [folder];
+    let total = 0;
+    let visited = 0;
+    while (pending.length) {
+      const current = pending.pop()!;
+      const listing = await adapter.list(current).catch(() => ({ files: [], folders: [] }));
+      for (const file of listing.files ?? []) {
+        const stat = await adapter.stat(file).catch(() => null);
+        total += Number(stat?.size ?? 0);
+      }
+      pending.push(...(listing.folders ?? []));
+      visited += 1;
+      if (visited % 24 === 0) await sleep(0);
+    }
+    return total;
   }
 
   private normalizeReviewGateCanonicalState(raw: unknown): ReviewGateCanonicalState | null {
@@ -73668,6 +73852,7 @@ function isReviewGateRelatedPath(path: string): boolean {
   if (!normalized) return false;
   return normalized === REVIEW_GATE_PACKAGE_INDEX_PATH
     || normalized === REVIEW_GATE_CANONICAL_STATE_PATH
+    || normalized === REVIEW_GATE_RETENTION_MARKER_PATH
     || normalized === REVIEW_GATE_HIDDEN_DIR
     || normalized.startsWith(`${REVIEW_GATE_HIDDEN_DIR}/`);
 }
