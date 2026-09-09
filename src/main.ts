@@ -88905,13 +88905,13 @@ async function firstUnverifiedLegacyCancipStoragePath(
   }
   const listing = await adapter.list(sourcePath);
   for (const folder of listing.folders) {
-    const childName = legacyCancipRelativePath(folder, sourcePath);
+    const childName = normalizePath(folder).slice(normalizePath(sourcePath).length).replace(/^\/+/, "");
     if (!childName) continue;
     const missing = await firstUnverifiedLegacyCancipStoragePath(adapter, folder, `${targetPath}/${childName}`, sourceRoot, targetRoot);
     if (missing) return missing;
   }
   for (const file of listing.files) {
-    const childName = legacyCancipRelativePath(file, sourcePath);
+    const childName = normalizePath(file).slice(normalizePath(sourcePath).length).replace(/^\/+/, "");
     if (!childName) continue;
     const missing = await firstUnverifiedLegacyCancipStoragePath(adapter, file, `${targetPath}/${childName}`, sourceRoot, targetRoot);
     if (missing) return missing;
