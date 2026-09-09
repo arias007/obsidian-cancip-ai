@@ -169,6 +169,7 @@ async function itemsFromInput(adapter: DataAdapter, rawItems: unknown, maxFileCh
   for (const raw of rawItems) {
     if (typeof raw === "string") {
       const path = safeVaultPath(raw);
+      if (!isReviewGateCandidate(path, true)) continue;
       const content = await readTextIfExists(adapter, path, maxFileChars);
       if (content !== null) items.push(scanItem(path, content));
       continue;
@@ -177,6 +178,7 @@ async function itemsFromInput(adapter: DataAdapter, rawItems: unknown, maxFileCh
     const rawPath = typeof raw.path === "string" ? raw.path : "";
     if (!rawPath.trim()) continue;
     const path = safeVaultPath(rawPath);
+    if (!isReviewGateCandidate(path, true)) continue;
     const current = await readTextIfExists(adapter, path, maxFileChars);
     const oldText = typeof raw.old_text === "string" ? raw.old_text : typeof raw.oldText === "string" ? raw.oldText : current ?? "";
     const newText = typeof raw.new_text === "string" ? raw.new_text : typeof raw.newText === "string" ? raw.newText : oldText;
@@ -422,6 +424,11 @@ function isReviewGateCandidate(path: string, includeHidden: boolean): boolean {
   if (!includeHidden && basename(normalized).startsWith(".")) return false;
   if (!includeHidden && hasDotFolderSegment(normalized)) return false;
   if (normalized === ".cancip/config.json") return false;
+  // Obsidian plugin/config state is runtime data, not reviewable Vault
+  // content. Excluding it at the source prevents large JSON snapshots from
+  // entering Review Gate in the first place.
+  if (normalized === ".obsidian" || normalized.startsWith(".obsidian/")) return false;
+  if (normalized === ".cancip" || normalized.startsWith(".cancip/")) return false;
   if (normalized.startsWith(".cancip/sessions/")) return false;
   if (normalized.startsWith(".cancip/versions/")) return false;
   if (normalized.startsWith(".cancip/review-gates/")) return false;
@@ -463,7 +470,11 @@ function hasDotFolderSegment(path: string): boolean {
 
 function isReviewGateExcludedFolder(path: string): boolean {
   const normalized = normalizePath(path);
-  return normalized === ".trash"
+  return normalized === ".obsidian"
+    || normalized.startsWith(".obsidian/")
+    || normalized === ".cancip"
+    || normalized.startsWith(".cancip/")
+    || normalized === ".trash"
     || normalized === ".cancip/sessions"
     || normalized.startsWith(".cancip/sessions/")
     || normalized === ".cancip/versions"

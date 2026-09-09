@@ -23133,6 +23133,14 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       const adapter = this.app.vault.adapter;
       const now = Date.now();
       const marker = await readTextIfExists(adapter, REVIEW_GATE_RETENTION_MARKER_PATH, "");
+      const markerSchema = Number((() => {
+        try {
+          const parsed = JSON.parse(marker) as unknown;
+          return isRecord(parsed) && typeof parsed.schemaVersion === "number" ? parsed.schemaVersion : 0;
+        } catch {
+          return 0;
+        }
+      })());
       const lastRun = Number((() => {
         try {
           const parsed = JSON.parse(marker) as unknown;
@@ -23141,13 +23149,25 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
           return 0;
         }
       })());
-      const rootListing = await adapter.list(REVIEW_GATE_HIDDEN_DIR).catch(() => ({ files: [], folders: [] }));
-      const manifestPaths: string[] = [];
-      for (const folder of rootListing.folders ?? []) {
-        const normalizedFolder = normalizePath(folder);
-        const manifestPath = `${normalizedFolder}/manifest.json`;
-        if (await adapter.exists(manifestPath)) manifestPaths.push(manifestPath);
-      }
+      let manifestPaths: string[] = [];
+      const collectManifestPaths = async (): Promise<string[]> => {
+        const listing = await adapter.list(REVIEW_GATE_HIDDEN_DIR).catch(() => ({ files: [], folders: [] }));
+        const paths: string[] = [];
+        for (const folder of listing.folders ?? []) {
+          const normalizedFolder = normalizePath(folder);
+          const manifestPath = `${normalizedFolder}/manifest.json`;
+          if (await adapter.exists(manifestPath)) {
+            paths.push(manifestPath);
+          } else {
+            // Interrupted writes can leave an orphan folder with no manifest.
+            // It is not a review package and is safe to remove from this
+            // dedicated machine-data directory.
+            await adapter.rmdir(normalizedFolder, true).catch(() => undefined);
+          }
+        }
+        return paths;
+      };
+      manifestPaths = await collectManifestPaths();
       if (!manifestPaths.length) return 0;
 
       const canonical = await this.readReviewGateCanonicalState();
@@ -23157,10 +23177,17 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       const pendingKeys = new Set((canonical?.packages ?? [])
         .filter((entry) => entry.pendingPaths.length > 0)
         .map((entry) => reviewGateLogicalPathKey(entry.manifestPath)));
-      if (lastRun > 0 && now - lastRun < REVIEW_GATE_RETENTION_MAINTENANCE_INTERVAL_MS
+      if (markerSchema >= 3 && lastRun > 0 && now - lastRun < REVIEW_GATE_RETENTION_MAINTENANCE_INTERVAL_MS
         && manifestPaths.length <= pendingKeys.size + REVIEW_GATE_RETENTION_MAX_COMPLETED_PACKAGES + REVIEW_GATE_RETENTION_MIN_KEEP_COMPLETED_PACKAGES) {
         return 0;
       }
+      for (let index = 0; index < manifestPaths.length; index += REVIEW_GATE_RETENTION_SCAN_BATCH) {
+        for (const manifestPath of manifestPaths.slice(index, index + REVIEW_GATE_RETENTION_SCAN_BATCH)) {
+          await this.sanitizeReviewGatePackage(manifestPath);
+        }
+        await sleep(0);
+      }
+      manifestPaths = await collectManifestPaths();
       type PackageMeta = { path: string; folder: string; bytes: number; mtime: number; protected: boolean };
       const metadata: PackageMeta[] = [];
       for (let index = 0; index < manifestPaths.length; index += REVIEW_GATE_RETENTION_SCAN_BATCH) {
@@ -23242,18 +23269,14 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       await indexOperation;
 
       if (canonical) {
-        const retainedKeys = new Set(nextPackages.map((path) => reviewGateLogicalPathKey(path)));
-        await this.mutateReviewGateCanonicalState((state) => {
-          state.packages = state.packages.filter((entry) => retainedKeys.has(reviewGateLogicalPathKey(entry.manifestPath)));
-          state.pendingPaths = uniqueReviewGatePaths(state.packages
-            .filter((entry) => !isReviewGateAttentionExcluded(entry.manifestPath))
-            .flatMap((entry) => entry.pendingPaths));
-          return state;
-        });
+        // Re-derive from the sanitized manifests so removed configuration
+        // items cannot survive as stale pending paths in canonical state.
+        const derived = await this.deriveReviewGateCanonicalState(nextPackages);
+        await this.writeReviewGateCanonicalState(derived);
       }
       await ensureFolder(adapter, CANCIP_CONFIG_DIR);
       await adapter.write(REVIEW_GATE_RETENTION_MARKER_PATH, `${JSON.stringify({
-        schemaVersion: 1,
+        schemaVersion: 3,
         completedAt: new Date().toISOString(),
         removed
       }, null, 2)}\n`);
@@ -23288,6 +23311,61 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       if (visited % 24 === 0) await sleep(0);
     }
     return total;
+  }
+
+  private async sanitizeReviewGatePackage(manifestPath: string): Promise<boolean> {
+    const adapter = this.app.vault.adapter;
+    const folder = reviewGatePackageFolder(manifestPath);
+    try {
+      const manifest = JSON.parse(await adapter.read(manifestPath)) as unknown;
+      if (!isRecord(manifest) || !Array.isArray(manifest.items)) return false;
+      const items = filterStoredReviewGateItems(normalizeReviewGateItems(manifest.items));
+      const changed = items.length !== manifest.items.length;
+      if (!changed) return false;
+      if (!items.length) {
+        await adapter.rmdir(folder, true);
+        return true;
+      }
+      const nextManifest = { ...manifest, items };
+      await adapter.write(manifestPath, `${JSON.stringify(nextManifest, null, 2)}\n`);
+      const summaryPath = `${folder}/summary.json`;
+      if (await adapter.exists(summaryPath)) {
+        try {
+          const summary = JSON.parse(await adapter.read(summaryPath)) as unknown;
+          if (isRecord(summary) && Array.isArray(summary.items)) {
+            const summaryItems = summary.items.filter((item): boolean => {
+              if (!isRecord(item) || typeof item.path !== "string") return false;
+              const lower = normalizePath(item.path).toLowerCase();
+              return lower !== ".obsidian" && !lower.startsWith(".obsidian/") && lower !== ".cancip" && !lower.startsWith(".cancip/");
+            });
+            await adapter.write(summaryPath, `${JSON.stringify({ ...summary, items: summaryItems }, null, 2)}\n`);
+          }
+        } catch {
+          // The manifest is authoritative; a malformed optional summary is
+          // ignored and will be regenerated by the next package build.
+        }
+      }
+      const normalizedPath = `${folder}/review-manifest.normalized.json`;
+      if (await adapter.exists(normalizedPath)) {
+        try {
+          const normalized = JSON.parse(await adapter.read(normalizedPath)) as unknown;
+          if (Array.isArray(normalized)) {
+            const kept = normalized.filter((entry) => {
+              const raw = isRecord(entry) && isRecord(entry.raw) ? entry.raw : entry;
+              if (!isRecord(raw) || typeof raw.path !== "string") return false;
+              const lower = normalizePath(raw.path).toLowerCase();
+              return lower !== ".obsidian" && !lower.startsWith(".obsidian/") && lower !== ".cancip" && !lower.startsWith(".cancip/");
+            });
+            await adapter.write(normalizedPath, `${JSON.stringify(kept, null, 2)}\n`);
+          }
+        } catch {
+          // Optional normalized cache; do not fail package retention on it.
+        }
+      }
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   private normalizeReviewGateCanonicalState(raw: unknown): ReviewGateCanonicalState | null {
@@ -73875,6 +73953,11 @@ function isReviewGateRelatedPath(path: string): boolean {
 function isReviewGateMachineFilePath(path: string): boolean {
   const normalized = normalizePath(String(path ?? "").replace(/\\/g, "/").replace(/^\/+/, ""));
   if (!normalized) return false;
+  const lower = normalized.toLowerCase();
+  // Obsidian's hidden configuration tree and legacy Cancip storage are
+  // runtime state. They must never be rendered or retained as Review Gate
+  // items; reviewing them was the main source of multi-gigabyte packages.
+  if (lower === ".obsidian" || lower.startsWith(".obsidian/") || lower === ".cancip" || lower.startsWith(".cancip/")) return true;
   if (isReviewGateRelatedPath(normalized)) return true;
   return isLegacyVisibleReviewGateArtifactPath(normalized);
 }
@@ -74531,7 +74614,11 @@ function isStoredReviewGateItemVisible(item: ReviewGateManifestItem): boolean {
 }
 
 function filterStoredReviewGateItems(items: ReviewGateManifestItem[]): ReviewGateManifestItem[] {
-  return items.filter(isStoredReviewGateItemVisible);
+  return items.filter((item) => isStoredReviewGateItemVisible(item)
+    && !reviewItemAllOpenPaths(item).some((path) => {
+      const lower = normalizePath(path).toLowerCase();
+      return lower === ".obsidian" || lower.startsWith(".obsidian/") || lower === ".cancip" || lower.startsWith(".cancip/");
+    }));
 }
 
 function isTerminalReviewGateDecision(decision: string): decision is ReviewGateTerminalDecision {
