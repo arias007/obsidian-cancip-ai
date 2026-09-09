@@ -40492,10 +40492,15 @@ class CancipView extends ItemView {
       this.focusInput();
       return;
     }
-    await this.plugin.selectModel(model, profileId);
     this.closeCommandMenu();
-    this.refreshComposerModelButton();
     this.setStatus(this.t("modelChanged", { model }));
+    try {
+      await this.plugin.selectModel(model, profileId);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      new Notice(reason);
+    }
+    this.refreshComposerModelButton();
     this.focusInput();
   }
 
@@ -41099,9 +41104,12 @@ class CancipView extends ItemView {
         const titleLine = body.createDiv({ cls: "obcc-command-title" });
         if (isChild) titleLine.createSpan({ cls: "obcc-subagent-mini-badge", text: this.t("subagentLabel") });
         titleLine.createSpan({ text: entry.title });
-        body.createDiv({ cls: "obcc-command-detail", text: entry.eventOnly
-          ? `${this.t("sessionEvents")} · ${formatSessionHistoryTime(entry.updatedAt)}`
-          : `${this.sessionStatusLabel(status)} · ${this.composerModeLabel(entry.mode)} · ${entry.messageCount} · ${formatSessionHistoryTime(entry.updatedAt)}${entry.archived ? ` · ${this.t("sessionArchived")}` : ""}${isChild && entry.parentSessionId ? ` · ${this.t("subagentParent")} ${entry.parentSessionId.replace(/^session-/, "").slice(0, 10)}` : ""}${childSummary}${progressSummary}` });
+        body.createDiv({
+          cls: "obcc-command-detail",
+          text: entry.eventOnly
+            ? `${this.t("sessionEvents")} · ${formatSessionHistoryTime(entry.updatedAt)}`
+            : `${this.formatModelLabel(entry.model)} · ${entry.messageCount} 条 · ${formatSessionHistoryTime(entry.updatedAt)}${entry.archived ? ` · ${this.t("sessionArchived")}` : ""}${isChild && entry.parentSessionId ? ` · ${this.t("subagentParent")} ${entry.parentSessionId.replace(/^session-/, "").slice(0, 10)}` : ""}${childSummary}${progressSummary}`
+        });
       }
       const state = row.createSpan({ cls: "obcc-session-state" });
       if (status === "running") {
@@ -48700,7 +48708,9 @@ class CancipView extends ItemView {
   }
 
   private async readSessionHistoryIndex(options: { force?: boolean; mergeFiles?: boolean; refreshFiles?: boolean } = {}): Promise<SessionHistoryEntry[]> {
-    const maxAgeMs = 3000;
+    // Session status writes update this cache immediately. A longer read
+    // window avoids reopening history with a redundant adapter read.
+    const maxAgeMs = 12000;
     const mergeFiles = options.mergeFiles === true || options.refreshFiles === true;
     const cache = this.sessionHistoryCache;
     const cacheCanServe = cache

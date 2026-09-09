@@ -3274,10 +3274,11 @@ details.obcc-process-step {
   align-items: center;
   min-width: 0;
   max-width: 100%;
-  padding: 4px;
+  padding: 6px;
   border: 1px solid var(--background-modifier-border);
   border-radius: 10px;
   background: var(--background-secondary);
+  contain: layout paint;
 }
 
 .obcc-model-menu-row.is-drag-over,
@@ -3317,6 +3318,14 @@ details.obcc-process-step {
 .obcc-model-menu-text {
   min-width: 0;
   overflow: hidden;
+}
+
+.obcc-model-menu-text .obcc-command-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
 }
 
 .obcc-model-menu-actions {
@@ -3879,15 +3888,16 @@ details.obcc-process-step {
   grid-template-columns: 16px minmax(0, 1fr) 106px;
   grid-template-rows: auto;
   align-items: center;
-  gap: 4px;
+  gap: 8px;
   min-width: 0;
   width: 100%;
   max-width: 100%;
-  margin: 2px 0;
-  padding: 4px 6px 4px 5px;
+  margin: 4px 0;
+  padding: 8px 8px 8px 7px;
   border: 1px solid var(--background-modifier-border);
   border-radius: 10px;
   background: var(--background-secondary);
+  contain: layout paint;
 }
 
 .obcc-session-item[draggable="true"] {
@@ -3922,7 +3932,7 @@ details.obcc-process-step {
   width: 100%;
   max-width: 100%;
   overflow: hidden;
-  min-height: 31px;
+  min-height: 38px;
   padding: 0 4px 0 1px;
   border: 0;
   border-radius: 0;
@@ -4063,7 +4073,7 @@ details.obcc-process-step {
 .obcc-session-item .obcc-command-title {
   display: block;
   white-space: nowrap;
-  line-height: 1.02;
+  line-height: 1.2;
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4073,9 +4083,10 @@ details.obcc-process-step {
 .obcc-session-item .obcc-command-detail {
   display: block;
   white-space: nowrap;
-  line-height: 1.02;
+  line-height: 1.25;
+  font-size: 11px;
   max-width: 100%;
-  margin-top: 0;
+  margin-top: 3px;
   overflow: hidden;
   text-overflow: ellipsis;
 }
