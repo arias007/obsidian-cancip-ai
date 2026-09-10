@@ -79,6 +79,31 @@ const functionSource = (name) => {
   if (!match) throw new Error(`Missing source function: ${name}`);
   return match;
 };
+const modelStreamModule = ts.transpileModule([
+  "type ModelCallAudit = { responseText?: string; responseDisplayText?: string; extractedText?: string };",
+  "const stableTextHash = (value: string) => value;",
+  "const safeJsonishDisplay = (value: unknown) => JSON.stringify(value);",
+  functionSource("isRecord"),
+  functionSource("isReasoningResponseFragment"),
+  functionSource("extractTextFragment"),
+  functionSource("extractCompatibleStreamDelta"),
+  functionSource("extractResponsesStreamDelta"),
+  functionSource("compactModelStreamRawText"),
+  functionSource("modelReceivedDisplayText"),
+  "export { compactModelStreamRawText, modelReceivedDisplayText };"
+].join("\n\n"), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 }
+}).outputText;
+const modelStreamApi = await import(`data:text/javascript;base64,${Buffer.from(modelStreamModule).toString("base64")}`);
+const streamFixture = [
+  'data: {"choices":[{"delta":{"content":"工具"}}]}',
+  "",
+  'data: {"choices":[{"delta":{"content":"索引"}}]}',
+  "",
+  "data: [DONE]"
+].join("\n");
+const compactStreamFixturePassed = modelStreamApi.compactModelStreamRawText(streamFixture) === "工具索引"
+  && modelStreamApi.modelReceivedDisplayText({ responseText: streamFixture, extractedText: "工具索引" }) === "工具索引";
 const greetingCacheModule = ts.transpileModule([
   "type Language = string;",
   "const trimContext = (value: string, maxLength: number) => value.length <= maxLength ? value : value.slice(0, maxLength);",
@@ -496,6 +521,11 @@ const checks = [
   ["timers use milliseconds below one second, tenths below one minute, and whole seconds after one minute", source.includes('if (safe < 1000) return `${safe}ms`') && source.includes("(safe / 1000).toFixed(1)") && source.includes('String(Math.floor((safe % 60000) / 1000)).padStart(2, "0")')],
   ["numbered process steps have right-aligned bordered timers", source.includes('cls: "obcc-process-step-timer"') && styles.includes(".obcc-process-step-timer") && styles.includes("min-width: 46px") && styles.includes("justify-self: end") && styles.includes("grid-template-columns: 14px 20px minmax(0, 1fr) max-content max-content")],
   ["live progress avoids unconditional Markdown rerender", source.includes("signature !== renderedSignature && now >= nextRenderAt")],
+  ["streaming transport frames are projected once instead of rebuilding raw audit on every token", compactStreamFixturePassed && source.includes("if (progress.done) this.updateModelProcessAuditSections(step, progress.text)") && !/if \(receivedData\) \{[\s\S]{0,500}responseText: rawText/.test(source) && source.includes("function modelReceivedDisplayText") && source.includes('if (sseEvents > 0 && deltas.length) return deltas.join(\"\")')],
+  ["persisted SSE receive blocks render as one readable response", source.includes('section.group === "received" ? compactModelStreamRawText(section.content) : section.content') && source.includes('section.group === "runtime" || section.group === "received" ? false')],
+  ["live model metrics update their process step without rebuilding the transcript", source.includes("private refreshLiveProcessStepDom(") && source.includes('data-process-step-message-id') && source.includes("if (!this.refreshLiveProcessStepDom(message)) this.scheduleRenderMessages()")],
+  ["startup filesystem network and UI work is deferred until after layout", !source.includes("const agentStartupTimer = window.setTimeout") && source.includes("const cancelAgentStartup = scheduleIdleWork") && source.includes("const cancelUiEnhancements = scheduleIdleWork") && !source.includes("this.schedulePersonalizationRefresh(0);\n    this.registerInterval")],
+  ["status bar guard watches only its own DOM and state polling yields startup", source.includes("observer.observe(bar, {") && !source.includes("observer.observe(doc.body, {\n      childList: true,\n      subtree: true,\n      attributes: true,\n      attributeFilter: [\"class\", \"style\", \"data-cancip-ui-hidden\"") && source.includes('}, 12000);\n    this.cancipStatePollTimer')],
   ["subagents launch concurrently", source.includes("await Promise.allSettled(specs.map((spec)")],
   ["explicit multi-agent lets the main agent choose strategy but requires real children", source.includes("Your first executable action batch must call cancip.subagents.parallel with at least 2 real child sessions") && source.includes("price, latency, capability, recent success, and current availability") && source.includes("!responseStartsParallelSubagents(answer, 2)")],
   ["explicit textual multi-agent requests also require the real parallel route", finalFailureApi.explicitlyRequestsMultiAgentExecution(failedMultiAgentPrompt) && !finalFailureApi.explicitlyRequestsMultiAgentExecution("修复多 Agent 设置里的按钮样式") && source.includes("|| explicitlyRequestsMultiAgentExecution(rawPrompt)")],

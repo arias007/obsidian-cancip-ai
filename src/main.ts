@@ -307,7 +307,7 @@ const VERY_LARGE_LIVE_SESSION_BYTES = 4 * 1024 * 1024;
 const MAX_TOOL_ACTIONS_PER_BATCH = 8;
 const MAX_TOOL_ACTIONS_PER_TASK = 12;
 const MAX_AUTOMATION_TOOL_ACTIONS_PER_TASK = 18;
-const STARTUP_MAINTENANCE_IDLE_TIMEOUT_MS = 1600;
+const STARTUP_MAINTENANCE_IDLE_TIMEOUT_MS = 12000;
 const TTS_CAPTURE_MAX_CHARS = 120000;
 const TTS_FILE_CAPTURE_MAX_CHARS = Number.MAX_SAFE_INTEGER;
 const TTS_MAX_PARTS = 50000;
@@ -4433,10 +4433,10 @@ const UNIVERSAL_SEARCH_BACKGROUND_OCR_INTERVAL_MS = 300000;
 const UNIVERSAL_SEARCH_MOBILE_BACKGROUND_OCR_INTERVAL_MS = 600000;
 const UNIVERSAL_SEARCH_MAX_DOCUMENTS = 12000;
 const UNIVERSAL_SEARCH_MAX_QUERY_CANDIDATES = 180;
-const CANCIP_STATE_POLL_INTERVAL_MS = 6000;
-const CANCIP_STATE_POLL_MOBILE_INTERVAL_MS = 30000;
-const CANCIP_STATE_POLL_FOLDER_MAX_ROWS = 260;
-const CANCIP_STATE_POLL_MOBILE_FOLDER_MAX_ROWS = 80;
+const CANCIP_STATE_POLL_INTERVAL_MS = 15000;
+const CANCIP_STATE_POLL_MOBILE_INTERVAL_MS = 45000;
+const CANCIP_STATE_POLL_FOLDER_MAX_ROWS = 96;
+const CANCIP_STATE_POLL_MOBILE_FOLDER_MAX_ROWS = 48;
 let AUTOMATION_DIR = `${CANCIP_CONFIG_DIR}/automations`;
 let AUTOMATION_STATE_PATH = `${CANCIP_CONFIG_DIR}/automations.json`;
 const AUTOMATION_SCHEMA_VERSION = 15;
@@ -10554,23 +10554,6 @@ export default class CancipPlugin extends Plugin {
     this.registerView(CANCIP_AUTOMATION_RUNNER_VIEW_TYPE, (leaf) => new CancipView(leaf, this, CANCIP_AUTOMATION_RUNNER_VIEW_TYPE));
     this.registerView(CANCIP_REVIEW_VIEW_TYPE, (leaf) => new CancipReviewLeafView(leaf, this));
     this.registerView(CANCIP_DOCUMENT_VIEW_TYPE, (leaf) => new CancipDocumentWorkbenchView(leaf, this));
-    if (!Platform.isMobileApp) {
-      const agentStartupTimer = window.setTimeout(() => {
-        void this.ensureAgentCliInstalled().catch((error) => {
-          this.agentBridgeLastError = error instanceof Error ? error.message : String(error);
-          console.warn("Cancip CLI install skipped", error);
-        });
-        void this.startAgentBridge().catch((error) => {
-          this.agentBridgeLastError = error instanceof Error ? error.message : String(error);
-          console.warn("Cancip Agent Bridge start failed", error);
-        });
-      }, 2500);
-      this.register(() => window.clearTimeout(agentStartupTimer));
-      const localModelRefreshTimer = window.setTimeout(() => {
-        void this.refreshLocalModelCatalog().catch(() => undefined);
-      }, 6000);
-      this.register(() => window.clearTimeout(localModelRefreshTimer));
-    }
     this.installScoreActivityTracking();
     this.app.workspace.onLayoutReady(() => {
       const cancelStartupArtifacts = scheduleIdleWork(() => {
@@ -10594,6 +10577,25 @@ export default class CancipPlugin extends Plugin {
         this.scheduleMarkdownWorkbenchHydrationForOpenLeaves();
       }, 900);
       this.register(cancelWorkbenchWarmup);
+      if (!Platform.isMobileApp) {
+        // CLI checks, bridge startup and local-model discovery all touch the
+        // filesystem or network. Keep them out of Obsidian's first-paint path.
+        const cancelAgentStartup = scheduleIdleWork(() => {
+          void this.ensureAgentCliInstalled().catch((error) => {
+            this.agentBridgeLastError = error instanceof Error ? error.message : String(error);
+            console.warn("Cancip CLI install skipped", error);
+          });
+          void this.startAgentBridge().catch((error) => {
+            this.agentBridgeLastError = error instanceof Error ? error.message : String(error);
+            console.warn("Cancip Agent Bridge start failed", error);
+          });
+        }, 12000);
+        this.register(cancelAgentStartup);
+        const cancelLocalModelRefresh = scheduleIdleWork(() => {
+          void this.refreshLocalModelCatalog().catch(() => undefined);
+        }, 18000);
+        this.register(cancelLocalModelRefresh);
+      }
     });
     this.registerEditorExtension(createCancipEditorAutocompleteExtension(this));
     this.registerEditorExtension(createContextEditEditorPreviewExtension(this));
@@ -10862,11 +10864,13 @@ export default class CancipPlugin extends Plugin {
           });
       });
     }));
-    this.installStartupUiEnhancements();
     this.app.workspace.onLayoutReady(() => {
-      this.installStartupUiEnhancements();
-      this.scheduleSrReviewQueueCommandPatch(0);
-      this.srPdfToolbarPatchScan?.();
+      const cancelUiEnhancements = scheduleIdleWork(() => {
+        this.installStartupUiEnhancements();
+        this.scheduleSrReviewQueueCommandPatch(0);
+        this.srPdfToolbarPatchScan?.();
+      }, 2400);
+      this.register(cancelUiEnhancements);
     });
     this.registerEvent(this.app.workspace.on("active-leaf-change", (leaf) => {
       this.rememberContentWorkspaceLeaf(leaf ?? null);
@@ -11039,14 +11043,18 @@ export default class CancipPlugin extends Plugin {
 
     this.settingTab = new CancipSettingTab(this.app, this);
     this.addSettingTab(this.settingTab);
-    void Promise.all([this.loadPersonalizationCache(), this.loadPersonalizationUsage()]).then(() => this.refreshPersonalizedSurfaces());
-    this.schedulePersonalizationRefresh(0);
+    void Promise.all([this.loadPersonalizationCache(), this.loadPersonalizationUsage()]).then(([cache]) => {
+      this.refreshPersonalizedSurfaces();
+      if (cache.timeKey !== personalizationTimeKey(new Date())) {
+        this.schedulePersonalizationRefresh(15000);
+      }
+    });
     this.registerInterval(window.setInterval(() => {
       if (this.personalizationCache?.timeKey !== personalizationTimeKey(new Date())) {
         this.schedulePersonalizationRefresh(0);
       }
     }, 10 * 60 * 1000));
-    this.scheduleCancipStatePolling();
+    this.app.workspace.onLayoutReady(() => this.scheduleCancipStatePolling());
     this.installCancipResumeStateRefresh();
     this.scheduleStartupMaintenance();
     this.registerInterval(window.setInterval(() => {
@@ -11065,18 +11073,28 @@ export default class CancipPlugin extends Plugin {
       this.removeStaleUiButtonSortDom();
       this.installButtonEditLongPress();
       const doc = activeDocument;
-      const applyRulesAfterPointer = () => {
+      const uiControlFromEvent = (event: Event): HTMLElement | null => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) return null;
+        return target.closest<HTMLElement>("button, summary, .clickable-icon, .menu-item, .workspace-tab-header, .nav-file, .nav-folder");
+      };
+      const applyRulesAfterPointer = (event: Event) => {
+        const control = uiControlFromEvent(event);
+        if (!control) return;
         this.universalSearchLastUserActivityAt = Date.now();
         this.scheduleUiButtonRulesApply(80);
-        this.scheduleFilePinsApply(100);
+        if (control.closest(".nav-files-container, .nav-folder, .nav-file")) this.scheduleFilePinsApply(140);
       };
       const handleTrackedClick = (event: MouseEvent) => {
+        if (!uiControlFromEvent(event)) return;
         this.recordUiButtonUsage(event);
-        applyRulesAfterPointer();
+        applyRulesAfterPointer(event);
       };
-      const applyFilePinsAfterKey = () => {
+      const applyFilePinsAfterKey = (event: KeyboardEvent) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement) || !target.closest(".nav-files-container")) return;
         this.universalSearchLastUserActivityAt = Date.now();
-        this.scheduleFilePinsApply(100);
+        this.scheduleFilePinsApply(140);
       };
       doc.addEventListener("click", handleTrackedClick, true);
       doc.addEventListener("pointerup", applyRulesAfterPointer, true);
@@ -18243,20 +18261,27 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
   }
 
   private installStatusBarVisibilityGuard(): void {
-    if (this.statusBarVisibilityObserver) return;
+    if (this.statusBarVisibilityObserver || !this.settings.forceStatusBarVisible) return;
     const doc = activeDocument;
-    const observer = new MutationObserver((mutations) => {
-      if (!this.settings.forceStatusBarVisible || !mutations.some((mutation) => this.isStatusBarVisibilityMutation(mutation))) return;
+    const managerBar = (this.app as App & { statusBar?: { containerEl?: HTMLElement } }).statusBar?.containerEl;
+    const bar = doc.querySelector<HTMLElement>(".status-bar") ?? managerBar ?? null;
+    if (!bar) return;
+    const observer = new MutationObserver(() => {
+      if (!this.settings.forceStatusBarVisible) return;
       this.scheduleStatusBarVisibilityRefresh(16);
     });
-    observer.observe(doc.body, {
+    observer.observe(bar, {
       childList: true,
-      subtree: true,
       attributes: true,
-      attributeFilter: ["class", "style", "data-cancip-ui-hidden", "data-cancip-ui-rule-hidden", "data-cancip-tag-hidden"]
+      attributeFilter: ["class", "style", "data-cancip-ui-hidden", "data-cancip-ui-rule-hidden"]
     });
+    if (this.statusBarEl && this.statusBarEl !== bar) {
+      observer.observe(this.statusBarEl, {
+        attributes: true,
+        attributeFilter: ["class", "style", "data-cancip-ui-hidden", "data-cancip-ui-rule-hidden"]
+      });
+    }
     this.statusBarVisibilityObserver = observer;
-    this.registerInterval(window.setInterval(() => this.ensureStatusBarVisible(), 1200));
     this.register(() => {
       observer.disconnect();
       if (this.statusBarVisibilityObserver === observer) this.statusBarVisibilityObserver = null;
@@ -18267,19 +18292,6 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       this.clearForcedStatusBarStyles();
     });
     this.scheduleStatusBarVisibilityRefresh(0);
-  }
-
-  private isStatusBarVisibilityMutation(mutation: MutationRecord): boolean {
-    const relevant = (node: Node): boolean => {
-      if (node.nodeType !== 1) return false;
-      const element = node as HTMLElement;
-      return element.matches?.(".status-bar, .obcc-statusbar")
-        || Boolean(element.closest?.(".status-bar, .obcc-statusbar"))
-        || Boolean(element.querySelector?.(".status-bar, .obcc-statusbar"));
-    };
-    if (mutation.type === "attributes") return mutation.target === activeDocument.body || relevant(mutation.target);
-    if (relevant(mutation.target)) return true;
-    return [...Array.from(mutation.addedNodes), ...Array.from(mutation.removedNodes)].some(relevant);
   }
 
   private scheduleStatusBarVisibilityRefresh(delay = 16): void {
@@ -29497,10 +29509,10 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     if (this.cancipStatePollTimer !== null || this.cancipStatePollSeedTimer !== null) return;
     this.cancipStatePollSeedTimer = window.setTimeout(() => {
       this.cancipStatePollSeedTimer = null;
-      void this.scanCancipVaultStateForChanges(true);
-    }, 1200);
+      if (activeDocument.visibilityState !== "hidden") void this.scanCancipVaultStateForChanges(true);
+    }, 12000);
     this.cancipStatePollTimer = window.setInterval(() => {
-      void this.scanCancipVaultStateForChanges(false);
+      if (activeDocument.visibilityState !== "hidden") void this.scanCancipVaultStateForChanges(false);
     }, Platform.isMobileApp ? CANCIP_STATE_POLL_MOBILE_INTERVAL_MS : CANCIP_STATE_POLL_INTERVAL_MS);
     this.register(() => {
       if (this.cancipStatePollSeedTimer !== null) window.clearTimeout(this.cancipStatePollSeedTimer);
@@ -29541,7 +29553,9 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     if (this.cancipResumeRefreshTimer !== null) window.clearTimeout(this.cancipResumeRefreshTimer);
     this.cancipResumeRefreshTimer = window.setTimeout(() => {
       this.cancipResumeRefreshTimer = null;
-      void this.refreshAllSyncedVaultState();
+      // Focus/visibility changes are frequent. Fingerprints identify the exact
+      // changed state; a full cache purge here made every app resume expensive.
+      void this.scanCancipVaultStateForChanges(this.cancipStatePollFingerprints.size === 0);
     }, delayMs);
   }
 
@@ -29599,12 +29613,11 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       AUTOMATION_DIR,
       LOCAL_VERSION_INDEX_PATH,
       REVIEW_GATE_PACKAGE_INDEX_PATH,
-      REVIEW_GATE_CANONICAL_STATE_PATH,
-      DEFAULT_MEMORY_FOLDER,
-      this.settings.memoryFolder || DEFAULT_MEMORY_FOLDER,
-      ...DEFAULT_SKILL_ROOTS,
-      ...this.settings.skillRoots
+      REVIEW_GATE_CANONICAL_STATE_PATH
     ];
+    // Visible Vault memory and Skill folders already emit create/modify/delete
+    // events. Poll only hidden machine-state roots that Obsidian may not emit;
+    // walking broad content trees here caused recurring foreground stalls.
     for (const leaf of this.chatLeaves()) {
       if (leaf.view instanceof CancipView) targets.push(...leaf.view.vaultSyncWatchedPaths());
     }
@@ -29759,7 +29772,6 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     } else {
       this.updateStatusBarAttention(this.statusBarAttentionState);
     }
-    void this.refreshStatusBarAttentionFromDisk(openViewState);
     this.scheduleStatusBarReviewRefresh();
   }
 
@@ -29862,7 +29874,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     this.statusBarReviewRefreshTimer = window.setTimeout(() => {
       this.statusBarReviewRefreshTimer = null;
       void this.refreshStatusBarReviewCount();
-    }, 250);
+    }, 600);
   }
 
   private async refreshStatusBarReviewCount(): Promise<void> {
@@ -45274,7 +45286,9 @@ class CancipView extends ItemView {
     this.stopProgressStepTimer(message.id);
     this.startProgressStepTimer(message, summary, detail, status);
     this.scheduleLiveSessionSave();
-    this.scheduleRenderMessages();
+    // Live model ticks should not rebuild and re-render the entire transcript.
+    // The current process step has stable DOM hooks for its title and metrics.
+    if (!this.refreshLiveProcessStepDom(message)) this.scheduleRenderMessages();
   }
 
   private scheduleLiveSessionSave(): void {
@@ -45347,12 +45361,49 @@ class CancipView extends ItemView {
 
   private refreshLiveMessageContent(message: ChatMessage): void {
     if (!this.messagesEl) return;
+    if (this.refreshLiveProcessStepDom(message)) return;
     const item = this.messagesEl.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(message.id)}"]`);
     const content = item?.querySelector<HTMLElement>(".obcc-content");
     if (!content) return;
     const display = prepareMessageDisplay(redactSensitiveText(message.content));
     content.empty();
     this.renderMarkdown(content, display.visibleContent);
+  }
+
+  private refreshLiveProcessStepDom(message: ChatMessage): boolean {
+    if (!this.messagesEl) return false;
+    const step = this.messagesEl.querySelector<HTMLDetailsElement>(`details[data-process-step-message-id="${CSS.escape(message.id)}"]`);
+    if (!step) return false;
+    const display = prepareMessageDisplay(redactSensitiveText(message.content));
+    const headline = this.processStepHeadline(message, display);
+    const brief = this.processBriefForMessage(message, headline, "");
+    const title = this.processStepTitleFromBrief(brief, headline)
+      || (isChineseLanguage(this.plugin.language()) ? "模型回复" : "Model response");
+    const titleEl = step.querySelector<HTMLElement>(".obcc-process-step-title-text");
+    if (titleEl && titleEl.textContent !== title) titleEl.setText(title);
+
+    const usage = message.modelUsage;
+    if (usage) {
+      const head = step.querySelector<HTMLElement>(".obcc-process-step-head");
+      let badge = head?.querySelector<HTMLElement>(".obcc-process-step-token-badge") ?? null;
+      if (!badge && head) {
+        badge = createDetachedElement(head.ownerDocument, "span");
+        badge.className = "obcc-process-step-token-badge";
+        setIcon(badge.createSpan({ cls: "obcc-process-step-token-icon" }), "database");
+        badge.createSpan({ cls: "obcc-process-step-token-value" });
+        const timer = head.querySelector(".obcc-process-step-timer");
+        head.insertBefore(badge, timer ?? null);
+      }
+      if (badge) {
+        badge.setAttr("title", `输入 ${usage.inputTokens} · 输出 ${usage.outputTokens} · 合计 ${usage.totalTokens}`);
+        badge.setAttr("aria-label", `Token ${usage.totalTokens}`);
+        const value = `${usage.outputTokens}${usage.estimated ? "≈" : ""} tok`;
+        const valueEl = badge.querySelector<HTMLElement>(".obcc-process-step-token-value")
+          ?? badge.createSpan({ cls: "obcc-process-step-token-value" });
+        if (valueEl.textContent !== value) valueEl.setText(value);
+      }
+    }
+    return true;
   }
 
   private resolveProgressStepSummary(summary: ProgressStepSummary): string {
@@ -47947,6 +47998,7 @@ class CancipView extends ItemView {
       .map((line) => line.replace(/^#{1,6}\s+/, "").replace(/\s+/g, " ").trim())
       .filter((line) => line
         && !/^(?:readable progress|api profile|token usage|model exchange raw contents|actual api call audit|input sizes|reply filter|raw sent|raw received|sent |received |original user prompt)/i.test(line)
+        && !isUnreadableProcessHeadlineText(line)
         && !isProcessProtocolLeakLine(line));
     return lines.length ? trimContext(lines[0], 120) : "";
   }
@@ -50482,7 +50534,9 @@ class CancipView extends ItemView {
       this.syncModelMetrics(step, false);
       if (!progress.done && now - lastRenderAt < 260) return;
       lastRenderAt = now;
-      this.updateModelProcessAuditSections(step, progress.text);
+      // Transport frames grow on every token. Persist and render the final
+      // audit once; live ticks only project compact text and metrics.
+      if (progress.done) this.updateModelProcessAuditSections(step, progress.text);
       const detail = this.formatLiveModelProgress(progress.text);
       this.updateProgressStepLive(
         step,
@@ -50534,7 +50588,12 @@ class CancipView extends ItemView {
         sections.push({ title: `${prefix}RAW SENT requestBody`, content: requestBodyText, group: "sent", raw: true });
       }
       if (entry.responseText !== undefined) {
-        sections.push({ title: `${prefix}RAW RECEIVED responseText`, content: entry.responseDisplayText ?? entry.responseText, group: "received", raw: true });
+        sections.push({
+          title: `${prefix}RAW RECEIVED responseText`,
+          content: modelReceivedDisplayText(entry),
+          group: "received",
+          raw: false
+        });
       }
       if (entry.error) {
         sections.push({ title: `${prefix}Actual API call audit`, content: entry.error, group: "runtime", raw: false });
@@ -51406,8 +51465,6 @@ class CancipView extends ItemView {
         this.lastModelCallAudit = {
           ...(this.lastModelCallAudit ?? { mode, url, requestBody: body, requestBodyText }),
           status: response.status,
-          responseText: rawText,
-          responseDisplayText: compactModelStreamRawText(rawText),
           responseJson: lastJson ?? undefined,
           extractedText: answer
         };
@@ -65861,7 +65918,11 @@ class CancipView extends ItemView {
       const foldedTitle = display.hiddenToolBlocks
         .map((block) => block.title.trim())
         .find((title) => title && !isUnreadableProcessHeadlineText(title));
-      return foldedTitle ? trimContext(foldedTitle, 120) : "";
+      return foldedTitle
+        ? trimContext(foldedTitle, 120)
+        : message.modelUsage
+          ? (isChineseLanguage(this.plugin.language()) ? "模型回复" : "Model response")
+          : "";
     }
     return trimContext(text, 180);
   }
@@ -65873,6 +65934,7 @@ class CancipView extends ItemView {
         .replace(/\s+/g, " ")
         .trim();
       if (!text || isPromptishProgressNoteLine(text)) continue;
+      if (isUnreadableProcessHeadlineText(text)) continue;
       if (/^(?:正在准备上下文|准备上下文|正在生成|生成中|正在执行|执行中|调用中|工具结果|等待工具结果|preparing context|generating|executing|calling|tool results?|waiting for tool results?)[。.!！]?$/i.test(text)) continue;
       if (/^(?:已有上下文需要转成当前任务的可执行动作或终态结论|先提取与当前任务直接相关的上下文，?减少无关发送|模型生成回复|the available context needs to become an executable action or terminal conclusion for the task|first gather only context directly relevant to the task to avoid unrelated input|model generates the response)[。.!！]?$/i.test(text)) continue;
       if (/^(?:根据已取得的证据，判断当前任务应直接回答还是调用具体工具|use the available evidence to decide whether the task needs a direct answer or a concrete tool call)[。.!！]?$/i.test(text)) continue;
@@ -66094,6 +66156,7 @@ class CancipView extends ItemView {
     for (const [index, stepInfo] of steps.entries()) {
       const stepFoldKey = `${processFoldKey}:step-${stepInfo.rendered.message.id}`;
       const step = body.createEl("details", { cls: "obcc-process-step" });
+      step.dataset.processStepMessageId = stepInfo.rendered.message.id;
       const subagentRuns = this.processStepSubagentRuns(stepInfo);
       const stepRuns = uniqueToolRunsById([...(stepInfo.rendered.message.toolRuns ?? []), ...(stepInfo.rendered.message.changedFileRuns ?? [])]);
       const isLiveStep = this.progressStepTimers.has(stepInfo.rendered.message.id)
@@ -66113,7 +66176,10 @@ class CancipView extends ItemView {
         automationBadge.createSpan({ text: trimContext(stepInfo.rendered.message.automationTitle, 28) });
       }
       const processTitle = this.processStepTitleFromBrief(stepInfo.brief, stepInfo.headline);
-      stepTitle.createSpan({ text: stepInfo.count > 1 ? `${processTitle} x${stepInfo.count}` : processTitle });
+      stepTitle.createSpan({
+        cls: "obcc-process-step-title-text",
+        text: stepInfo.count > 1 ? `${processTitle} x${stepInfo.count}` : processTitle
+      });
       const stepUsage = stepInfo.rendered.message.modelUsage;
       if (stepUsage) {
         const tokenBadge = stepHead.createSpan({
@@ -66124,7 +66190,7 @@ class CancipView extends ItemView {
           }
         });
         setIcon(tokenBadge.createSpan({ cls: "obcc-process-step-token-icon" }), "database");
-        tokenBadge.createSpan({ text: `${stepUsage.outputTokens}${stepUsage.estimated ? "≈" : ""} tok` });
+        tokenBadge.createSpan({ cls: "obcc-process-step-token-value", text: `${stepUsage.outputTokens}${stepUsage.estimated ? "≈" : ""} tok` });
       }
       const planReference = this.processStepPlanReference(stepInfo);
       if (planReference) {
@@ -66388,9 +66454,9 @@ class CancipView extends ItemView {
         title: this.localizedProcessFieldTitle(section.title),
         content: section.group === "runtime"
           ? `${this.localizedProcessFieldTitle(section.title)}\n${section.content}`
-          : this.processExchangeRawContent(section.content),
+          : this.processExchangeRawContent(section.group === "received" ? compactModelStreamRawText(section.content) : section.content),
         stateSuffix: `${section.group}-${index}`,
-        raw: section.group === "runtime" ? false : section.raw !== false
+        raw: section.group === "runtime" || section.group === "received" ? false : section.raw !== false
       });
     }
     if (!compact.length) {
@@ -84067,6 +84133,9 @@ function isTrivialProgressDetail(detail: string): boolean {
 function isUnreadableProcessHeadlineText(text: string): boolean {
   const trimmed = text.trim();
   if (!trimmed) return false;
+  if (/^(?:data\s*:|event\s*:)/i.test(trimmed)) return true;
+  if (/^(?:完成|结果|回复|completed?|result|response)\s*[:：]\s*[{\[]\s*$/i.test(trimmed)) return true;
+  if (/^[{}\[\],:]+$/.test(trimmed)) return true;
   if (looksLikeProcessProtocolLeakText(trimmed) || isProcessProtocolLeakLine(trimmed)) return true;
   if (/^(?:\{[\s\S]*\}|\[[\s\S]*\])$/.test(trimmed)) return true;
   if (/^(?:json|javascript|js|ts|tsx|css|html|xml|yaml|yml)\b/i.test(trimmed) && /[{}\[\]":,]/.test(trimmed)) return true;
@@ -89745,6 +89814,24 @@ function compactComposerStatusText(content: string): string {
 }
 
 function compactModelStreamRawText(content: string): string {
+  const deltas: string[] = [];
+  let sseEvents = 0;
+  for (const line of content.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("data:")) continue;
+    const payload = trimmed.slice(5).trim();
+    if (!payload || payload === "[DONE]") continue;
+    sseEvents += 1;
+    try {
+      const parsed = JSON.parse(payload) as unknown;
+      const delta = extractCompatibleStreamDelta(parsed) || extractResponsesStreamDelta(parsed);
+      if (delta) deltas.push(delta);
+    } catch {
+      // Preserve non-JSON provider events in the fallback below.
+    }
+  }
+  if (sseEvents > 0 && deltas.length) return deltas.join("");
+
   const output: string[] = [];
   const seenEmptyEvents = new Set<string>();
   for (const line of content.split(/\r?\n/)) {
@@ -89780,6 +89867,14 @@ function compactModelStreamRawText(content: string): string {
   }
   while (output[output.length - 1] === "") output.pop();
   return output.join("\n");
+}
+
+function modelReceivedDisplayText(audit: ModelCallAudit): string {
+  const source = audit.responseDisplayText ?? audit.responseText ?? "";
+  if (/^\s*(?:data|event)\s*:/im.test(source) && audit.extractedText?.trim()) {
+    return audit.extractedText.trim();
+  }
+  return compactModelStreamRawText(source);
 }
 
 const middleEllipsisObservers = new WeakMap<HTMLElement, ResizeObserver>();
