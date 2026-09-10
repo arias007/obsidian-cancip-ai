@@ -162,6 +162,54 @@ body .view-content.obcc-review-leaf {
   box-sizing: border-box;
 }
 
+/* Lightweight feedback shared by every Cancip button.  The short transition
+   makes taps feel immediate without animating layout or adding per-button
+   observers/listeners. */
+.obcc-root button,
+.obcc-overlay-layer button,
+.obcc-document-workbench button,
+.obcc-review-leaf button,
+.obcc-button-edit-modal button {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  transition:
+    transform 100ms ease-out,
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease,
+    opacity 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.obcc-root button:not(:disabled):active,
+.obcc-root button.is-pressed:not(:disabled),
+.obcc-overlay-layer button:not(:disabled):active,
+.obcc-overlay-layer button.is-pressed:not(:disabled),
+.obcc-document-workbench button:not(:disabled):active,
+.obcc-review-leaf button:not(:disabled):active,
+.obcc-button-edit-modal button:not(:disabled):active {
+  transform: translateY(1px) scale(0.98);
+}
+
+.obcc-root button:not(:disabled):focus-visible,
+.obcc-overlay-layer button:not(:disabled):focus-visible,
+.obcc-document-workbench button:not(:disabled):focus-visible,
+.obcc-review-leaf button:not(:disabled):focus-visible,
+.obcc-button-edit-modal button:not(:disabled):focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--interactive-accent) 72%, transparent);
+  outline-offset: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .obcc-root button,
+  .obcc-overlay-layer button,
+  .obcc-document-workbench button,
+  .obcc-review-leaf button,
+  .obcc-button-edit-modal button {
+    transition: none;
+  }
+}
+
 .obcc-shell {
   position: relative;
   display: flex;

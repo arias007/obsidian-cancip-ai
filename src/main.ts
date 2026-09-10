@@ -2183,6 +2183,8 @@ type LocalVersionResult = {
 type SessionHistoryEntry = {
   id: string;
   title: string;
+  /** Short excerpt of the user's conversation content for quick scanning. */
+  summary?: string;
   createdAt: string;
   startedAt?: string;
   updatedAt: string;
@@ -2230,7 +2232,7 @@ type SessionTimeline = {
   status?: SessionHistoryEntry["status"];
 };
 
-type SessionHistoryEntryPatch = Partial<Pick<SessionHistoryEntry, "title" | "unread" | "completedNotice" | "pinned" | "archived" | "coldArchived" | "archivedAt" | "lastOpenedAt" | "manualTitle" | "manualOrder" | "updatedAt" | "metadataUpdatedAt" | "startedAt" | "completedAt" | "stoppedAt" | "failedAt" | "status" | "parentSessionId" | "parentSessionTitle" | "subagentIds" | "subagentRole" | "subagentGoal" | "subagentProgress" | "subagentPlanStepId" | "subagentAcceptance" | "subagentDeadlineAt" | "subagentAttempt" | "subagentStartedAt" | "subagentCompletedAt">>;
+type SessionHistoryEntryPatch = Partial<Pick<SessionHistoryEntry, "title" | "summary" | "unread" | "completedNotice" | "pinned" | "archived" | "coldArchived" | "archivedAt" | "lastOpenedAt" | "manualTitle" | "manualOrder" | "updatedAt" | "metadataUpdatedAt" | "startedAt" | "completedAt" | "stoppedAt" | "failedAt" | "status" | "parentSessionId" | "parentSessionTitle" | "subagentIds" | "subagentRole" | "subagentGoal" | "subagentProgress" | "subagentPlanStepId" | "subagentAcceptance" | "subagentDeadlineAt" | "subagentAttempt" | "subagentStartedAt" | "subagentCompletedAt">>;
 
 type SubagentStartSpec = {
   goal: string;
@@ -9963,6 +9965,8 @@ export default class CancipPlugin extends Plugin {
   private agentBridge: CancipAgentBridge | null = null;
   private agentBridgeBoundPort = 0;
   private agentBridgeLastError = "";
+  private agentDiagnosticsCache: ReturnType<typeof localAgentDiagnostics> = [];
+  private agentDiagnosticsReady = false;
   private agentCliInstallPromise: Promise<string> | null = null;
   private settingsSavePromise: Promise<void> | null = null;
   private settingsSaveQueuedSnapshot: Settings | null = null;
@@ -10517,22 +10521,29 @@ export default class CancipPlugin extends Plugin {
     this.registerView(CANCIP_REVIEW_VIEW_TYPE, (leaf) => new CancipReviewLeafView(leaf, this));
     this.registerView(CANCIP_DOCUMENT_VIEW_TYPE, (leaf) => new CancipDocumentWorkbenchView(leaf, this));
     if (!Platform.isMobileApp) {
-      void this.ensureAgentCliInstalled().catch((error) => {
-        this.agentBridgeLastError = error instanceof Error ? error.message : String(error);
-        console.warn("Cancip CLI install skipped", error);
-      });
-      void this.startAgentBridge().catch((error) => {
-        this.agentBridgeLastError = error instanceof Error ? error.message : String(error);
-        console.warn("Cancip Agent Bridge start failed", error);
-      });
+      const agentStartupTimer = window.setTimeout(() => {
+        void this.ensureAgentCliInstalled().catch((error) => {
+          this.agentBridgeLastError = error instanceof Error ? error.message : String(error);
+          console.warn("Cancip CLI install skipped", error);
+        });
+        void this.startAgentBridge().catch((error) => {
+          this.agentBridgeLastError = error instanceof Error ? error.message : String(error);
+          console.warn("Cancip Agent Bridge start failed", error);
+        });
+      }, 2500);
+      this.register(() => window.clearTimeout(agentStartupTimer));
       const localModelRefreshTimer = window.setTimeout(() => {
         void this.refreshLocalModelCatalog().catch(() => undefined);
-      }, 1800);
+      }, 6000);
       this.register(() => window.clearTimeout(localModelRefreshTimer));
     }
     this.installScoreActivityTracking();
     this.ensureDocumentWorkbenchExtensions();
     this.app.workspace.onLayoutReady(() => {
+      // Warm CLI availability after the first layout paint so opening Cancip
+      // and its model menu stays responsive during Obsidian startup.
+      const cancelAgentWarmup = scheduleIdleWork(() => this.warmAgentDiagnostics(), 5000);
+      this.register(cancelAgentWarmup);
       window.setTimeout(() => {
         this.ensureDocumentWorkbenchExtensions();
         void this.restoreDocumentWorkbenchLeaves();
@@ -13033,12 +13044,14 @@ export default class CancipPlugin extends Plugin {
       error: this.agentBridgeLastError,
       cliPath: this.agentCliPath(),
       cliVersion: CANCIP_CLI_VERSION,
-      agents: Platform.isMobileApp ? [] : localAgentDiagnostics()
+      agents: Platform.isMobileApp ? [] : (this.agentDiagnosticsReady ? this.agentDiagnosticsCache.map((item) => ({ ...item })) : [])
     };
   }
 
   agentModelOptions(): Array<{ model: string; provider: Exclude<LocalAgentProvider, "auto">; label: string; available: boolean }> {
-    const diagnostics = Platform.isMobileApp ? [] : localAgentDiagnostics();
+    // Model menus must never synchronously probe the filesystem/CLI. The
+    // diagnostics cache is warmed during idle startup and remains optional.
+    const diagnostics = Platform.isMobileApp || !this.agentDiagnosticsReady ? [] : this.agentDiagnosticsCache;
     const byProvider = new Map(diagnostics.map((item) => [item.provider, item]));
     const selectedProvider = localAgentProviderFromModel(this.settings.model);
     return (["codex", "claude"] as const)
@@ -13052,6 +13065,13 @@ export default class CancipPlugin extends Plugin {
         };
       })
       .filter((item) => item.available || item.provider === selectedProvider);
+  }
+
+  private warmAgentDiagnostics(): void {
+    if (Platform.isMobileApp || this.agentDiagnosticsReady) return;
+    this.agentDiagnosticsCache = localAgentDiagnostics(true);
+    this.agentDiagnosticsReady = true;
+    this.settingTab?.display();
   }
 
   agentModelProfile(model: string): ApiProfile | null {
@@ -23078,7 +23098,6 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     this.settings.composerAutocompleteEnabled = enabled;
     this.syncAutocompleteProfileState(true);
     await this.saveSettings();
-    this.refreshOpenViews();
   }
 
   async setEditorAutocompletePrefetchEnabled(enabled: boolean): Promise<void> {
@@ -37135,6 +37154,8 @@ class CancipView extends ItemView {
   private modeButtons: Partial<Record<ComposerMode, HTMLButtonElement>> | null = null;
   private mentionEl: HTMLElement | null = null;
   private menuEl: HTMLElement | null = null;
+  private modelMenuSignature = "";
+  private modelMenuEllipsisTimer: number | null = null;
   private headerMenuEl: HTMLElement | null = null;
   private moreButtonEl: HTMLButtonElement | null = null;
   private overlayLayerEl: HTMLElement | null = null;
@@ -37735,6 +37756,7 @@ class CancipView extends ItemView {
     this.stopHeaderSessionTimer();
     this.overlayLayerEl?.remove();
     this.overlayLayerEl = null;
+    this.resetModelMenuCache();
     this.menuEl = null;
     this.mentionEl = null;
     this.headerMenuEl = null;
@@ -38281,6 +38303,7 @@ class CancipView extends ItemView {
     this.closeSearchPopover();
     this.overlayLayerEl?.remove();
     this.overlayLayerEl = null;
+    this.resetModelMenuCache();
     this.menuEl = null;
     this.mentionEl = null;
     this.headerMenuEl = null;
@@ -38322,6 +38345,7 @@ class CancipView extends ItemView {
     this.closeSearchPopover();
     this.overlayLayerEl?.remove();
     this.overlayLayerEl = null;
+    this.resetModelMenuCache();
     this.menuEl = null;
     this.mentionEl = null;
     this.headerMenuEl = null;
@@ -38333,6 +38357,7 @@ class CancipView extends ItemView {
     root.toggleClass("is-compact-header", this.plugin.settings.compactHeader);
     root.setAttr("lang", this.plugin.language());
     root.setAttr("dir", this.plugin.textDirection());
+    installButtonInteractionFeedback(root);
 
     const shell = root.createDiv({ cls: "obcc-shell" });
 
@@ -38448,6 +38473,7 @@ class CancipView extends ItemView {
 
     const overlayLayer = this.containerEl.ownerDocument.body.createDiv({ cls: "obcc-overlay-layer" });
     this.overlayLayerEl = overlayLayer;
+    installButtonInteractionFeedback(overlayLayer);
     this.menuEl = overlayLayer.createDiv({ cls: "obcc-command-popover is-hidden" });
     this.mentionEl = overlayLayer.createDiv({ cls: "obcc-mention-popover is-hidden" });
     this.headerMenuEl = overlayLayer.createDiv({ cls: "obcc-history-popover is-hidden" });
@@ -39970,19 +39996,29 @@ class CancipView extends ItemView {
         else this.clearAutocompleteSuggestion();
       });
     });
-    popover.addEventListener("pointerdown", (event) => event.stopPropagation());
+    // Keep every control interaction inside the settings surface. The outside
+    // listener is installed on the document, so stopping only during bubble
+    // phase is not sufficient on mobile WebViews; the composed-path check
+    // below is the authoritative containment guard.
+    const stopPopoverEvent = (event: Event): void => event.stopPropagation();
+    popover.addEventListener("pointerdown", stopPopoverEvent, true);
+    popover.addEventListener("click", stopPopoverEvent, true);
+    popover.addEventListener("change", stopPopoverEvent, true);
+    popover.addEventListener("input", stopPopoverEvent, true);
     this.placeAutocompletePopover();
 
     const doc = this.containerEl.ownerDocument;
     const outside = (event: PointerEvent) => {
+      const path = typeof event.composedPath === "function" ? event.composedPath() : [];
       const target = event.target as Node | null;
+      if (path.includes(popover) || (this.autocompleteApplyButtonEl && path.includes(this.autocompleteApplyButtonEl))) return;
       if (target && (popover.contains(target) || this.autocompleteApplyButtonEl?.contains(target))) return;
       this.closeAutocompletePopover();
     };
     window.setTimeout(() => {
       if (this.autocompletePopoverEl !== popover) return;
-      doc.addEventListener("pointerdown", outside, true);
-      this.autocompleteOutsideCleanup = () => doc.removeEventListener("pointerdown", outside, true);
+      doc.addEventListener("pointerdown", outside, false);
+      this.autocompleteOutsideCleanup = () => doc.removeEventListener("pointerdown", outside, false);
     }, 0);
   }
 
@@ -40266,6 +40302,23 @@ class CancipView extends ItemView {
     this.openModelMenu();
   }
 
+  private resetModelMenuCache(): void {
+    if (this.modelMenuEllipsisTimer !== null) {
+      window.clearTimeout(this.modelMenuEllipsisTimer);
+      this.modelMenuEllipsisTimer = null;
+    }
+    this.modelMenuSignature = "";
+  }
+
+  private scheduleModelMenuPlacement(): void {
+    const viewWindow = this.containerEl.ownerDocument.defaultView ?? window;
+    viewWindow.requestAnimationFrame(() => {
+      if (this.activeMenu === "model" && this.menuEl && !this.menuEl.hasClass("is-hidden")) {
+        this.placeCommandMenu();
+      }
+    });
+  }
+
   private openModelMenu(): void {
     if (!this.menuEl) return;
     const active = this.plugin.activeApiProfile();
@@ -40273,6 +40326,22 @@ class CancipView extends ItemView {
       ...this.plugin.agentModelOptions().map((item) => item.model),
       ...normalizeModelOptions(this.plugin.settings.modelOptions, this.plugin.settings.model)
     ]);
+    const menuSignature = stableTextHash(JSON.stringify({
+      activeProfile: active.id,
+      selectedModel: this.plugin.settings.model,
+      models: presets,
+      sources: this.plugin.settings.modelSourceByModel
+    }));
+    if (this.modelMenuSignature === menuSignature
+      && this.menuEl.querySelector<HTMLElement>(".obcc-model-menu-section")) {
+      this.activeMenu = "model";
+      this.closeMentionPopup();
+      this.menuEl.removeClass("is-add", "is-access");
+      this.menuEl.addClass("is-model");
+      this.menuEl.removeClass("is-hidden");
+      this.scheduleModelMenuPlacement();
+      return;
+    }
     const entries = this.modelMenuEntries(presets, active);
     this.activeMenu = "model";
     this.closeMentionPopup();
@@ -40281,7 +40350,6 @@ class CancipView extends ItemView {
     this.menuEl.removeClass("is-access");
     this.menuEl.addClass("is-model");
     this.menuEl.removeClass("is-hidden");
-    this.placeCommandMenu();
 
     const modelSection = this.menuEl.createDiv({ cls: "obcc-model-menu-section" });
     const modelHead = modelSection.createDiv({ cls: "obcc-model-menu-section-head" });
@@ -40411,8 +40479,11 @@ class CancipView extends ItemView {
       handle.addEventListener("pointerup", finishPointerDrag);
       handle.addEventListener("pointercancel", finishPointerDrag);
       const text = body.createDiv({ cls: "obcc-model-menu-text" });
-      const modelTitle = text.createDiv({ cls: "obcc-command-title" });
-      setMiddleEllipsisText(modelTitle, this.formatModelLabel(model));
+      const fullModelLabel = this.formatModelLabel(model);
+      const modelTitle = text.createDiv({ cls: "obcc-command-title", text: fullModelLabel });
+      modelTitle.dataset.fullText = fullModelLabel;
+      modelTitle.setAttr("title", fullModelLabel);
+      modelTitle.setAttr("aria-label", fullModelLabel);
       text.createDiv({ cls: "obcc-command-detail", text: this.modelSourceName(rowProfile) });
       if (isActiveEntry) setIcon(body.createSpan({ cls: "obcc-command-check" }), "check");
       body.addEventListener("click", (event) => {
@@ -40430,7 +40501,21 @@ class CancipView extends ItemView {
         this.createModelMenuIconButton(actions, "trash-2", this.t("removeModel"), () => void this.removeModelOptionFromMenu(model), presets.length <= 1);
       }
     }
-    this.placeCommandMenu();
+    this.modelMenuSignature = menuSignature;
+    if (this.modelMenuEllipsisTimer !== null) window.clearTimeout(this.modelMenuEllipsisTimer);
+    const modelMenuWindow = this.containerEl.ownerDocument.defaultView ?? window;
+    this.modelMenuEllipsisTimer = modelMenuWindow.setTimeout(() => {
+      this.modelMenuEllipsisTimer = null;
+      const titles = this.menuEl
+        ? Array.from(this.menuEl.querySelectorAll<HTMLElement>(".obcc-model-menu-text .obcc-command-title"))
+        : [];
+      for (const modelTitle of titles) {
+        if (!modelTitle.isConnected) continue;
+        const full = modelTitle.dataset.fullText ?? modelTitle.textContent ?? "";
+        setMiddleEllipsisText(modelTitle, full, { observe: false });
+      }
+    }, 120);
+    this.scheduleModelMenuPlacement();
   }
 
   private createModelMenuIconButton(parent: HTMLElement, icon: string, label: string, onClick: () => void, disabled = false): HTMLButtonElement {
@@ -40624,6 +40709,7 @@ class CancipView extends ItemView {
     }
     this.activeMenu = kind;
     this.closeMentionPopup();
+    this.resetModelMenuCache();
     this.menuEl.empty();
     this.menuEl.removeClass("is-add");
     this.menuEl.removeClass("is-access");
@@ -40771,11 +40857,14 @@ class CancipView extends ItemView {
   }
 
   private closeCommandMenu(): void {
+    const wasModelMenu = this.activeMenu === "model";
     this.activeMenu = null;
     if (!this.menuEl) return;
-    this.menuEl.empty();
+    // Keep the model rows mounted between opens. Rebuilding every row (and its
+    // drag handlers) made the menu feel delayed on large model catalogs.
+    if (!wasModelMenu) this.menuEl.empty();
     this.menuEl.addClass("is-hidden");
-    this.menuEl.removeAttribute("style");
+    if (!wasModelMenu) this.menuEl.removeAttribute("style");
     this.menuEl.removeClass("is-add");
     this.menuEl.removeClass("is-access");
     this.menuEl.removeClass("is-model");
@@ -41108,7 +41197,7 @@ class CancipView extends ItemView {
           cls: "obcc-command-detail",
           text: entry.eventOnly
             ? `${this.t("sessionEvents")} · ${formatSessionHistoryTime(entry.updatedAt)}`
-            : `${this.formatModelLabel(entry.model)} · ${entry.messageCount} 条 · ${formatSessionHistoryTime(entry.updatedAt)}${entry.archived ? ` · ${this.t("sessionArchived")}` : ""}${isChild && entry.parentSessionId ? ` · ${this.t("subagentParent")} ${entry.parentSessionId.replace(/^session-/, "").slice(0, 10)}` : ""}${childSummary}${progressSummary}`
+            : `“${sessionHistoryContentSummary(entry)}” · ${entry.messageCount} 条 · ${formatSessionHistoryTime(entry.updatedAt)}${entry.archived ? ` · ${this.t("sessionArchived")}` : ""}${isChild && entry.parentSessionId ? ` · ${this.t("subagentParent")} ${entry.parentSessionId.replace(/^session-/, "").slice(0, 10)}` : ""}${childSummary}${progressSummary}`
         });
       }
       const state = row.createSpan({ cls: "obcc-session-state" });
@@ -47086,6 +47175,7 @@ class CancipView extends ItemView {
       snapshot.completedNotice = completedNotice;
       snapshot.unread = unread;
       snapshot.title = sessionTitle;
+      snapshot.summary = sessionContentSummaryFromMessages(this.messages, sessionTitle);
       snapshot.manualTitle = previous?.manualTitle ?? manualTitle;
       snapshot.startedAt = timeline.startedAt || undefined;
       snapshot.updatedAt = cancipLatestTimestamp(timeline.updatedAt, now.toISOString());
@@ -47108,6 +47198,7 @@ class CancipView extends ItemView {
       const nextHistoryEntry: SessionHistoryEntry = {
         id: sessionId,
         title: sessionTitle,
+        summary: sessionContentSummaryFromMessages(this.messages, sessionTitle),
         createdAt: timeline.createdAt || sessionCreatedAt,
         startedAt: timeline.startedAt,
         updatedAt: now.toISOString(),
@@ -48546,6 +48637,9 @@ class CancipView extends ItemView {
     await this.upsertSessionHistoryIndex({
       id: sessionId,
       title: existing?.title ?? (typeof snapshot.title === "string" && snapshot.title ? snapshot.title : generateSessionTitleFromPrompt(rawPrompt, this.t("untitledSession"))),
+      summary: typeof snapshot.summary === "string" && snapshot.summary.trim()
+        ? snapshot.summary.trim()
+        : sessionContentSummaryFromMessages(messages, rawPrompt),
       createdAt: typeof snapshot.sessionCreatedAt === "string" ? snapshot.sessionCreatedAt : new Date(startedAt).toISOString(),
       updatedAt: String(snapshot.updatedAt),
       messageCount: messages.length,
@@ -82915,6 +83009,7 @@ function sessionHistoryEntryPersistenceSignature(entry: SessionHistoryEntry): st
   return stableCacheKey({
     id: entry.id,
     title: entry.title,
+    summary: entry.summary,
     createdAt: entry.createdAt,
     startedAt: entry.startedAt,
     completedAt: entry.completedAt,
@@ -83013,6 +83108,7 @@ function normalizeSessionHistoryEntry(item: Record<string, unknown>): SessionHis
   return {
     id,
     title: typeof item.title === "string" && item.title.trim() ? item.title.trim() : id,
+    summary: typeof item.summary === "string" && item.summary.trim() ? item.summary.trim() : undefined,
     createdAt: typeof item.createdAt === "string" ? item.createdAt : "",
     startedAt: typeof item.startedAt === "string" ? item.startedAt : undefined,
     updatedAt: typeof item.updatedAt === "string" ? item.updatedAt : "",
@@ -83067,6 +83163,9 @@ function sessionHistoryEntryFromSnapshot(raw: unknown, path: string): SessionHis
   return {
     id,
     title: typeof raw.title === "string" && raw.title.trim() ? raw.title.trim() : id,
+    summary: typeof raw.summary === "string" && raw.summary.trim()
+      ? raw.summary.trim()
+      : sessionContentSummaryFromMessages(messages, typeof raw.title === "string" ? raw.title : id),
     createdAt: typeof raw.sessionCreatedAt === "string" ? raw.sessionCreatedAt : updatedAt,
     startedAt: typeof raw.startedAt === "string" ? raw.startedAt : undefined,
     updatedAt,
@@ -88873,6 +88972,17 @@ async function firstMissingCancipStorageCriticalPath(adapter: DataAdapter): Prom
   return null;
 }
 
+function sessionContentSummaryFromMessages(messages: unknown[], fallback: string): string {
+  const firstUser = messages.find((message) => isRecord(message) && message.role === "user" && typeof message.content === "string") as Record<string, unknown> | undefined;
+  const content = typeof firstUser?.content === "string" ? firstUser.content : fallback;
+  const cleaned = removeCancipActionBlocks(content).replace(/```[\s\S]*?```/g, " ").replace(/\s+/g, " ").trim();
+  return trimContext(cleaned || fallback, 96).replace(/\s+/g, " ").trim();
+}
+
+function sessionHistoryContentSummary(entry: SessionHistoryEntry): string {
+  return trimContext((entry.summary || entry.title || "").replace(/\s+/g, " ").trim(), 96);
+}
+
 function legacyCancipRelativePath(sourcePath: string, sourceRoot = LEGACY_CANCIP_CONFIG_DIR): string {
   return normalizePath(sourcePath).slice(normalizePath(sourceRoot).length).replace(/^\/+/, "");
 }
@@ -89317,7 +89427,7 @@ function middleEllipsisByChars(value: string, maxChars = 18): string {
   return `${chars.slice(0, left).join("")}…${chars.slice(-right).join("")}`;
 }
 
-function setMiddleEllipsisText(element: HTMLElement, value: string): void {
+function setMiddleEllipsisText(element: HTMLElement, value: string, options: { observe?: boolean } = {}): void {
   const full = value;
   element.dataset.fullText = full;
   element.setAttr("title", full);
@@ -89371,6 +89481,7 @@ function setMiddleEllipsisText(element: HTMLElement, value: string): void {
   };
 
   render();
+  if (options.observe === false) return;
   if (typeof ResizeObserver !== "undefined") {
     const observer = new ResizeObserver(render);
     observer.observe(element);
@@ -89378,6 +89489,44 @@ function setMiddleEllipsisText(element: HTMLElement, value: string): void {
   } else {
     window.requestAnimationFrame(render);
   }
+}
+
+/**
+ * Adds a single delegated pressed-state interaction to a Cancip surface.
+ * Keeping this on the surface (instead of each button) gives touch users an
+ * immediate visual acknowledgement without adding hundreds of listeners or
+ * doing any layout work during a click.
+ */
+function installButtonInteractionFeedback(surface: HTMLElement): void {
+  const pressed = new Set<HTMLButtonElement>();
+  const resolveButton = (target: EventTarget | null): HTMLButtonElement | null => {
+    if (!(target instanceof HTMLElement)) return null;
+    const button = target.closest("button");
+    if (!(button instanceof HTMLButtonElement) || button.disabled || button.getAttribute("aria-disabled") === "true") return null;
+    return button;
+  };
+  const clearButton = (button: HTMLButtonElement | null): void => {
+    if (!button) return;
+    pressed.delete(button);
+    button.removeClass("is-pressed");
+  };
+  const clearAll = (): void => {
+    for (const button of pressed) button.removeClass("is-pressed");
+    pressed.clear();
+  };
+
+  surface.addEventListener("pointerdown", (event) => {
+    const button = resolveButton(event.target);
+    if (!button) return;
+    pressed.add(button);
+    button.addClass("is-pressed");
+    // A lost pointerup (for example when the native mobile surface takes
+    // focus) must not leave a button visually stuck.
+    window.setTimeout(() => clearButton(button), 220);
+  });
+  surface.addEventListener("pointerup", (event) => clearButton(resolveButton(event.target)));
+  surface.addEventListener("pointercancel", (event) => clearButton(resolveButton(event.target)));
+  surface.addEventListener("pointerleave", clearAll);
 }
 
 function trimContext(content: string, maxLength: number): string {
