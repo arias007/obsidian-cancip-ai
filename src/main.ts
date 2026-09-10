@@ -4077,9 +4077,18 @@ const MODEL_PRESETS = [
 ] as const;
 
 const DEFAULT_DOCUMENT_WORKBENCH_EXTENSIONS = [
-  "docx", "xlsx", "pptx", "pdf", "html", "htm", "hltm", "mhtml", "mht", "mhtl",
-  "odt", "ods", "odp", "epub", "zip", "tar", "gz", "tgz", "rar", "7z", "bz2", "xz", "txt", "*"
+  "docx", "xlsx", "pptx", "html", "htm", "hltm", "mhtml", "mht", "mhtl",
+  "odt", "ods", "odp", "epub", "zip", "tar", "gz", "tgz", "rar", "7z", "bz2", "xz", "*"
 ] as const;
+
+const OBSIDIAN_NATIVE_DOCUMENT_EXTENSIONS = new Set([
+  "md", "markdown", "pdf", "png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif", "heic", "heif",
+  "mp3", "wav", "m4a", "ogg", "flac", "aac", "mp4", "webm", "mov", "mkv", "avi", "txt", "canvas"
+]);
+
+function isObsidianNativeDocumentExtension(extension: string): boolean {
+  return OBSIDIAN_NATIVE_DOCUMENT_EXTENSIONS.has(normalizeDocumentWorkbenchExtension(extension));
+}
 
 const DEFAULT_SETTINGS: Settings = {
   language: "auto",
@@ -10502,17 +10511,11 @@ export default class CancipPlugin extends Plugin {
     }
     this.installObsidianOpenUriInterceptor();
     this.installWorkspaceTabThumbnailSupport();
-    await this.loadScoreState();
+    // Score history and compatibility notes are not needed for the first paint.
+    // Defer them until Obsidian has rendered its layout so Cancip does not block startup.
+    void this.loadScoreState().catch((error) => console.warn("Cancip score state load deferred failed", error));
     this.syncAutocompleteProfileState(true);
     this.syncEditorAutocompleteMemorySettingsState(true);
-    try {
-      await this.ensurePluginCompatibilityArtifacts();
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
-      this.devErrors.push(`plugin compatibility guide failed: ${reason}`);
-      console.warn("Cancip plugin compatibility guide setup failed", error);
-    }
-    await this.ensureCancipNavigationFiles();
     this.applyStatusBarVisibility();
 
     this.registerView(VIEW_TYPE, (leaf) => new CancipView(leaf, this));
@@ -10538,17 +10541,28 @@ export default class CancipPlugin extends Plugin {
       this.register(() => window.clearTimeout(localModelRefreshTimer));
     }
     this.installScoreActivityTracking();
-    this.ensureDocumentWorkbenchExtensions();
     this.app.workspace.onLayoutReady(() => {
+      const cancelStartupArtifacts = scheduleIdleWork(() => {
+        void Promise.all([
+          this.ensurePluginCompatibilityArtifacts(),
+          this.ensureCancipNavigationFiles()
+        ]).catch((error) => {
+          const reason = error instanceof Error ? error.message : String(error);
+          this.devErrors.push(`deferred startup artifacts failed: ${reason}`);
+          console.warn("Cancip deferred startup artifacts failed", error);
+        });
+      }, 1800);
+      this.register(cancelStartupArtifacts);
       // Warm CLI availability after the first layout paint so opening Cancip
       // and its model menu stays responsive during Obsidian startup.
       const cancelAgentWarmup = scheduleIdleWork(() => this.warmAgentDiagnostics(), 5000);
       this.register(cancelAgentWarmup);
-      window.setTimeout(() => {
+      const cancelWorkbenchWarmup = scheduleIdleWork(() => {
         this.ensureDocumentWorkbenchExtensions();
         void this.restoreDocumentWorkbenchLeaves();
         this.scheduleMarkdownWorkbenchHydrationForOpenLeaves();
-      }, 0);
+      }, 900);
+      this.register(cancelWorkbenchWarmup);
     });
     this.registerEditorExtension(createCancipEditorAutocompleteExtension(this));
     this.registerEditorExtension(createContextEditEditorPreviewExtension(this));
@@ -31086,7 +31100,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
 
   isDocumentWorkbenchExtension(extension: string): boolean {
     const normalized = normalizeDocumentWorkbenchExtension(extension);
-    if (normalized === "md" || normalized === "markdown") return false;
+    if (isObsidianNativeDocumentExtension(normalized)) return false;
     if (!normalized) return !extension.trim() && this.settings.documentWorkbenchExtensions.includes("*");
     return Boolean(normalized)
       && (this.settings.documentWorkbenchExtensions.includes(normalized)
@@ -31095,11 +31109,11 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
 
   ensureDocumentWorkbenchExtensions(): void {
     const includeUnclaimed = this.settings.documentWorkbenchExtensions.includes("*");
-    const extensions = new Set(this.settings.documentWorkbenchExtensions.filter((extension) => extension !== "*" && extension !== "md" && extension !== "markdown"));
+    const extensions = new Set(this.settings.documentWorkbenchExtensions.filter((extension) => extension !== "*" && !isObsidianNativeDocumentExtension(extension)));
     if (includeUnclaimed) {
       for (const file of this.app.vault.getFiles()) {
         const extension = normalizeDocumentWorkbenchExtension(file.extension);
-        if (extension && extension !== "md" && extension !== "markdown") extensions.add(extension);
+        if (extension && !isObsidianNativeDocumentExtension(extension)) extensions.add(extension);
       }
     }
     const registry = (this.app as unknown as {
@@ -32394,7 +32408,6 @@ class CancipDocumentWorkbenchView extends FileView {
     const shell = root.createDiv({ cls: "obcc-document-shell" });
     const header = shell.createDiv({ cls: "obcc-document-header" });
     const identity = header.createDiv({ cls: "obcc-document-identity" });
-    identity.createDiv({ cls: "obcc-document-title", text: snapshot.file.name });
     identity.createDiv({ cls: "obcc-document-path", text: snapshot.file.path });
 
     const toolbar = header.createDiv({ cls: "obcc-document-toolbar" });
@@ -32406,23 +32419,6 @@ class CancipDocumentWorkbenchView extends FileView {
     this.addModeButton(modes, "markdown", sourceLabel);
 
     const actions = toolbar.createDiv({ cls: "obcc-document-actions" });
-    const sendToCancip = this.addIconButton(actions, "bot", this.plugin.t("documentSendToCancip"), () => {
-      void this.sendToCancip();
-    });
-    sendToCancip.addClass("is-cancip");
-    this.addIconButton(actions, "file-search", this.plugin.t("documentSearchInFile"), () => {
-      void this.toggleDocumentSearch();
-    });
-    this.addIconButton(actions, "volume-2", this.plugin.t("documentSpeak"), () => {
-      this.speakCurrentDocument();
-    });
-    const exportButton = this.addIconButton(actions, "download", this.plugin.t("documentExportMenu"), () => {
-      this.openExportMenu(exportButton);
-    });
-    exportButton.addClass("is-export-menu");
-    this.addIconButton(actions, "refresh-cw", this.plugin.t("documentReload"), () => {
-      void this.loadAndRender();
-    });
     const moreButton = this.addIconButton(actions, "ellipsis", this.plugin.t("moreMenu"), () => {
       this.openDocumentMoreMenu(moreButton);
     });
@@ -32443,19 +32439,6 @@ class CancipDocumentWorkbenchView extends FileView {
     this.installDocumentViewportTracking(body);
     this.restoreDocumentViewport(body);
     this.installDocumentHorizontalExtentTracking(body);
-    // registerSurface supplies NoteDraw's header wand. Keep this button only for
-    // older NoteDraw versions and workbench modes that cannot mount a surface.
-    this.removeNoteDrawFallbackButtons(actions);
-    if (!this.nativeNoteDrawSurfaceHandle) {
-      const noteDrawButton = this.addIconButton(actions, "wand-sparkles", this.plugin.t("documentDrawWithNoteDraw"), () => {
-        void this.toggleNoteDrawWorkbenchSurface(noteDrawButton);
-      });
-      noteDrawButton.addClass("is-notedraw");
-      noteDrawButton.setAttr("data-cancip-notedraw-fallback", "true");
-      noteDrawButton.setAttr("aria-pressed", "false");
-      actions.insertBefore(noteDrawButton, exportButton);
-      this.bindNoteDrawWorkbenchButton(noteDrawButton);
-    }
     if (this.documentSearchOpen) this.updateDocumentSearchUi(false);
   }
 
@@ -35651,6 +35634,37 @@ class CancipDocumentWorkbenchView extends FileView {
     const menu = new Menu();
     menu.addItem((item) => {
       item
+        .setTitle(this.plugin.t("documentSendToCancip"))
+        .setIcon("bot")
+        .onClick(() => void this.sendToCancip());
+    });
+    menu.addItem((item) => {
+      item
+        .setTitle(this.plugin.t("documentSearchInFile"))
+        .setIcon("file-search")
+        .onClick(() => void this.toggleDocumentSearch());
+    });
+    menu.addItem((item) => {
+      item
+        .setTitle(this.plugin.t("documentSpeak"))
+        .setIcon("volume-2")
+        .onClick(() => this.speakCurrentDocument());
+    });
+    menu.addItem((item) => {
+      item
+        .setTitle(this.plugin.t("documentExportMenu"))
+        .setIcon("download")
+        .onClick(() => this.openExportMenu(button));
+    });
+    menu.addItem((item) => {
+      item
+        .setTitle(this.plugin.t("documentReload"))
+        .setIcon("refresh-cw")
+        .onClick(() => void this.loadAndRender());
+    });
+    menu.addSeparator();
+    menu.addItem((item) => {
+      item
         .setTitle(this.plugin.t("documentShare"))
         .setIcon("link-2")
         .onClick(() => void this.shareOriginalDocument());
@@ -37137,6 +37151,12 @@ class CancipView extends ItemView {
   private attachmentInputEl: HTMLInputElement | null = null;
   private statusEl!: HTMLElement;
   private statusTextEl: HTMLElement | null = null;
+  private statusMetricsButtonEl: HTMLButtonElement | null = null;
+  private statusMetricsPanelEl: HTMLElement | null = null;
+  private statusMetricsExpanded = false;
+  private statusMetricsSignature = "";
+  private modelFirstTokenSamplesMs: number[] = [];
+  private activeModelFirstTokenAt = 0;
   private statusChangesButtonEl: HTMLButtonElement | null = null;
   private statusPlanButtonEl: HTMLButtonElement | null = null;
   // Status must survive a settings/sync redraw; the DOM node is intentionally replaceable.
@@ -38482,6 +38502,22 @@ class CancipView extends ItemView {
     this.footerEl = footer;
     this.statusEl = footer.createDiv({ cls: "obcc-status" });
     this.statusTextEl = this.statusEl.createSpan({ cls: "obcc-status-text" });
+    this.statusMetricsButtonEl = this.statusEl.createEl("button", {
+      cls: "obcc-status-metrics-toggle is-hidden",
+      attr: { type: "button", title: "运行指标", "aria-label": "展开运行指标", "aria-expanded": "false" }
+    });
+    setIcon(this.statusMetricsButtonEl.createSpan({ cls: "obcc-status-metrics-icon" }), "activity");
+    this.statusMetricsButtonEl.createSpan({ cls: "obcc-status-metrics-preview" });
+    this.statusMetricsButtonEl.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.statusMetricsExpanded = !this.statusMetricsExpanded;
+      this.statusEl.toggleClass("is-metrics-expanded", this.statusMetricsExpanded);
+      this.statusMetricsButtonEl?.setAttr("aria-expanded", String(this.statusMetricsExpanded));
+      this.statusMetricsPanelEl?.toggleClass("is-hidden", !this.statusMetricsExpanded);
+      this.syncComposerStatusVisibility();
+    });
+    this.statusMetricsPanelEl = this.statusEl.createDiv({ cls: "obcc-status-metrics-panel is-hidden" });
     this.statusPlanButtonEl = this.statusEl.createEl("button", {
       cls: "obcc-status-link is-plan is-hidden",
       attr: { type: "button" }
@@ -38978,6 +39014,7 @@ class CancipView extends ItemView {
     const liveFiles = this.liveChangedFileEntries();
     this.renderHeaderLiveStatus(visiblePlan, liveFiles);
     this.renderComposerStatusMeta(visiblePlan, liveFiles);
+    this.syncStatusMetrics();
     const signature = JSON.stringify({
       queue: this.queuedPrompts.map((item) => [item.id, item.prompt, item.held]),
       plan: visiblePlan.map((todo) => [todo.id, todo.text, todo.done]),
@@ -42115,13 +42152,83 @@ class CancipView extends ItemView {
     this.syncComposerStatusVisibility();
   }
 
+  private statusMetricDuration(ms: number): string {
+    if (!Number.isFinite(ms) || ms <= 0) return "0秒";
+    const seconds = Math.max(1, Math.round(ms / 1000));
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const rest = seconds % 60;
+    if (hours) return `${hours}时${String(minutes).padStart(2, "0")}分`;
+    if (minutes) return `${minutes}分${String(rest).padStart(2, "0")}秒`;
+    return `${rest}秒`;
+  }
+
+  private currentStatusMetrics(): { rounds: number; steps: number; llmMs: number; toolMs: number; firstTokenMs: number; throughput: number; cache: string } {
+    const userTurns = this.messages.filter((message) => message.role === "user").length;
+    const runs = this.messages.flatMap((message) => message.toolRuns ?? []);
+    const processSteps = this.messages.filter((message) => message.role === "assistant" && (
+      message.content.includes(PROGRESS_STEP_MARKER) || message.content.includes(PROCESS_MESSAGE_MARKER) || (message.toolRuns?.length ?? 0) > 0
+    )).length;
+    const toolMs = runs.reduce((total, run) => {
+      const start = Date.parse(run.startedAt || run.createdAt || "");
+      const end = Date.parse(run.executedAt || "");
+      const finish = Number.isFinite(end) ? end : (run.status === "executing" ? Date.now() : start);
+      return total + (Number.isFinite(start) && finish >= start ? finish - start : 0);
+    }, 0);
+    const started = Date.parse(this.sessionStartedAt || "");
+    const ended = Date.parse(this.sessionCompletedAt || this.sessionStoppedAt || this.sessionFailedAt || "");
+    const llmMs = this.activeModelCharStats?.startedAt
+      ? Math.max(0, Date.now() - this.activeModelCharStats.startedAt)
+      : (Number.isFinite(started) ? Math.max(0, (Number.isFinite(ended) ? ended : Date.now()) - started) : 0);
+    const usage = this.turnModelUsage;
+    const throughput = usage && llmMs > 0 ? Math.max(0, Math.round((usage.outputTokens || estimateTokenCountFromChars(usage.outputChars)) / (llmMs / 1000))) : 0;
+    const firstTokenMs = this.modelFirstTokenSamplesMs.length
+      ? Math.round(this.modelFirstTokenSamplesMs.reduce((sum, value) => sum + value, 0) / this.modelFirstTokenSamplesMs.length)
+      : (this.activeModelFirstTokenAt > 0 && this.activeModelCharStats ? Math.max(0, this.activeModelFirstTokenAt - this.activeModelCharStats.startedAt) : 0);
+    return { rounds: userTurns || (this.activeRequest ? 1 : 0), steps: processSteps + runs.length, llmMs, toolMs, firstTokenMs, throughput, cache: "—" };
+  }
+
+  private syncStatusMetrics(): void {
+    const button = this.statusMetricsButtonEl;
+    const panel = this.statusMetricsPanelEl;
+    if (!button || !panel) return;
+    const metrics = this.currentStatusMetrics();
+    const visible = metrics.rounds > 0 || metrics.steps > 0 || Boolean(this.turnModelUsage) || Boolean(this.activeModelCharStats);
+    button.toggleClass("is-hidden", !visible);
+    if (!visible) {
+      panel.addClass("is-hidden");
+      this.statusEl?.removeClass("is-metrics-expanded");
+      return;
+    }
+    button.querySelector<HTMLElement>(".obcc-status-metrics-preview")?.setText(`${metrics.rounds}轮 · ${metrics.steps}步`);
+    button.setAttr("title", `运行指标 · ${metrics.rounds}轮 · ${metrics.steps}步`);
+    button.setAttr("aria-label", this.statusMetricsExpanded ? "收起运行指标" : "展开运行指标");
+    if (!panel.querySelector("[data-metric='rounds']")) {
+      const rows: Array<[string, string, string]> = [["repeat", "rounds", "轮"], ["list-ordered", "steps", "步"], ["brain-circuit", "llm", "LLM"], ["wrench", "tools", "工具"], ["timer", "first", "首 token"], ["gauge", "speed", "tok/s"], ["database", "cache", "缓存"]];
+      for (const [icon, key, label] of rows) {
+        const row = panel.createDiv({ cls: "obcc-status-metric-row", attr: { "data-metric": key } });
+        setIcon(row.createSpan({ cls: "obcc-status-metric-icon" }), icon);
+        row.createSpan({ cls: "obcc-status-metric-label", text: label });
+        row.createSpan({ cls: "obcc-status-metric-value" });
+      }
+    }
+    const values: Record<string, string> = {
+      rounds: `${metrics.rounds}`, steps: `${metrics.steps}`, llm: this.statusMetricDuration(metrics.llmMs), tools: this.statusMetricDuration(metrics.toolMs),
+      first: metrics.firstTokenMs ? `${(metrics.firstTokenMs / 1000).toFixed(1)}秒` : "—", speed: metrics.throughput ? `${metrics.throughput}` : "—", cache: metrics.cache
+    };
+    for (const [key, value] of Object.entries(values)) panel.querySelector<HTMLElement>(`[data-metric='${key}'] .obcc-status-metric-value`)?.setText(value);
+    panel.toggleClass("is-hidden", !this.statusMetricsExpanded);
+    this.syncComposerStatusVisibility();
+  }
+
   private syncComposerStatusVisibility(): void {
     if (!this.statusEl) return;
     const hasText = Boolean(this.statusTextEl?.textContent?.trim() || (!this.statusTextEl && this.statusEl.textContent?.trim()));
     const hasChanges = Boolean(this.statusChangesButtonEl && !this.statusChangesButtonEl.hasClass("is-hidden"));
     const hasPlan = Boolean(this.statusPlanButtonEl && !this.statusPlanButtonEl.hasClass("is-hidden"));
     const hasTimer = Boolean(this.headerLiveStatusEl && !this.headerLiveStatusEl.hasClass("is-hidden"));
-    this.statusEl.toggleClass("is-empty", !hasText && !hasChanges && !hasPlan && !hasTimer);
+    const hasMetrics = Boolean(this.statusMetricsButtonEl && !this.statusMetricsButtonEl.hasClass("is-hidden"));
+    this.statusEl.toggleClass("is-empty", !hasText && !hasChanges && !hasPlan && !hasTimer && !hasMetrics);
   }
 
   private async openLatestReviewGatePanel(noticeIfEmpty = true): Promise<void> {
@@ -50203,6 +50310,7 @@ class CancipView extends ItemView {
       completed: false,
       startedAt: Date.now()
     };
+    this.activeModelFirstTokenAt = 0;
   }
 
   private modelCharProgressSummary(summary: string): () => string {
@@ -50239,6 +50347,12 @@ class CancipView extends ItemView {
     let lastRenderAt = 0;
     return (progress) => {
       if (!step) return;
+      if (progress.text.trim() && !this.activeModelFirstTokenAt && this.activeModelCharStats?.startedAt) {
+        this.activeModelFirstTokenAt = Date.now();
+        this.modelFirstTokenSamplesMs.push(Math.max(0, this.activeModelFirstTokenAt - this.activeModelCharStats.startedAt));
+        if (this.modelFirstTokenSamplesMs.length > 32) this.modelFirstTokenSamplesMs.shift();
+        this.syncStatusMetrics();
+      }
       const now = Date.now();
       if (!progress.done && now - lastRenderAt < 260) return;
       lastRenderAt = now;
@@ -50766,6 +50880,7 @@ class CancipView extends ItemView {
       completed: false,
       startedAt: Date.now()
     };
+    this.activeModelFirstTokenAt = 0;
 
     const finish = (answer: string): string => {
       if (this.activeModelCharStats) {
@@ -50799,6 +50914,12 @@ class CancipView extends ItemView {
           system: context.system,
           prompt: inputText,
           onProgress: (text) => {
+            if (text.trim() && !this.activeModelFirstTokenAt && this.activeModelCharStats?.startedAt) {
+              this.activeModelFirstTokenAt = Date.now();
+              this.modelFirstTokenSamplesMs.push(Math.max(0, this.activeModelFirstTokenAt - this.activeModelCharStats.startedAt));
+              if (this.modelFirstTokenSamplesMs.length > 32) this.modelFirstTokenSamplesMs.shift();
+              this.syncStatusMetrics();
+            }
             if (this.activeModelCharStats) {
               this.activeModelCharStats.streaming = true;
               this.activeModelCharStats.outputChars = text.length;
@@ -66828,6 +66949,7 @@ class CancipView extends ItemView {
       return;
     }
     this.renderHeaderSessionTimer();
+    this.syncStatusMetrics();
     if (this.headerLiveStatusTimer === null) {
       this.headerLiveStatusTimer = window.setInterval(() => this.renderHeaderSessionTimer(), 100);
     }
@@ -68226,6 +68348,7 @@ class CancipView extends ItemView {
     if (!this.statusEl) return;
     if (this.statusTextEl?.isConnected) this.statusTextEl.setText(compact);
     else this.statusEl.setText(compact);
+    this.syncStatusMetrics();
     this.syncComposerStatusVisibility();
   }
 
