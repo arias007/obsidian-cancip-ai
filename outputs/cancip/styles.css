@@ -11002,8 +11002,13 @@ body.is-phone.obcc-force-statusbar-visible .view-content.obcc-document-workbench
   min-height: 0;
   padding: 16px clamp(12px, 4%, 38px) 28px;
   overflow: auto;
+  scrollbar-width: none;
   overscroll-behavior: contain;
   touch-action: pan-x pan-y;
+}
+
+.obcc-document-body::-webkit-scrollbar {
+  display: none;
 }
 
 .obcc-document-body.has-document-horizontal-extent-position {
