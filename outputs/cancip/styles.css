@@ -11007,6 +11007,11 @@ body.is-phone.obcc-force-statusbar-visible .view-content.obcc-document-workbench
   touch-action: pan-x pan-y;
 }
 
+/* Cancip owns the single document action menu in the native view header. */
+.cancip-workbench-hidden-native-action {
+  display: none !important;
+}
+
 .obcc-document-body::-webkit-scrollbar {
   display: none;
 }

@@ -4078,12 +4078,13 @@ const MODEL_PRESETS = [
 
 const DEFAULT_DOCUMENT_WORKBENCH_EXTENSIONS = [
   "docx", "xlsx", "pptx", "html", "htm", "hltm", "mhtml", "mht", "mhtl",
-  "odt", "ods", "odp", "epub", "zip", "tar", "gz", "tgz", "rar", "7z", "bz2", "xz", "*"
+  "odt", "ods", "odp", "epub", "zip", "tar", "gz", "tgz", "rar", "7z", "bz2", "xz",
+  "txt", "log", "json", "jsonl", "csv", "tsv", "yaml", "yml", "toml", "xml", "*"
 ] as const;
 
 const OBSIDIAN_NATIVE_DOCUMENT_EXTENSIONS = new Set([
   "md", "markdown", "pdf", "png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif", "heic", "heif",
-  "mp3", "wav", "m4a", "ogg", "flac", "aac", "mp4", "webm", "mov", "mkv", "avi", "txt", "canvas"
+  "mp3", "wav", "m4a", "ogg", "flac", "aac", "mp4", "webm", "mov", "mkv", "avi", "canvas"
 ]);
 
 function isObsidianNativeDocumentExtension(extension: string): boolean {
@@ -32057,6 +32058,10 @@ class CancipDocumentWorkbenchView extends FileView {
   private documentViewportCleanup: (() => void) | null = null;
   private restoringDocumentViewport = false;
   private documentViewportSaveTimer: number | null = null;
+  private workbenchTopMoreButton: HTMLButtonElement | null = null;
+  private hiddenNativeWorkbenchActions: HTMLElement[] = [];
+  private workbenchActionCleanupTimer: number | null = null;
+  private workbenchActionSyncPasses = 0;
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -32138,6 +32143,7 @@ class CancipDocumentWorkbenchView extends FileView {
   async onUnloadFile(file: TFile): Promise<void> {
     void file;
     await this.flushRawSourceAutosave();
+    this.clearWorkbenchTopActions();
     this.captureAndRememberDocumentViewport();
     this.documentViewportCleanup?.();
     this.documentViewportCleanup = null;
@@ -32161,6 +32167,7 @@ class CancipDocumentWorkbenchView extends FileView {
 
   async onClose(): Promise<void> {
     await this.flushRawSourceAutosave();
+    this.clearWorkbenchTopActions();
     this.captureAndRememberDocumentViewport();
     this.documentViewportCleanup?.();
     this.documentViewportCleanup = null;
@@ -32409,20 +32416,7 @@ class CancipDocumentWorkbenchView extends FileView {
     const header = shell.createDiv({ cls: "obcc-document-header" });
     const identity = header.createDiv({ cls: "obcc-document-identity" });
     identity.createDiv({ cls: "obcc-document-path", text: snapshot.file.path });
-
-    const toolbar = header.createDiv({ cls: "obcc-document-toolbar" });
-    const modes = toolbar.createDiv({ cls: "obcc-document-modes", attr: { role: "tablist" } });
-    this.addModeButton(modes, "preview", this.plugin.t("documentPreview"));
-    const sourceLabel = snapshot.kind === "html" || snapshot.kind === "mhtml"
-      ? isChineseLanguage(this.plugin.language()) ? "源码" : "Source"
-      : this.plugin.t("documentSourceMarkdown");
-    this.addModeButton(modes, "markdown", sourceLabel);
-
-    const actions = toolbar.createDiv({ cls: "obcc-document-actions" });
-    const moreButton = this.addIconButton(actions, "ellipsis", this.plugin.t("moreMenu"), () => {
-      this.openDocumentMoreMenu(moreButton);
-    });
-    moreButton.addClass("is-more-menu");
+    this.syncWorkbenchTopActions();
 
     if (this.documentSearchOpen) this.renderDocumentSearchBar(shell);
 
@@ -32525,6 +32519,54 @@ class CancipDocumentWorkbenchView extends FileView {
     this.contentEl.toggleClass("is-compact-header", this.plugin.settings.documentWorkbenchCompactHeader);
     this.contentEl.toggleClass("is-metadata-hidden", !this.plugin.settings.documentWorkbenchShowMetadata);
     this.scheduleWorkbenchBottomClearanceSync();
+  }
+
+  private clearWorkbenchTopActions(): void {
+    if (this.workbenchActionCleanupTimer !== null) {
+      (this.contentEl.ownerDocument.defaultView ?? activeWindow).clearTimeout(this.workbenchActionCleanupTimer);
+      this.workbenchActionCleanupTimer = null;
+    }
+    this.workbenchTopMoreButton?.remove();
+    this.workbenchTopMoreButton = null;
+    this.workbenchActionSyncPasses = 0;
+    for (const action of this.hiddenNativeWorkbenchActions) action.removeClass("cancip-workbench-hidden-native-action");
+    this.hiddenNativeWorkbenchActions = [];
+  }
+
+  private syncWorkbenchTopActions(): void {
+    const leafContainer = (this.leaf as unknown as { containerEl?: HTMLElement }).containerEl;
+    const actions = leafContainer?.querySelector<HTMLElement>(".view-actions");
+    if (!actions || !this.snapshot) return;
+    const nativeMore = Array.from(actions.querySelectorAll<HTMLElement>(".view-action, button")).find((element) => {
+      const label = `${element.getAttribute("aria-label") ?? ""} ${element.getAttribute("title") ?? ""}`.toLowerCase();
+      return /more options|更多选项|更多/.test(label) || Boolean(element.querySelector("svg.lucide-more-vertical, svg.lucide-more-horizontal"));
+    });
+    if (nativeMore && nativeMore !== this.workbenchTopMoreButton) {
+      nativeMore.addClass("cancip-workbench-hidden-native-action");
+      if (!this.hiddenNativeWorkbenchActions.includes(nativeMore)) this.hiddenNativeWorkbenchActions.push(nativeMore);
+    }
+    const duplicateWands = Array.from(actions.querySelectorAll<HTMLElement>(".notedraw-header-button, .notedraw-webview-button"));
+    duplicateWands.slice(1).forEach((element) => element.addClass("cancip-workbench-hidden-native-action"));
+    for (const element of duplicateWands.slice(1)) {
+      if (!this.hiddenNativeWorkbenchActions.includes(element)) this.hiddenNativeWorkbenchActions.push(element);
+    }
+    if (!this.workbenchTopMoreButton) {
+      const button = actions.createEl("button", {
+        cls: "clickable-icon view-action obcc-workbench-top-more",
+        attr: { type: "button", "aria-label": this.plugin.t("moreMenu"), title: this.plugin.t("moreMenu") }
+      });
+      setIcon(button, "more-vertical");
+      button.addEventListener("click", () => this.openDocumentMoreMenu(button));
+      this.workbenchTopMoreButton = button;
+    }
+    if (this.workbenchActionCleanupTimer === null && this.workbenchActionSyncPasses < 3) {
+      this.workbenchActionSyncPasses += 1;
+      const hostWindow = this.contentEl.ownerDocument.defaultView ?? activeWindow;
+      this.workbenchActionCleanupTimer = hostWindow.setTimeout(() => {
+        this.workbenchActionCleanupTimer = null;
+        this.syncWorkbenchTopActions();
+      }, 120);
+    }
   }
 
   private scheduleWorkbenchBottomClearanceSync(): void {
@@ -40389,6 +40431,10 @@ class CancipView extends ItemView {
     this.menuEl.removeClass("is-hidden");
 
     const modelSection = this.menuEl.createDiv({ cls: "obcc-model-menu-section" });
+    // Build the complete list off-DOM. Appending each row to the visible menu
+    // one by one forces repeated layout/paint work and makes the picker feel
+    // sluggish when the configured model list is large.
+    modelSection.detach();
     const modelHead = modelSection.createDiv({ cls: "obcc-model-menu-section-head" });
     modelHead.createSpan({ text: this.t("modelList") });
     this.createModelMenuIconButton(modelHead, "plus", this.t("addModel"), () => void this.addModelOptionFromMenu());
@@ -40538,6 +40584,7 @@ class CancipView extends ItemView {
         this.createModelMenuIconButton(actions, "trash-2", this.t("removeModel"), () => void this.removeModelOptionFromMenu(model), presets.length <= 1);
       }
     }
+    this.menuEl.appendChild(modelSection);
     this.modelMenuSignature = menuSignature;
     if (this.modelMenuEllipsisTimer !== null) window.clearTimeout(this.modelMenuEllipsisTimer);
     const modelMenuWindow = this.containerEl.ownerDocument.defaultView ?? window;
@@ -91277,7 +91324,7 @@ function inlineWorkbenchPreviewWithHeightReporter(source: string, token: string,
   const pptxMode = kind === "pptx"
     ? `.cancip-mpe-office-pages{display:flex!important;flex-direction:column!important;align-items:center!important;justify-content:flex-start!important;min-height:100%!important;overflow:visible!important;touch-action:pan-y!important}.cancip-mpe-office-page{flex:0 0 auto!important;margin-inline:auto!important}`
     : "";
-  const inlineMode = `<meta name="cancip-inline-workbench" content="true"><style data-cancip-inline-scroll>html{height:100%!important;overflow:hidden!important}body{height:100%!important;min-height:100%!important;overflow:auto!important;overscroll-behavior-x:contain!important;overscroll-behavior-y:auto!important;scrollbar-gutter:stable;touch-action:pan-x pan-y!important;-webkit-overflow-scrolling:touch}.cancip-office-preview{overflow:visible!important;overscroll-behavior:auto!important;touch-action:auto!important;-webkit-overflow-scrolling:auto}${spreadsheetMode}${pptxMode}</style>`;
+  const inlineMode = `<meta name="cancip-inline-workbench" content="true"><style data-cancip-inline-scroll>html{height:100%!important;overflow:hidden!important}body{height:100%!important;min-height:100%!important;overflow:auto!important;overscroll-behavior-x:contain!important;overscroll-behavior-y:auto!important;scrollbar-gutter:stable;scrollbar-width:none;touch-action:pan-x pan-y!important;-webkit-overflow-scrolling:touch}body::-webkit-scrollbar{display:none}.cancip-office-preview{overflow:visible!important;overscroll-behavior:auto!important;touch-action:auto!important;-webkit-overflow-scrolling:auto}${spreadsheetMode}${pptxMode}</style>`;
   const closingHead = source.search(/<\/head\s*>/i);
   const markedSource = closingHead >= 0
     ? `${source.slice(0, closingHead)}${inlineMode}${source.slice(closingHead)}`
@@ -91680,7 +91727,7 @@ function isolatedHtmlPreview(app: App, file: TFile, source: string): string {
     "base-uri 'none'",
     "form-action *"
   ].join("; ");
-  const responsiveStyle = `<style data-cancip-workbench>html{color-scheme:light dark;width:100%!important;max-width:100%!important;min-width:0!important;overflow-x:hidden}body{box-sizing:border-box;width:100%!important;max-width:100%!important;min-width:0!important;overflow-x:hidden;overflow-wrap:anywhere}*,*::before,*::after{box-sizing:border-box}body>*,main,header,footer,nav,section,article,aside{max-width:100%}h1,h2,h3,h4,h5,h6,p,li,blockquote,a,strong,em,code{max-width:100%;overflow-wrap:anywhere;word-break:break-word}img,picture,video,audio,canvas,svg,iframe,object,embed{max-width:100%;height:auto}iframe,object,embed{width:100%}table,pre{max-width:100%;overflow:auto}input,textarea,select,button{max-width:100%;font:inherit}button,input:not([type="checkbox"]):not([type="radio"]),select,textarea,[role="button"]{min-height:40px}input[type="checkbox"],input[type="radio"]{width:1em;height:1em;min-height:0}article{margin-inline:auto}.cancip-office-preview h1{font-size:1.35em}.cancip-file-embed,.cancip-file-link{color:GrayText;font-family:ui-monospace,monospace}[contenteditable="true"],[contenteditable="plaintext-only"]{outline:2px solid Highlight;outline-offset:2px}@media(max-width:600px){body{width:100%!important;margin-inline:0!important;padding-inline:min(4vw,18px)!important}body>*,main,header,footer,nav,section,article,aside{min-width:0!important;max-width:100%!important}table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch}}</style>`;
+  const responsiveStyle = `<style data-cancip-workbench>html{color-scheme:light dark;width:100%!important;max-width:100%!important;min-width:0!important;overflow-x:hidden}body{box-sizing:border-box;width:100%!important;max-width:100%!important;min-width:0!important;overflow-x:hidden;overflow-wrap:anywhere;scrollbar-width:none}body::-webkit-scrollbar{display:none}*,*::before,*::after{box-sizing:border-box}body>*,main,header,footer,nav,section,article,aside{max-width:100%}h1,h2,h3,h4,h5,h6,p,li,blockquote,a,strong,em,code{max-width:100%;overflow-wrap:anywhere;word-break:break-word}img,picture,video,audio,canvas,svg,iframe,object,embed{max-width:100%;height:auto}iframe,object,embed{width:100%}table,pre{max-width:100%;overflow:auto}input,textarea,select,button{max-width:100%;font:inherit}button,input:not([type="checkbox"]):not([type="radio"]),select,textarea,[role="button"]{min-height:40px}input[type="checkbox"],input[type="radio"]{width:1em;height:1em;min-height:0}article{margin-inline:auto}.cancip-office-preview h1{font-size:1.35em}.cancip-file-embed,.cancip-file-link{color:GrayText;font-family:ui-monospace,monospace}[contenteditable="true"],[contenteditable="plaintext-only"]{outline:2px solid Highlight;outline-offset:2px}@media(max-width:600px){body{width:100%!important;margin-inline:0!important;padding-inline:min(4vw,18px)!important}body>*,main,header,footer,nav,section,article,aside{min-width:0!important;max-width:100%!important}table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch}}</style>`;
   const officeTableStyle = `<style data-cancip-office-tables>.cancip-office-preview{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}.cancip-office-preview table{display:table!important;width:max-content;min-width:100%;max-width:none;border-collapse:collapse!important;border-spacing:0!important;table-layout:auto;background:Canvas;color:CanvasText}.cancip-office-preview thead{display:table-header-group}.cancip-office-preview tbody{display:table-row-group}.cancip-office-preview tr{display:table-row}.cancip-office-preview th,.cancip-office-preview td{display:table-cell;border:1px solid rgba(127,127,127,.72)!important;padding:6px 9px;min-width:3.5em;vertical-align:middle;white-space:pre-wrap;overflow-wrap:normal;word-break:normal}.cancip-office-preview th{font-weight:650;background:rgba(127,127,127,.14)}.cancip-office-preview tr:nth-child(even)>td{background:rgba(127,127,127,.045)}.cancip-office-preview blockquote{margin-inline:0;border-inline-start:4px solid rgba(127,127,127,.72);padding-inline-start:1em;color:CanvasText}@media(max-width:600px){.cancip-office-preview{overflow-x:hidden}.cancip-office-preview table{width:100%!important;min-width:0;max-width:100%;font-size:.94em;table-layout:auto}.cancip-office-preview th,.cancip-office-preview td{padding:5px 7px;min-width:0;overflow-wrap:anywhere;word-break:break-word}}</style>`;
   return `${doctype}<html${htmlAttributes}><head${headAttributes}><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta http-equiv="Content-Security-Policy" content="${escapeHtmlAttribute(csp)}">${documentHtmlPreviewBootstrapScript()}${parsed.head.innerHTML}${responsiveStyle}${officeTableStyle}</head><body${bodyAttributes}>${parsed.body.innerHTML}${documentHtmlPreviewBridgeScript()}</body></html>`;
 }
