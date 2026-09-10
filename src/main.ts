@@ -103,6 +103,8 @@ type ChatMessage = {
   automationTitle?: string;
   processBrief?: ProcessStepBrief;
   processAuditSections?: ProcessAuditSection[];
+  modelUsage?: TokenUsage;
+  modelTiming?: ModelTiming;
 };
 
 type ContextCompactionState = {
@@ -494,7 +496,16 @@ type TokenUsage = {
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  reasoningTokens?: number;
   estimated: boolean;
+};
+
+type ModelTiming = {
+  startedAt: number;
+  firstTokenAt?: number;
+  completedAt?: number;
 };
 
 class CancipTextPromptModal extends Modal {
@@ -936,8 +947,26 @@ type TurnModelUsage = {
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  reasoningTokens: number;
   estimated: boolean;
 };
+
+function emptyTurnModelUsage(): TurnModelUsage {
+  return {
+    calls: 0,
+    inputChars: 0,
+    outputChars: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    reasoningTokens: 0,
+    estimated: false
+  };
+}
 
 type ProgressStepSummary = string | (() => string);
 
@@ -2052,6 +2081,7 @@ type ContextChip = {
 type MessageDisplay = {
   visibleContent: string;
   runStatsText: string;
+  runStatsUsage?: TurnModelUsage;
   hiddenToolBlocks: FoldedMessageBlock[];
   hasProcessFold: boolean;
   processOnly: boolean;
@@ -42240,9 +42270,15 @@ class CancipView extends ItemView {
 
   private currentStatusMetrics(): { rounds: number; steps: number; llmMs: number; toolMs: number; firstTokenMs: number; throughput: number; cache: string } {
     const userTurns = this.messages.filter((message) => message.role === "user").length;
-    const runs = this.messages.flatMap((message) => message.toolRuns ?? []);
+    const runs = uniqueToolRunsById(this.messages.flatMap((message) => [
+      ...(message.toolRuns ?? []),
+      ...(message.changedFileRuns ?? [])
+    ]));
     const processSteps = this.messages.filter((message) => message.role === "assistant" && (
-      message.content.includes(PROGRESS_STEP_MARKER) || message.content.includes(PROCESS_MESSAGE_MARKER) || (message.toolRuns?.length ?? 0) > 0
+      message.content.includes(PROGRESS_STEP_MARKER)
+      || message.content.includes(PROCESS_MESSAGE_MARKER)
+      || (message.toolRuns?.length ?? 0) > 0
+      || Boolean(message.modelUsage)
     )).length;
     const toolMs = runs.reduce((total, run) => {
       const start = Date.parse(run.startedAt || run.createdAt || "");
@@ -42250,17 +42286,40 @@ class CancipView extends ItemView {
       const finish = Number.isFinite(end) ? end : (run.status === "executing" ? Date.now() : start);
       return total + (Number.isFinite(start) && finish >= start ? finish - start : 0);
     }, 0);
-    const started = Date.parse(this.sessionStartedAt || "");
-    const ended = Date.parse(this.sessionCompletedAt || this.sessionStoppedAt || this.sessionFailedAt || "");
-    const llmMs = this.activeModelCharStats?.startedAt
-      ? Math.max(0, Date.now() - this.activeModelCharStats.startedAt)
-      : (Number.isFinite(started) ? Math.max(0, (Number.isFinite(ended) ? ended : Date.now()) - started) : 0);
-    const usage = this.turnModelUsage;
-    const throughput = usage && llmMs > 0 ? Math.max(0, Math.round((usage.outputTokens || estimateTokenCountFromChars(usage.outputChars)) / (llmMs / 1000))) : 0;
-    const firstTokenMs = this.modelFirstTokenSamplesMs.length
-      ? Math.round(this.modelFirstTokenSamplesMs.reduce((sum, value) => sum + value, 0) / this.modelFirstTokenSamplesMs.length)
-      : (this.activeModelFirstTokenAt > 0 && this.activeModelCharStats ? Math.max(0, this.activeModelFirstTokenAt - this.activeModelCharStats.startedAt) : 0);
-    return { rounds: userTurns || (this.activeRequest ? 1 : 0), steps: processSteps + runs.length, llmMs, toolMs, firstTokenMs, throughput, cache: "—" };
+    const modelMessages = this.messages.filter((message) => message.modelTiming || message.modelUsage);
+    const now = Date.now();
+    let llmMs = 0;
+    let generationMs = 0;
+    let generatedTokens = 0;
+    let firstTokenTotal = 0;
+    let firstTokenCount = 0;
+    let inputTokens = 0;
+    let cacheReadTokens = 0;
+    let cacheWriteTokens = 0;
+    for (const message of modelMessages) {
+      const timing = message.modelTiming;
+      if (timing?.startedAt) {
+        const completedAt = timing.completedAt ?? now;
+        llmMs += Math.max(0, completedAt - timing.startedAt);
+        if (timing.firstTokenAt) {
+          firstTokenTotal += Math.max(0, timing.firstTokenAt - timing.startedAt);
+          firstTokenCount += 1;
+          generationMs += Math.max(0, completedAt - timing.firstTokenAt);
+        }
+      }
+      const usage = message.modelUsage;
+      if (usage) {
+        inputTokens += usage.inputTokens;
+        cacheReadTokens += usage.cacheReadTokens ?? 0;
+        cacheWriteTokens += usage.cacheWriteTokens ?? 0;
+        if (timing?.firstTokenAt) generatedTokens += usage.outputTokens;
+      }
+    }
+    const throughput = generationMs > 0 ? Math.max(0, Math.round(generatedTokens / (generationMs / 1000))) : 0;
+    const firstTokenMs = firstTokenCount > 0 ? Math.round(firstTokenTotal / firstTokenCount) : 0;
+    const cacheDenominator = inputTokens + cacheWriteTokens;
+    const cache = cacheDenominator > 0 ? `${Math.round((cacheReadTokens / cacheDenominator) * 100)}%` : "—";
+    return { rounds: userTurns || (this.activeRequest ? 1 : 0), steps: processSteps, llmMs, toolMs, firstTokenMs, throughput, cache };
   }
 
   private syncStatusMetrics(): void {
@@ -45198,6 +45257,7 @@ class CancipView extends ItemView {
 
   private updateProgressStep(message: ChatMessage | null | undefined, summary: ProgressStepSummary, detail = "", status = this.t("toolRunExecuted")): void {
     if (!message) return;
+    if (message.modelTiming || message.modelUsage) this.syncModelMetrics(message, true);
     this.stopProgressStepTimer(message.id);
     const elapsed = Date.now() - message.createdAt;
     const resolvedSummary = this.resolveProgressStepSummary(summary);
@@ -47825,7 +47885,7 @@ class CancipView extends ItemView {
   ): ProcessStepBrief {
     const chinese = isChineseLanguage(this.plugin.language());
     const action = trimContext(redactSensitiveText(summary).replace(/\s+/g, " ").trim(), 120)
-      || (chinese ? "确认当前步骤" : "Confirm the current step");
+      || (chinese ? "处理当前步骤" : "Process the current step");
     const taskSource = context.task ?? this.taskControl?.taskGoal ?? this.previousActionableUserPrompt();
     const task = this.conciseProcessTask(taskSource);
     const normalized = `${status} ${summary}`.toLowerCase();
@@ -47833,34 +47893,6 @@ class CancipView extends ItemView {
     const blocked = /阻塞|拒绝|blocked|rejected/.test(normalized);
     const pending = /等待|审核|批准|pending|approval|review/.test(normalized);
     const executing = !failed && !blocked && !pending && /执行中|生成中|准备中|running|executing|generating|preparing/.test(normalized);
-    const stage = /上下文|context/.test(action)
-      ? "context"
-      : /生成|模型|回复|generat|model|response/.test(action)
-        ? "model"
-        : /自动化|automation/.test(action)
-          ? "automation"
-          : /验证|复核|审核|verify|review/.test(action)
-            ? "verification"
-            : "action";
-    const reasoning = stage === "context"
-      ? (chinese
-          ? `先提取与${task ? `“${task}”` : "当前任务"}直接相关的上下文，减少无关发送。`
-          : `First gather only context directly relevant to ${task ? `"${task}"` : "the task"} to avoid unrelated input.`)
-      : stage === "model"
-        ? (chinese
-            ? `根据已取得的证据，判断${task ? `“${task}”` : "当前任务"}应直接回答还是调用具体工具。`
-            : `Use the available evidence to decide whether ${task ? `"${task}"` : "the task"} needs a direct answer or a concrete tool call.`)
-        : stage === "automation"
-          ? (chinese
-              ? `该请求由自动化任务执行，必须保留本次真实运行结果。`
-              : "This request runs through automation, so its actual run result must be retained.")
-          : stage === "verification"
-            ? (chinese
-                ? `完成前要用真实结果核对${task ? `“${task}”` : "原始要求"}，不能只凭模型自述。`
-                : `Verify ${task ? `"${task}"` : "the original request"} from actual results before completion, not model claims.`)
-            : (chinese
-                ? `${task ? `完成“${task}”` : "完成当前任务"}需要先取得“${action}”的可验证结果。`
-                : `${task ? `Completing "${task}"` : "Completing the task"} requires a verifiable result from "${action}" first.`);
     const detailSnippet = this.progressStepDetailSnippet(detail);
     const result = failed
       ? (chinese ? `失败：${detailSnippet || action}` : `Failed: ${detailSnippet || action}`)
@@ -47869,28 +47901,18 @@ class CancipView extends ItemView {
         : pending
           ? (chinese ? `等待干预：${detailSnippet || action}` : `Waiting for intervention: ${detailSnippet || action}`)
           : executing
-            ? (chinese ? `进行中：等待“${action}”的真实返回。` : `Running: waiting for the actual result of "${action}".`)
-            : stage === "context"
-              ? (chinese ? "上下文已按需准备；详细来源保留在折叠区。" : "Relevant context is ready; detailed sources remain folded.")
-              : stage === "model"
-                ? (chinese ? "模型回复已返回；原始收发保留在折叠区。" : "The model reply returned; raw exchange remains folded.")
-                : (chinese ? `完成：${detailSnippet || action}` : `Completed: ${detailSnippet || action}`);
+            ? ""
+            : detailSnippet
+              ? (chinese ? `完成：${detailSnippet}` : `Completed: ${detailSnippet}`)
+              : "";
     const candidatePlanNext = context.planNext === undefined
       ? this.modelPlanTodos().find((todo) => !todo.done)?.text?.trim() ?? ""
       : context.planNext ?? "";
     const planNext = this.processPlanStepMatchesTask(candidatePlanNext, task, action) ? candidatePlanNext : "";
-    const next = pending
-      ? (chinese ? "在审核或批准入口通过、指正或拒绝当前动作。" : "Approve, correct, or reject the current action in the review/approval entry.")
-      : failed || blocked
-        ? (chinese ? "根据失败详情缩小动作或改用可用路线；无法继续时返回具体阻塞。" : "Use a smaller or available route from the failure detail; report the exact blocker if progress is impossible.")
-        : planNext && !samePromptForDedup(planNext, action)
-          ? (chinese ? `继续计划：${trimContext(planNext.replace(/\s+/g, " "), 96)}` : `Continue the plan: ${trimContext(planNext.replace(/\s+/g, " "), 96)}`)
-          : executing
-            ? (chinese ? "收到真实返回后核对结果，再决定下一动作。" : "Check the actual result when it returns, then choose the next action.")
-            : (chinese
-                ? `核对该结果是否满足${task ? `“${task}”` : "原始要求"}；未满足则继续下一动作。`
-                : `Check whether this satisfies ${task ? `"${task}"` : "the original request"}; continue with the next action if not.`);
-    return { reasoning, action, result, next };
+    const next = planNext && !samePromptForDedup(planNext, action)
+      ? trimContext(planNext.replace(/\s+/g, " "), 96)
+      : "";
+    return { reasoning: "", action, result, next };
   }
 
   private processPlanStepMatchesTask(planStep: string, task: string, action: string): boolean {
@@ -50368,10 +50390,33 @@ class CancipView extends ItemView {
   private currentModelCharUsageText(): string {
     const stats = this.activeModelCharStats;
     if (!stats) return "";
-    return this.t(stats.completed ? "charUsageFinal" : "charUsageLive", {
-      input: stats.inputChars,
-      output: stats.outputChars
-    });
+    const exact = stats.completed ? this.lastModelCallAudit?.usage : undefined;
+    const input = exact?.inputTokens ?? estimateTokenCountFromChars(stats.inputChars);
+    const output = exact?.outputTokens ?? estimateTokenCountFromChars(stats.outputChars);
+    const approximate = exact ? "" : "≈";
+    return `${isChineseLanguage(this.plugin.language()) ? "发送" : "Sent"}${approximate}${input} · ${isChineseLanguage(this.plugin.language()) ? "接收" : "Received"}${approximate}${output} tok`;
+  }
+
+  private syncModelMetrics(message: ChatMessage | null | undefined, completed = false): void {
+    if (!message || !this.activeModelCharStats) return;
+    const stats = this.activeModelCharStats;
+    const exact = completed ? this.lastModelCallAudit?.usage : undefined;
+    const inputTokens = exact?.inputTokens ?? estimateTokenCountFromChars(stats.inputChars);
+    const outputTokens = exact?.outputTokens ?? estimateTokenCountFromChars(stats.outputChars);
+    message.modelUsage = exact ? { ...exact } : {
+      inputTokens,
+      outputTokens,
+      totalTokens: inputTokens + outputTokens,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      reasoningTokens: 0,
+      estimated: true
+    };
+    message.modelTiming = {
+      startedAt: message.modelTiming?.startedAt ?? stats.startedAt,
+      firstTokenAt: this.activeModelFirstTokenAt || message.modelTiming?.firstTokenAt,
+      completedAt: completed ? Date.now() : message.modelTiming?.completedAt
+    };
   }
 
   private primeModelCharStats(prompt: string, context: { system: string; contextText: string }, rawPrompt = prompt, directInput = false): void {
@@ -50420,6 +50465,7 @@ class CancipView extends ItemView {
 
   private modelStreamProgressUpdater(step: ChatMessage | null | undefined, summary: string): ModelStreamCallback {
     let lastRenderAt = 0;
+    this.syncModelMetrics(step, false);
     return (progress) => {
       if (!step) return;
       if (progress.text.trim() && !this.activeModelFirstTokenAt && this.activeModelCharStats?.startedAt) {
@@ -50429,6 +50475,7 @@ class CancipView extends ItemView {
         this.syncStatusMetrics();
       }
       const now = Date.now();
+      this.syncModelMetrics(step, false);
       if (!progress.done && now - lastRenderAt < 260) return;
       lastRenderAt = now;
       this.updateModelProcessAuditSections(step, progress.text);
@@ -50512,15 +50559,7 @@ class CancipView extends ItemView {
   private recordTurnModelUsage(answer: string): void {
     const stats = this.activeModelCharStats;
     const usage = this.lastModelCallAudit?.usage;
-    const previous = this.turnModelUsage ?? {
-      calls: 0,
-      inputChars: 0,
-      outputChars: 0,
-      inputTokens: 0,
-      outputTokens: 0,
-      totalTokens: 0,
-      estimated: false
-    };
+    const previous = this.turnModelUsage ?? emptyTurnModelUsage();
     const inputChars = stats?.inputChars ?? 0;
     const outputChars = stats?.outputChars ?? answer.length;
     this.turnModelUsage = {
@@ -50530,6 +50569,9 @@ class CancipView extends ItemView {
       inputTokens: previous.inputTokens + (usage?.inputTokens ?? estimateTokenCountFromChars(inputChars)),
       outputTokens: previous.outputTokens + (usage?.outputTokens ?? estimateTokenCountFromChars(outputChars)),
       totalTokens: previous.totalTokens + (usage?.totalTokens ?? estimateTokenCountFromChars(inputChars + outputChars)),
+      cacheReadTokens: previous.cacheReadTokens + (usage?.cacheReadTokens ?? 0),
+      cacheWriteTokens: previous.cacheWriteTokens + (usage?.cacheWriteTokens ?? 0),
+      reasoningTokens: previous.reasoningTokens + (usage?.reasoningTokens ?? 0),
       estimated: previous.estimated || !usage || usage.estimated
     };
   }
@@ -50920,15 +50962,7 @@ class CancipView extends ItemView {
   private recordFailedModelAttemptUsage(): void {
     const stats = this.activeModelCharStats;
     if (!stats) return;
-    const previous = this.turnModelUsage ?? {
-      calls: 0,
-      inputChars: 0,
-      outputChars: 0,
-      inputTokens: 0,
-      outputTokens: 0,
-      totalTokens: 0,
-      estimated: false
-    };
+    const previous = this.turnModelUsage ?? emptyTurnModelUsage();
     const inputTokens = estimateTokenCountFromChars(stats.inputChars);
     this.turnModelUsage = {
       calls: previous.calls + 1,
@@ -50937,6 +50971,9 @@ class CancipView extends ItemView {
       inputTokens: previous.inputTokens + inputTokens,
       outputTokens: previous.outputTokens,
       totalTokens: previous.totalTokens + inputTokens,
+      cacheReadTokens: previous.cacheReadTokens,
+      cacheWriteTokens: previous.cacheWriteTokens,
+      reasoningTokens: previous.reasoningTokens,
       estimated: true
     };
   }
@@ -55214,25 +55251,16 @@ class CancipView extends ItemView {
   }
 
   private toolRunProcessBrief(run: ToolRun, taskOverride?: string): ProcessStepBrief {
-    const chinese = isChineseLanguage(this.plugin.language());
     const target = this.actionStatusTarget(run.action) || this.toolRunStatusActionLabel(run);
     const taskSource = taskOverride ?? this.taskControl?.taskGoal ?? this.previousActionableUserPrompt();
     const task = this.conciseProcessTask(taskSource);
     const action = trimContext(`${this.toolActionKindLabel(run.action)} ${target}`.replace(/\s+/g, " ").trim(), 120);
-    const reasoning = run.action.type === "read"
-      ? (chinese ? `回答或处理${task ? `“${task}”` : "当前任务"}前，先读取 ${target} 的真实内容。` : `Read the actual content of ${target} before answering or handling ${task || "the task"}.`)
-      : run.action.type === "command"
-        ? (chinese
-            ? `${task ? `为核验“${task}”，` : "为取得可核对的实际状态，"}调用 ${target}，不根据界面猜测。`
-            : `${task ? `To verify "${task}", ` : "To obtain verifiable runtime state, "}call ${target} instead of guessing from the interface.`)
-        : this.isFileChangeAction(run.action)
-          ? (chinese ? `目标和改动要求已明确，需要对 ${target} 执行受审核的真实修改。` : `The target and requested change are known, so apply a real reviewed change to ${target}.`)
-          : (chinese ? `${task ? `完成“${task}”` : "完成当前任务"}需要执行 ${action} 并检查返回。` : `${task ? `Completing "${task}"` : "Completing the task"} requires ${action} and checking its result.`);
+    const nextPlan = this.modelPlanTodos().find((todo) => !todo.done)?.text?.trim() ?? "";
     return {
-      reasoning,
+      reasoning: "",
       action,
       result: this.structuredToolResultLine(run),
-      next: this.toolRunsNextStepText([run], task || this.previousActionableUserPrompt())
+      next: this.processPlanStepMatchesTask(nextPlan, task, action) ? trimContext(nextPlan.replace(/\s+/g, " "), 96) : ""
     };
   }
 
@@ -57762,7 +57790,7 @@ class CancipView extends ItemView {
     const withoutProgramStats = stripProgrammaticRunStats(content).content;
     const withoutVisibleStats = stripModelRunStatsLines(withoutProgramStats).trim();
     if (!stats) return withoutVisibleStats;
-    return [withoutVisibleStats, runStatsMarker(stats)].filter(Boolean).join("\n\n");
+    return [withoutVisibleStats, runStatsMarker(stats, this.turnModelUsage)].filter(Boolean).join("\n\n");
   }
 
   private finalRunStatsLine(startedAt?: number): string {
@@ -65649,7 +65677,7 @@ class CancipView extends ItemView {
     } else {
       this.renderMarkdown(contentEl, display.visibleContent);
     }
-    this.renderRunStats(item, display.runStatsText);
+    this.renderRunStats(item, display.runStatsText, display.runStatsUsage);
     this.renderHiddenToolJson(item, display.hiddenToolBlocks, display.hasProcessFold);
     this.renderToolRuns(item, message);
     this.renderChangedFileRuns(item, message);
@@ -65690,12 +65718,45 @@ class CancipView extends ItemView {
     overflow.createDiv({ cls: "obcc-plain-text obcc-user-message-remainder", text: remainder.trimStart() });
   }
 
-  private renderRunStats(parent: HTMLElement, text: string): void {
+  private renderRunStats(parent: HTMLElement, text: string, usage?: TurnModelUsage): void {
     const stats = text.trim();
-    if (!stats) return;
+    if (!stats && !usage) return;
     const wrap = parent.createDiv({ cls: "obcc-run-stats", attr: { "aria-label": stats } });
     for (const part of stats.split(/\s+·\s+/).map((item) => item.trim()).filter(Boolean)) {
+      if (usage && /^(?:Token|Tokens|发送|接收|合计|字数|字符)\b/i.test(part)) continue;
       wrap.createSpan({ cls: "obcc-run-stat-chip", text: part });
+    }
+    if (usage) {
+      const details = wrap.createEl("details", { cls: "obcc-run-stat-details" });
+      const summary = details.createEl("summary", { cls: "obcc-run-stat-chip obcc-run-stat-usage" });
+      setIcon(summary.createSpan({ cls: "obcc-run-stat-icon" }), "database");
+      const summaryParts = [`${usage.outputTokens}${usage.estimated ? "≈" : ""} tok`];
+      const summaryDenominator = usage.inputTokens + (usage.cacheWriteTokens ?? 0);
+      if (summaryDenominator > 0 && (usage.cacheReadTokens ?? 0) > 0) {
+        summaryParts.push(`缓存${Math.round(((usage.cacheReadTokens ?? 0) / summaryDenominator) * 100)}%`);
+      }
+      summary.createSpan({ text: summaryParts.join(" · ") });
+      const body = details.createDiv({ cls: "obcc-run-stat-usage-body" });
+      const rows: Array<[string, number]> = [
+        ["输入", usage.inputTokens],
+        ["缓存读取", usage.cacheReadTokens ?? 0],
+        ["缓存写入", usage.cacheWriteTokens ?? 0],
+        ["输出", usage.outputTokens],
+        ["推理", usage.reasoningTokens ?? 0],
+        ["合计", usage.totalTokens]
+      ];
+      for (const [label, value] of rows) {
+        if ((label === "缓存写入" || label === "推理") && !value) continue;
+        const row = body.createDiv({ cls: "obcc-run-stat-usage-row" });
+        row.createSpan({ text: label });
+        row.createSpan({ text: `${value}` });
+      }
+      const denominator = usage.inputTokens || 0;
+      if (denominator > 0 && (usage.cacheReadTokens ?? 0) > 0) {
+        const row = body.createDiv({ cls: "obcc-run-stat-usage-row" });
+        row.createSpan({ text: "缓存命中" });
+        row.createSpan({ text: `${Math.round(((usage.cacheReadTokens ?? 0) / denominator) * 100)}%` });
+      }
     }
   }
 
@@ -65801,7 +65862,7 @@ class CancipView extends ItemView {
   }
 
   private processStepTitleFromBrief(brief: ProcessStepBrief, fallback: string): string {
-    const candidates = [brief.reasoning, fallback, brief.action];
+    const candidates = [fallback, brief.action, brief.result];
     for (const candidate of candidates) {
       const text = redactSensitiveText(candidate)
         .replace(/\s+/g, " ")
@@ -65996,7 +66057,8 @@ class CancipView extends ItemView {
           || blocks.length > 0
           || auditSections.length > 0
           || Boolean(normalizedRendered.message.toolRuns?.length)
-          || Boolean(normalizedRendered.message.changedFileRuns?.length);
+          || Boolean(normalizedRendered.message.changedFileRuns?.length)
+          || Boolean(normalizedRendered.message.modelUsage);
         return {
           rendered: normalizedRendered,
           headline,
@@ -66047,6 +66109,18 @@ class CancipView extends ItemView {
       }
       const processTitle = this.processStepTitleFromBrief(stepInfo.brief, stepInfo.headline);
       stepTitle.createSpan({ text: stepInfo.count > 1 ? `${processTitle} x${stepInfo.count}` : processTitle });
+      const stepUsage = stepInfo.rendered.message.modelUsage;
+      if (stepUsage) {
+        const tokenBadge = stepHead.createSpan({
+          cls: "obcc-process-step-token-badge",
+          attr: {
+            title: `输入 ${stepUsage.inputTokens} · 输出 ${stepUsage.outputTokens} · 合计 ${stepUsage.totalTokens}`,
+            "aria-label": `Token ${stepUsage.totalTokens}`
+          }
+        });
+        setIcon(tokenBadge.createSpan({ cls: "obcc-process-step-token-icon" }), "database");
+        tokenBadge.createSpan({ text: `${stepUsage.outputTokens}${stepUsage.estimated ? "≈" : ""} tok` });
+      }
       const planReference = this.processStepPlanReference(stepInfo);
       if (planReference) {
         const todos = this.modelPlanTodos();
@@ -66080,6 +66154,7 @@ class CancipView extends ItemView {
       });
       if (!stepInfo.hasDetail) continue;
       const stepBody = step.createDiv({ cls: "obcc-process-step-detail-body" });
+      if (stepUsage) this.renderProcessStepUsage(stepBody, stepUsage, stepInfo.rendered.message.modelTiming);
       this.renderProcessStepBrief(stepBody, stepInfo.brief);
       if (stepInfo.readableDetail) {
         const readableSection = stepBody.createDiv({ cls: "obcc-process-inline-section is-explanation" });
@@ -66101,6 +66176,38 @@ class CancipView extends ItemView {
       this.renderToolRuns(stepBody, stepInfo.rendered.message, true);
     }
     this.renderProcessRecordMeta(body, items);
+  }
+
+  private renderProcessStepUsage(parent: HTMLElement, usage: TokenUsage, timing?: ModelTiming): void {
+    const section = parent.createDiv({ cls: "obcc-process-token-usage" });
+    const title = section.createDiv({ cls: "obcc-process-token-usage-title" });
+    setIcon(title.createSpan({ cls: "obcc-process-token-usage-icon" }), "database");
+    title.createSpan({ text: isChineseLanguage(this.plugin.language()) ? "Token" : "Tokens" });
+    const rows: Array<[string, string]> = [
+      ["输入", `${usage.estimated ? "≈" : ""}${usage.inputTokens}`],
+      ["缓存读取", `${usage.cacheReadTokens ?? 0}`],
+      ["缓存写入", `${usage.cacheWriteTokens ?? 0}`],
+      ["输出", `${usage.estimated ? "≈" : ""}${usage.outputTokens}`],
+      ["推理", `${usage.reasoningTokens ?? 0}`],
+      ["合计", `${usage.estimated ? "≈" : ""}${usage.totalTokens}`]
+    ];
+    for (const [label, value] of rows) {
+      if ((label === "缓存写入" || label === "推理") && value === "0") continue;
+      const row = section.createDiv({ cls: "obcc-process-token-usage-row" });
+      row.createSpan({ text: label });
+      row.createSpan({ text: value });
+    }
+    const denominator = usage.inputTokens + (usage.cacheWriteTokens ?? 0);
+    if (denominator > 0 && (usage.cacheReadTokens ?? 0) > 0) {
+      const row = section.createDiv({ cls: "obcc-process-token-usage-row" });
+      row.createSpan({ text: "缓存命中" });
+      row.createSpan({ text: `${Math.round(((usage.cacheReadTokens ?? 0) / denominator) * 100)}%` });
+    }
+    if (timing?.firstTokenAt && timing.startedAt) {
+      const row = section.createDiv({ cls: "obcc-process-token-usage-row" });
+      row.createSpan({ text: "TTFT" });
+      row.createSpan({ text: `${Math.max(0, timing.firstTokenAt - timing.startedAt)} ms` });
+    }
   }
 
   private processBriefForMessage(message: ChatMessage, headline: string, readableDetail: string): ProcessStepBrief {
@@ -66134,13 +66241,12 @@ class CancipView extends ItemView {
 
   private renderProcessStepBrief(parent: HTMLElement, brief: ProcessStepBrief): void {
     const chinese = isChineseLanguage(this.plugin.language());
-    const section = parent.createDiv({ cls: "obcc-process-step-brief" });
     const rows: Array<[string, string, string]> = [
-      [chinese ? "推理摘要" : "Reasoning", brief.reasoning, "brain"],
-      [chinese ? "执行动作" : "Action", brief.action, "play"],
-      [chinese ? "实际结果" : "Result", brief.result, "circle-check-big"],
+      [chinese ? "结果" : "Result", brief.result, "circle-check-big"],
       [chinese ? "下一步" : "Next", brief.next, "arrow-right"]
-    ];
+    ].filter(([, value]) => Boolean(value.trim())) as Array<[string, string, string]>;
+    if (!rows.length) return;
+    const section = parent.createDiv({ cls: "obcc-process-step-brief" });
     for (const [label, value, icon] of rows) {
       const row = section.createDiv({ cls: "obcc-process-step-brief-row" });
       const labelEl = row.createDiv({ cls: "obcc-process-step-brief-label" });
@@ -76247,6 +76353,9 @@ function acceptanceTokenUsageFromValue(value: unknown): TurnModelUsage | null {
     inputTokens: clampInt(value.inputTokens, 0, 0, 999999999),
     outputTokens: clampInt(value.outputTokens, 0, 0, 999999999),
     totalTokens: clampInt(value.totalTokens, 0, 0, 999999999),
+    cacheReadTokens: clampInt(value.cacheReadTokens, 0, 0, 999999999),
+    cacheWriteTokens: clampInt(value.cacheWriteTokens, 0, 0, 999999999),
+    reasoningTokens: clampInt(value.reasoningTokens, 0, 0, 999999999),
     estimated: value.estimated === true
   };
 }
@@ -76265,6 +76374,9 @@ function normalizeAcceptanceLedgerRecord(raw: unknown): AcceptanceLedgerRecord |
         inputTokens: clampInt(raw.tokenUsage.inputTokens, 0, 0, 999999999),
         outputTokens: clampInt(raw.tokenUsage.outputTokens, 0, 0, 999999999),
         totalTokens: clampInt(raw.tokenUsage.totalTokens, 0, 0, 999999999),
+        cacheReadTokens: clampInt(raw.tokenUsage.cacheReadTokens, 0, 0, 999999999),
+        cacheWriteTokens: clampInt(raw.tokenUsage.cacheWriteTokens, 0, 0, 999999999),
+        reasoningTokens: clampInt(raw.tokenUsage.reasoningTokens, 0, 0, 999999999),
         estimated: raw.tokenUsage.estimated === true
       }
     : null;
@@ -83703,25 +83815,27 @@ function cleanFoldedBlockContent(block: FoldedMessageBlock): string {
   return content;
 }
 
-function runStatsMarker(text: string): string {
-  return `<!-- ${RUN_STATS_MARKER_NAME} ${JSON.stringify({ text })} -->`;
+function runStatsMarker(text: string, usage?: TurnModelUsage | null): string {
+  return `<!-- ${RUN_STATS_MARKER_NAME} ${JSON.stringify({ text, usage: usage ?? undefined })} -->`;
 }
 
-function stripProgrammaticRunStats(content: string): { content: string; text: string } {
+function stripProgrammaticRunStats(content: string): { content: string; text: string; usage?: TurnModelUsage } {
   let text = "";
+  let usage: TurnModelUsage | undefined;
   const cleaned = content.replace(/<!--\s*cancip-run-stats\b([\s\S]*?)-->/gi, (_full, rawPayload: string) => {
     const payload = rawPayload.trim();
     if (payload) {
       try {
         const parsed = JSON.parse(payload) as unknown;
         if (isRecord(parsed) && typeof parsed.text === "string") text = parsed.text.trim();
+        if (isRecord(parsed) && isRecord(parsed.usage)) usage = acceptanceTokenUsageFromValue(parsed.usage) ?? undefined;
       } catch {
         text = payload.replace(/^[:：-]\s*/, "").trim();
       }
     }
     return "\n\n";
   });
-  return { content: cleaned, text };
+  return { content: cleaned, text, usage };
 }
 
 function stripModelRunStatsLines(content: string): string {
@@ -83885,7 +83999,7 @@ function prepareMessageDisplay(content: string): MessageDisplay {
   visibleContent = stripTailChoiceSection(visibleContent);
   if (!explicitlyProcessOnly && processOnly && looksLikeUserFacingFinalContent(visibleContent)) processOnly = false;
   if (!visibleContent && hiddenToolBlocks.some(isProcessFoldedBlock)) processOnly = true;
-  return { visibleContent, runStatsText: programmaticStats.text, hiddenToolBlocks, hasProcessFold: hiddenToolBlocks.length > 0, processOnly };
+  return { visibleContent, runStatsText: programmaticStats.text, runStatsUsage: programmaticStats.usage, hiddenToolBlocks, hasProcessFold: hiddenToolBlocks.length > 0, processOnly };
 }
 
 function looksLikeUserFacingFinalContent(text: string): boolean {
@@ -86516,16 +86630,33 @@ function normalizeChatMessage(raw: Record<string, unknown>): ChatMessage | null 
     automationTaskId: typeof raw.automationTaskId === "string" ? raw.automationTaskId : undefined,
     automationTitle: typeof raw.automationTitle === "string" ? raw.automationTitle : undefined,
     processBrief: normalizeProcessStepBrief(raw.processBrief),
-    processAuditSections: normalizeProcessAuditSections(raw.processAuditSections)
+    processAuditSections: normalizeProcessAuditSections(raw.processAuditSections),
+    modelUsage: isRecord(raw.modelUsage) ? {
+      inputTokens: clampInt(raw.modelUsage.inputTokens, 0, 0, 999999999),
+      outputTokens: clampInt(raw.modelUsage.outputTokens, 0, 0, 999999999),
+      totalTokens: clampInt(raw.modelUsage.totalTokens, 0, 0, 999999999),
+      cacheReadTokens: clampInt(raw.modelUsage.cacheReadTokens, 0, 0, 999999999),
+      cacheWriteTokens: clampInt(raw.modelUsage.cacheWriteTokens, 0, 0, 999999999),
+      reasoningTokens: clampInt(raw.modelUsage.reasoningTokens, 0, 0, 999999999),
+      estimated: raw.modelUsage.estimated === true
+    } : undefined,
+    modelTiming: isRecord(raw.modelTiming) && Number.isFinite(Number(raw.modelTiming.startedAt)) ? {
+      startedAt: Number(raw.modelTiming.startedAt),
+      firstTokenAt: Number.isFinite(Number(raw.modelTiming.firstTokenAt)) ? Number(raw.modelTiming.firstTokenAt) : undefined,
+      completedAt: Number.isFinite(Number(raw.modelTiming.completedAt)) ? Number(raw.modelTiming.completedAt) : undefined
+    } : undefined
   };
 }
 
 function normalizeProcessStepBrief(raw: unknown): ProcessStepBrief | undefined {
   if (!isRecord(raw)) return undefined;
-  const reasoning = typeof raw.reasoning === "string" ? raw.reasoning.trim() : "";
+  const rawReasoning = typeof raw.reasoning === "string" ? raw.reasoning.trim() : "";
+  const rawNext = typeof raw.next === "string" ? raw.next.trim() : "";
+  const boilerplate = /^(?:已有上下文需要转成当前任务的可执行动作或终态结论|先提取与当前任务直接相关的上下文，?减少无关发送|模型生成回复|根据已取得的证据，判断当前任务应直接回答还是调用具体工具|收到真实返回后再核对是否满足原始要求|the available context needs to become an executable action or terminal conclusion for the task|first gather only context directly relevant to the task to avoid unrelated input|model generates the response|use the available evidence to decide whether the task needs a direct answer or a concrete tool call|after receiving the real result, verify it satisfies the original request)[。.!！]?$/i;
+  const reasoning = boilerplate.test(rawReasoning) ? "" : rawReasoning;
   const action = typeof raw.action === "string" ? raw.action.trim() : "";
   const result = typeof raw.result === "string" ? raw.result.trim() : "";
-  const next = typeof raw.next === "string" ? raw.next.trim() : "";
+  const next = boilerplate.test(rawNext) ? "" : rawNext;
   if (!reasoning && !action && !result && !next) return undefined;
   return { reasoning, action, result, next };
 }
@@ -94728,11 +94859,29 @@ function usageValue(usage: Record<string, unknown>, keys: string[]): number | un
   return undefined;
 }
 
+function nestedUsageValue(usage: Record<string, unknown>, objectKeys: string[], valueKeys: string[]): number | undefined {
+  for (const objectKey of objectKeys) {
+    const nested = usage[objectKey];
+    if (!isRecord(nested)) continue;
+    const value = usageValue(nested, valueKeys);
+    if (value !== undefined) return value;
+  }
+  return undefined;
+}
+
 function extractTokenUsage(json: unknown, fallbackInput: number, fallbackOutputText: string): TokenUsage {
   const usage = isRecord(json) && isRecord(json.usage) ? json.usage : {};
   const input = usageValue(usage, ["input_tokens", "prompt_tokens", "inputTokens", "promptTokens"]);
   const output = usageValue(usage, ["output_tokens", "completion_tokens", "outputTokens", "completionTokens"]);
   const total = usageValue(usage, ["total_tokens", "totalTokens"]);
+  const cacheRead = usageValue(usage, [
+    "cache_read_input_tokens", "cache_read_tokens", "prompt_cache_hit_tokens", "cached_tokens", "cacheReadTokens"
+  ]) ?? nestedUsageValue(usage, ["prompt_tokens_details", "input_tokens_details", "details"], ["cached_tokens", "cache_read_tokens", "cacheReadTokens"]);
+  const cacheWrite = usageValue(usage, [
+    "cache_creation_input_tokens", "cache_write_tokens", "prompt_cache_write_tokens", "cacheWriteTokens"
+  ]) ?? nestedUsageValue(usage, ["input_tokens_details", "details"], ["cache_creation_input_tokens", "cache_write_tokens", "cacheWriteTokens"]);
+  const reasoning = usageValue(usage, ["reasoning_tokens", "reasoningTokens"])
+    ?? nestedUsageValue(usage, ["output_tokens_details", "completion_tokens_details", "details"], ["reasoning_tokens", "reasoningTokens"]);
   const hasRealUsage = input !== undefined || output !== undefined || total !== undefined;
   const estimatedOutput = estimateTextTokens(fallbackOutputText);
 
@@ -94741,6 +94890,9 @@ function extractTokenUsage(json: unknown, fallbackInput: number, fallbackOutputT
       inputTokens: fallbackInput,
       outputTokens: estimatedOutput,
       totalTokens: fallbackInput + estimatedOutput,
+      cacheReadTokens: cacheRead ?? 0,
+      cacheWriteTokens: cacheWrite ?? 0,
+      reasoningTokens: reasoning ?? 0,
       estimated: true
     };
   }
@@ -94751,6 +94903,9 @@ function extractTokenUsage(json: unknown, fallbackInput: number, fallbackOutputT
     inputTokens,
     outputTokens,
     totalTokens: total ?? inputTokens + outputTokens,
+    cacheReadTokens: cacheRead ?? 0,
+    cacheWriteTokens: cacheWrite ?? 0,
+    reasoningTokens: reasoning ?? 0,
     estimated: input === undefined || output === undefined || total === undefined
   };
 }
