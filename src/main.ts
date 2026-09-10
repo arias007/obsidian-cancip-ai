@@ -31155,6 +31155,10 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       new Notice(this.t("documentNoActiveFile"));
       return null;
     }
+    if (isMarkdownFile(file)) {
+      await this.openNativeMarkdownFile(file, "preview");
+      return null;
+    }
     const resolvedMode = mode ?? this.settings.documentWorkbenchDefaultMode;
     await this.restoreDocumentWorkbenchLeaves();
     const workbenchLeaves = this.app.workspace.getLeavesOfType(CANCIP_DOCUMENT_VIEW_TYPE);
@@ -32058,10 +32062,12 @@ class CancipDocumentWorkbenchView extends FileView {
   private documentViewportCleanup: (() => void) | null = null;
   private restoringDocumentViewport = false;
   private documentViewportSaveTimer: number | null = null;
+  private workbenchTopModeButton: HTMLButtonElement | null = null;
   private workbenchTopMoreButton: HTMLButtonElement | null = null;
   private hiddenNativeWorkbenchActions: HTMLElement[] = [];
-  private workbenchActionCleanupTimer: number | null = null;
-  private workbenchActionSyncPasses = 0;
+  private workbenchActionsObserver: MutationObserver | null = null;
+  private documentMoreMenu: Menu | null = null;
+  private documentMoreMenuClosedAt = 0;
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -32100,10 +32106,8 @@ class CancipDocumentWorkbenchView extends FileView {
   }
 
   canAcceptExtension(extension: string): boolean {
-    void extension;
-    // Extension registration controls default routing. Once this view is explicitly chosen,
-    // it accepts any TFile, including Markdown and formats owned by another plugin.
-    return true;
+    return !isObsidianNativeDocumentExtension(extension)
+      && this.plugin.isDocumentWorkbenchExtension(extension);
   }
 
   async setState(state: unknown, result: ViewStateResult): Promise<void> {
@@ -32522,13 +32526,14 @@ class CancipDocumentWorkbenchView extends FileView {
   }
 
   private clearWorkbenchTopActions(): void {
-    if (this.workbenchActionCleanupTimer !== null) {
-      (this.contentEl.ownerDocument.defaultView ?? activeWindow).clearTimeout(this.workbenchActionCleanupTimer);
-      this.workbenchActionCleanupTimer = null;
-    }
+    this.workbenchActionsObserver?.disconnect();
+    this.workbenchActionsObserver = null;
+    this.documentMoreMenu?.hide();
+    this.documentMoreMenu = null;
+    this.workbenchTopModeButton?.remove();
+    this.workbenchTopModeButton = null;
     this.workbenchTopMoreButton?.remove();
     this.workbenchTopMoreButton = null;
-    this.workbenchActionSyncPasses = 0;
     for (const action of this.hiddenNativeWorkbenchActions) action.removeClass("cancip-workbench-hidden-native-action");
     this.hiddenNativeWorkbenchActions = [];
   }
@@ -32545,12 +32550,33 @@ class CancipDocumentWorkbenchView extends FileView {
       nativeMore.addClass("cancip-workbench-hidden-native-action");
       if (!this.hiddenNativeWorkbenchActions.includes(nativeMore)) this.hiddenNativeWorkbenchActions.push(nativeMore);
     }
-    const duplicateWands = Array.from(actions.querySelectorAll<HTMLElement>(".notedraw-header-button, .notedraw-webview-button"));
-    duplicateWands.slice(1).forEach((element) => element.addClass("cancip-workbench-hidden-native-action"));
-    for (const element of duplicateWands.slice(1)) {
-      if (!this.hiddenNativeWorkbenchActions.includes(element)) this.hiddenNativeWorkbenchActions.push(element);
+    // NoteDraw's generic header wand is round and does not own Cancip's
+    // registered workbench surface. Remove it; keep the square surface button.
+    actions.querySelectorAll<HTMLElement>(".notedraw-header-button").forEach((element) => element.remove());
+    actions.querySelectorAll<HTMLElement>(".notedraw-webview-button:not(.notedraw-header-button)").forEach((element) => {
+      element.removeClass("cancip-workbench-hidden-native-action");
+    });
+    if (!this.workbenchTopModeButton?.isConnected) {
+      const button = actions.createEl("button", {
+        cls: "clickable-icon view-action obcc-workbench-top-mode",
+        attr: { type: "button" }
+      });
+      button.addEventListener("click", () => {
+        void this.switchDocumentMode(this.rawMarkdownMode() ? "preview" : "markdown");
+      });
+      this.workbenchTopModeButton = button;
     }
-    if (!this.workbenchTopMoreButton) {
+    const sourceMode = this.rawMarkdownMode();
+    const modeLabel = sourceMode ? this.plugin.t("documentPreview") : this.plugin.t("documentSourceMarkdown");
+    this.workbenchTopModeButton.setAttr("aria-label", modeLabel);
+    this.workbenchTopModeButton.setAttr("title", modeLabel);
+    this.workbenchTopModeButton.toggleClass("is-active", sourceMode);
+    const modeIcon = sourceMode ? "eye" : "file-code-2";
+    if (this.workbenchTopModeButton.dataset.cancipIcon !== modeIcon) {
+      this.workbenchTopModeButton.dataset.cancipIcon = modeIcon;
+      setIcon(this.workbenchTopModeButton, modeIcon);
+    }
+    if (!this.workbenchTopMoreButton?.isConnected) {
       const button = actions.createEl("button", {
         cls: "clickable-icon view-action obcc-workbench-top-more",
         attr: { type: "button", "aria-label": this.plugin.t("moreMenu"), title: this.plugin.t("moreMenu") }
@@ -32559,13 +32585,9 @@ class CancipDocumentWorkbenchView extends FileView {
       button.addEventListener("click", () => this.openDocumentMoreMenu(button));
       this.workbenchTopMoreButton = button;
     }
-    if (this.workbenchActionCleanupTimer === null && this.workbenchActionSyncPasses < 3) {
-      this.workbenchActionSyncPasses += 1;
-      const hostWindow = this.contentEl.ownerDocument.defaultView ?? activeWindow;
-      this.workbenchActionCleanupTimer = hostWindow.setTimeout(() => {
-        this.workbenchActionCleanupTimer = null;
-        this.syncWorkbenchTopActions();
-      }, 120);
+    if (!this.workbenchActionsObserver) {
+      this.workbenchActionsObserver = new MutationObserver(() => this.syncWorkbenchTopActions());
+      this.workbenchActionsObserver.observe(actions, { childList: true, subtree: true });
     }
   }
 
@@ -34448,6 +34470,9 @@ class CancipDocumentWorkbenchView extends FileView {
     delete this.contentEl.dataset.url;
     this.contentEl.dataset.noteDrawSourcePath = snapshot.file.path;
     const stage = this.createDocumentWorkbenchStage(parent, snapshot);
+    // Register the real workbench surface before conversion/rendering so its
+    // square NoteDraw button appears immediately instead of after a long preview.
+    this.registerNoteDrawWorkbenchSurface(stage);
     const content = this.createDocumentWorkbenchContent(stage);
     if (this.dirty) {
       await MarkdownRenderer.render(this.app, this.currentMarkdown(), content, snapshot.file.path, this);
@@ -35673,7 +35698,23 @@ class CancipDocumentWorkbenchView extends FileView {
   private openDocumentMoreMenu(button: HTMLButtonElement): void {
     const snapshot = this.snapshot;
     if (!snapshot) return;
+    if (this.documentMoreMenu) {
+      const openMenu = this.documentMoreMenu;
+      this.documentMoreMenu = null;
+      openMenu.hide();
+      return;
+    }
+    // Obsidian can dismiss a menu on pointerdown before this click handler
+    // runs. Treat that same click as the requested close, not a reopen.
+    if (Date.now() - this.documentMoreMenuClosedAt < 240) return;
     const menu = new Menu();
+    this.documentMoreMenu = menu;
+    button.addClass("is-active");
+    menu.onHide(() => {
+      if (this.documentMoreMenu === menu) this.documentMoreMenu = null;
+      this.documentMoreMenuClosedAt = Date.now();
+      button.removeClass("is-active");
+    });
     menu.addItem((item) => {
       item
         .setTitle(this.plugin.t("documentSendToCancip"))
@@ -35745,19 +35786,6 @@ class CancipDocumentWorkbenchView extends FileView {
         .setIcon("zoom-in")
         .setDisabled(this.documentZoom >= DOCUMENT_WORKBENCH_ZOOM_MAX)
         .onClick(() => this.adjustDocumentZoom(1));
-    });
-    menu.addSeparator();
-    const sourceMode = this.rawMarkdownMode();
-    const markdownReadingMode = this.mode === "markdown-reading";
-    menu.addItem((item) => {
-      item
-        .setTitle(markdownReadingMode
-          ? this.plugin.t("documentBackToSourceMarkdown")
-          : sourceMode
-            ? this.plugin.t("documentMarkdownReading")
-            : this.plugin.t("documentSourceMarkdown"))
-        .setIcon(markdownReadingMode ? "file-code-2" : sourceMode ? "book-open" : "file-code-2")
-        .onClick(() => void this.switchDocumentMode(markdownReadingMode ? "markdown" : sourceMode ? "markdown-reading" : "markdown"));
     });
     const hostWindow = button.ownerDocument.defaultView ?? activeWindow;
     const rect = button.getBoundingClientRect();
