@@ -43936,7 +43936,9 @@ class CancipView extends ItemView {
       automationTaskId: typeof item.automationTaskId === "string" ? item.automationTaskId : undefined,
       automationTitle: typeof item.automationTitle === "string" ? item.automationTitle : undefined,
       processBrief: normalizeProcessStepBrief(item.processBrief),
-      processAuditSections: normalizeProcessAuditSections(item.processAuditSections)
+      processAuditSections: normalizeProcessAuditSections(item.processAuditSections),
+      modelUsage: normalizeTokenUsage(item.modelUsage),
+      modelTiming: normalizeModelTiming(item.modelTiming)
     };
   }
 
@@ -49388,6 +49390,8 @@ class CancipView extends ItemView {
         automationTitle: message.automationTitle,
         systemPrompt: message.systemPrompt ? redactSensitiveText(message.systemPrompt) : undefined,
         contextText: message.contextText ? redactSensitiveText(message.contextText) : undefined,
+        modelUsage: message.modelUsage ? { ...message.modelUsage } : undefined,
+        modelTiming: message.modelTiming ? { ...message.modelTiming } : undefined,
         processAuditSections: message.processAuditSections?.map((section) => ({ ...section })),
         toolRuns: (message.toolRuns ?? []).map((run) => ({
           ...run,
@@ -50773,8 +50777,7 @@ class CancipView extends ItemView {
   }
 
   private formatInitialContextAuditDetail(taskGoal: string): string {
-    const chinese = isChineseLanguage(this.plugin.language());
-    const readable = `${chinese ? "准备" : "Preparing"}：${this.contextPreparationReason(taskGoal)}`;
+    const readable = this.contextPreparationReason(taskGoal);
     return this.formatAuditSections([{ title: "Readable progress", content: readable }]);
   }
 
@@ -54788,11 +54791,13 @@ class CancipView extends ItemView {
   }
 
   private contextPreparationHeadline(taskGoal: string): string {
-    return taskGoal.trim() ? `筛选与“${trimContext(taskGoal.replace(/\s+/g, " "), 58)}”直接相关的上下文` : this.t("preparingContext");
+    void taskGoal;
+    return isChineseLanguage(this.plugin.language()) ? "注入上下文" : "Inject context";
   }
 
   private contextPreparationReason(taskGoal: string): string {
-    return `正在准备与“${trimContext(taskGoal.replace(/\s+/g, " "), 76)}”直接相关的最小上下文；是否需要计划、计划内容和下一动作由模型决定。`;
+    void taskGoal;
+    return isChineseLanguage(this.plugin.language()) ? "注入与本轮相关的上下文" : "Inject context relevant to this turn";
   }
 
   private removeProgrammaticPlanTemplateTodos(): void {
@@ -84016,6 +84021,8 @@ function isMeaningfulProcessRecord(message: ChatMessage, display: MessageDisplay
   if (message.toolRuns?.length) return true;
   if (display.hiddenToolBlocks.length > 0) return true;
   if (isToolFeedbackMessage(message.content)) return true;
+  if (message.modelUsage || message.modelTiming) return true;
+  if (message.processBrief && [message.processBrief.action, message.processBrief.result, message.processBrief.next].some((value) => Boolean(value?.trim()))) return true;
   const visible = display.visibleContent.replace(/\s+/g, " ").trim();
   if (isProgressMessage(message.content)) return Boolean(visible);
   if (!visible) return false;
@@ -86584,6 +86591,36 @@ function cloneToolRun(run: ToolRun): ToolRun {
     action: cloneJsonValue(run.action) as CancipAction,
     lineDeltas: run.lineDeltas?.map((item) => ({ ...item })),
     evidencePaths: run.evidencePaths ? [...run.evidencePaths] : undefined
+  };
+}
+
+function normalizeTokenUsage(raw: unknown): TokenUsage | undefined {
+  if (!isRecord(raw)) return undefined;
+  const inputTokens = tokenNumber(raw.inputTokens);
+  const outputTokens = tokenNumber(raw.outputTokens);
+  const totalTokens = tokenNumber(raw.totalTokens);
+  if (inputTokens === undefined && outputTokens === undefined && totalTokens === undefined) return undefined;
+  return {
+    inputTokens: inputTokens ?? 0,
+    outputTokens: outputTokens ?? 0,
+    totalTokens: totalTokens ?? (inputTokens ?? 0) + (outputTokens ?? 0),
+    cacheReadTokens: tokenNumber(raw.cacheReadTokens) ?? 0,
+    cacheWriteTokens: tokenNumber(raw.cacheWriteTokens) ?? 0,
+    reasoningTokens: tokenNumber(raw.reasoningTokens) ?? 0,
+    estimated: raw.estimated === true
+  };
+}
+
+function normalizeModelTiming(raw: unknown): ModelTiming | undefined {
+  if (!isRecord(raw)) return undefined;
+  const startedAt = tokenNumber(raw.startedAt);
+  if (startedAt === undefined || startedAt <= 0) return undefined;
+  const firstTokenAt = tokenNumber(raw.firstTokenAt);
+  const completedAt = tokenNumber(raw.completedAt);
+  return {
+    startedAt,
+    firstTokenAt: firstTokenAt && firstTokenAt >= startedAt ? firstTokenAt : undefined,
+    completedAt: completedAt && completedAt >= startedAt ? completedAt : undefined
   };
 }
 
