@@ -65398,7 +65398,11 @@ class CancipView extends ItemView {
       return;
     }
     if (this.messageRenderFrame !== null || this.messageRenderDelayTimer !== null) return;
-    const minDelay = this.activeRequest ? 160 : 80;
+    // Keep live process rows responsive without rebuilding the transcript for
+    // every token.  The live-step DOM path handles most ticks locally; this
+    // short coalescing window is only for structural mutations (new rows,
+    // tool cards, or a completed step).
+    const minDelay = this.activeRequest ? 96 : 80;
     const delay = Math.max(0, minDelay - (Date.now() - this.messageRenderLastAt));
     const render = () => {
       this.messageRenderFrame = null;
@@ -65634,8 +65638,11 @@ class CancipView extends ItemView {
   }
 
   private shouldDeferMessageRender(): boolean {
-    const processRecordOpen = Boolean(this.messagesEl?.querySelector("details.obcc-process-record-details[open]"));
-    return this.userInteractingWithMessages && (!this.activeRequest || processRecordOpen);
+    // A running process record must continue receiving structural updates even
+    // while the user is inspecting it.  Deferring an active render here made
+    // newly-created steps appear to vanish until the interaction idle timer
+    // fired.  Only completed transcripts are deferred while the user scrolls.
+    return this.userInteractingWithMessages && !this.activeRequest;
   }
 
   private markMessageScrollInteraction(): void {
@@ -66214,7 +66221,10 @@ class CancipView extends ItemView {
   }
 
   private coalesceLowSignalModelSteps(steps: ProcessRecordStep[]): ProcessRecordStep[] {
-    if (steps.length < 2) return steps.filter((step) => !this.isLowSignalModelProcessStep(step));
+    // Never drop an isolated live/telemetry step. A generation step often
+    // starts with only timing or token data and receives useful text later;
+    // filtering it here made the row disappear during streaming.
+    if (steps.length < 2) return steps;
     const output: ProcessRecordStep[] = [];
     for (let index = 0; index < steps.length; index += 1) {
       const current = steps[index];
@@ -66240,12 +66250,15 @@ class CancipView extends ItemView {
           rendered: { ...merged.rendered, message: { ...merged.rendered.message, content: next.rendered.message.content } },
           headline: next.headline,
           brief: next.brief,
-          readableDetail: next.readableDetail,
-          detail: next.detail,
-          blocks: next.blocks,
+          readableDetail: uniqueStrings([merged.readableDetail, next.readableDetail].filter(Boolean)).join("\n\n"),
+          detail: uniqueStrings([merged.detail, next.detail].filter(Boolean)).join("\n\n"),
+          blocks: merged.blocks,
           auditSections: merged.auditSections,
           hasDetail: true
         });
+        // The actionable neighbour is represented by the merged row already
+        // pushed above. Advance to it here so the for-loop's increment resumes
+        // with the following independent step instead of rendering a duplicate.
         index = nextIndex;
         continue;
       }
@@ -66262,12 +66275,20 @@ class CancipView extends ItemView {
           rendered: { ...merged.rendered, message: { ...merged.rendered.message, content: previous.rendered.message.content } },
           headline: previous.headline,
           brief: previous.brief,
-          readableDetail: previous.readableDetail,
-          detail: previous.detail,
-          blocks: previous.blocks,
+          readableDetail: uniqueStrings([merged.readableDetail, previous.readableDetail].filter(Boolean)).join("\n\n"),
+          detail: uniqueStrings([merged.detail, previous.detail].filter(Boolean)).join("\n\n"),
+          blocks: merged.blocks,
           hasDetail: true
         };
+        // All remaining trailing low-signal rows were folded into the
+        // previous actionable row above; do not visit them a second time.
+        index = steps.length - 1;
+        continue;
       }
+      // A low-signal row without an actionable neighbour is still a real
+      // lifecycle event. Keep it visible so its timer/Token state can update
+      // in place instead of vanishing from the process record.
+      output.push(current);
     }
     return output;
   }
@@ -66353,7 +66374,16 @@ class CancipView extends ItemView {
           elapsedMs: this.processRecordStepElapsedMs(normalizedRendered.message)
         };
       })
-      .filter((step) => this.processStepTitleFromBrief(step.brief, step.headline) && (step.hasDetail || step.headline.length > 0));
+      .filter((step) => {
+        const title = this.processStepTitleFromBrief(step.brief, step.headline);
+        const message = step.rendered.message;
+        const hasLiveTelemetry = Boolean(message.modelUsage || message.modelTiming || this.progressStepTimers.has(message.id));
+        // A live row may not have a readable title yet. Keep it as a stable
+        // shell so the later stream update fills the same row instead of
+        // removing and recreating it.
+        return Boolean(title) && (step.hasDetail || step.headline.length > 0 || hasLiveTelemetry)
+          || hasLiveTelemetry;
+      });
     const steps = this.coalesceLowSignalModelSteps(this.dedupeProcessRecordSteps(rawSteps));
     if (!steps.length) return;
     const processFoldKey = this.processRecordFoldKey(items);
@@ -66414,7 +66444,10 @@ class CancipView extends ItemView {
         ? (isChineseLanguage(this.plugin.language()) ? "思考" : "Thinking")
         : stepInfo.kind === "context"
           ? (isChineseLanguage(this.plugin.language()) ? "准备上下文" : "Prepare context")
-          : conciseReceivedTitle;
+          : conciseReceivedTitle
+            || (stepInfo.rendered.message.modelUsage || stepInfo.rendered.message.modelTiming
+              ? (isChineseLanguage(this.plugin.language()) ? "模型处理中" : "Model processing")
+              : (isChineseLanguage(this.plugin.language()) ? "过程步骤" : "Process step"));
       stepTitle.createSpan({
         cls: "obcc-process-step-title-text",
         text: stepInfo.count > 1 ? `${processTitle} x${stepInfo.count}` : processTitle
@@ -84370,11 +84403,11 @@ function looksLikeUserFacingFinalContent(text: string): boolean {
 }
 
 function isMeaningfulProcessRecord(message: ChatMessage, display: MessageDisplay): boolean {
-  if (message.toolRuns?.length) return true;
+  if (message.toolRuns?.length || message.changedFileRuns?.length) return true;
   if (display.hiddenToolBlocks.length > 0) return true;
   if (isToolFeedbackMessage(message.content)) return true;
   if (message.modelUsage || message.modelTiming) return true;
-  if (message.processBrief && [message.processBrief.action, message.processBrief.result, message.processBrief.next].some((value) => Boolean(value?.trim()))) return true;
+  if (message.processBrief && [message.processBrief.reasoning, message.processBrief.action, message.processBrief.result, message.processBrief.next].some((value) => Boolean(value?.trim()))) return true;
   const visible = display.visibleContent.replace(/\s+/g, " ").trim();
   if (isProgressMessage(message.content)) return Boolean(visible);
   if (!visible) return false;
