@@ -13231,7 +13231,7 @@ export default class CancipPlugin extends Plugin {
   private async refreshLocalModelCatalogImpl(onProfileDiscovered?: () => void): Promise<string[]> {
     const discovered: Array<{ model: string; profileId: string }> = [];
     let settingsChanged = false;
-    const applyProfileModels = async (profile: ApiProfile, profileModels: string[]): Promise<void> => {
+    const applyProfileModels = (profile: ApiProfile, profileModels: string[]): void => {
       if (!profileModels.length) return;
       discovered.push(...profileModels.map((model) => ({ model, profileId: profile.id })));
       const nextOptions = normalizeModelOptions([...this.settings.modelOptions, ...profileModels], this.settings.model);
@@ -13243,7 +13243,6 @@ export default class CancipPlugin extends Plugin {
       this.settings.modelOptions = nextOptions;
       this.settings.modelSourceByModel = nextSources;
       settingsChanged = true;
-      await this.saveSettings();
       if (onProfileDiscovered) onProfileDiscovered();
     };
     // Multiple saved profiles can point to the same provider (for example a
@@ -13284,8 +13283,12 @@ export default class CancipPlugin extends Plugin {
           if (model) profileModels.push(model);
         }
       }
-      await applyProfileModels(profile, uniqueStrings(profileModels));
+      applyProfileModels(profile, uniqueStrings(profileModels));
     }
+    // Persist the complete catalog once. Writing settings after every source
+    // made a large provider list rebuild the settings/config files repeatedly
+    // while the model picker was open, blocking Obsidian's main thread.
+    if (settingsChanged) await this.saveSettings();
     if (!discovered.length) return [];
     // Keep the provider catalog complete. OpenMinis treats the remote catalog
     // as authoritative for discovery while preserving manually entered IDs;
@@ -37546,6 +37549,8 @@ class CancipView extends ItemView {
   private modelMenuSignature = "";
   private modelMenuEllipsisTimer: number | null = null;
   private modelMenuRefreshFrame: number | null = null;
+  private modelMenuExpansionFrame: number | null = null;
+  private modelMenuExpansionToken = 0;
   private modelMenuSearchQuery = "";
   private modelMenuExpandedGroups = new Set<string>();
   private modelMenuCatalogRefreshAt = 0;
@@ -40742,6 +40747,12 @@ class CancipView extends ItemView {
       viewWindow.cancelAnimationFrame(this.modelMenuRefreshFrame);
       this.modelMenuRefreshFrame = null;
     }
+    if (this.modelMenuExpansionFrame !== null) {
+      const viewWindow = this.containerEl.ownerDocument.defaultView ?? window;
+      viewWindow.cancelAnimationFrame(this.modelMenuExpansionFrame);
+      this.modelMenuExpansionFrame = null;
+    }
+    this.modelMenuExpansionToken += 1;
     this.modelMenuSignature = "";
   }
 
@@ -40763,6 +40774,30 @@ class CancipView extends ItemView {
         this.placeCommandMenu();
       }
     });
+  }
+
+  private revealModelGroupRows(rows: HTMLElement[], expanded: boolean, limit: number): void {
+    const viewWindow = this.containerEl.ownerDocument.defaultView ?? window;
+    const token = ++this.modelMenuExpansionToken;
+    if (this.modelMenuExpansionFrame !== null) {
+      viewWindow.cancelAnimationFrame(this.modelMenuExpansionFrame);
+      this.modelMenuExpansionFrame = null;
+    }
+    let index = 0;
+    const applyBatch = () => {
+      if (token !== this.modelMenuExpansionToken) return;
+      const end = Math.min(rows.length, index + 48);
+      for (; index < end; index += 1) {
+        rows[index].toggleClass("is-model-group-collapsed", !expanded && index >= limit);
+      }
+      if (index < rows.length && this.activeMenu === "model" && this.menuEl && !this.menuEl.hasClass("is-hidden")) {
+        this.modelMenuExpansionFrame = viewWindow.requestAnimationFrame(() => {
+          this.modelMenuExpansionFrame = null;
+          applyBatch();
+        });
+      }
+    };
+    applyBatch();
   }
 
   private openModelMenu(): void {
@@ -40914,10 +40949,11 @@ class CancipView extends ItemView {
       if (group !== lastModelGroup) {
         const groupProfileId = entryGroups.get(group)?.[0]?.profile.id ?? "";
         const isSourceGroup = group !== defaultGroupName && Boolean(groupProfileId);
-        const groupTitle = modelSection.createEl("button", { cls: `obcc-model-menu-group-title ${isSourceGroup ? "is-source-group" : "is-default-group"}`, attr: { type: "button", "aria-expanded": "false" } });
+        const initiallyExpanded = groupExpanded.has(group);
+        const groupTitle = modelSection.createEl("button", { cls: `obcc-model-menu-group-title ${isSourceGroup ? "is-source-group" : "is-default-group"}`, attr: { type: "button", "aria-expanded": String(initiallyExpanded) } });
         setIcon(groupTitle.createSpan({ cls: "obcc-model-menu-group-icon" }), isSourceGroup ? "server" : "star");
         const collapseIcon = groupTitle.createSpan({ cls: "obcc-model-menu-collapse-icon" });
-        setIcon(collapseIcon, "chevron-right");
+        setIcon(collapseIcon, initiallyExpanded ? "chevron-down" : "chevron-right");
         groupTitle.createSpan({ text: group });
         const groupCount = entryGroups.get(group)?.length ?? 0;
         const groupLimit = group === defaultGroupName ? 3 : 1;
@@ -40965,7 +41001,7 @@ class CancipView extends ItemView {
           groupTitle.setAttribute("aria-expanded", String(expanded));
           setIcon(collapseIcon, expanded ? "chevron-down" : "chevron-right");
           const limit = Number(groupTitle.dataset.limit || "1");
-          for (const item of groupRows.get(group) ?? []) item.toggleClass("is-model-group-collapsed", !expanded && (groupRows.get(group)?.indexOf(item) ?? 0) >= limit);
+          this.revealModelGroupRows(groupRows.get(group) ?? [], expanded, limit);
         });
         lastModelGroup = group;
       }
@@ -40976,7 +41012,7 @@ class CancipView extends ItemView {
       rowsForGroup.push(row);
       groupRows.set(group, rowsForGroup);
       const groupLimit = group === defaultGroupName ? 3 : 1;
-      if (rowsForGroup.length > groupLimit) row.addClass("is-model-group-collapsed");
+      if (rowsForGroup.length > groupLimit && !groupExpanded.has(group)) row.addClass("is-model-group-collapsed");
       if (this.modelMenuSearchQuery && !row.dataset.search.includes(this.modelMenuSearchQuery.toLocaleLowerCase())) {
         row.addClass("is-model-search-hidden");
       }
