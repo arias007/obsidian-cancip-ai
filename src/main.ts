@@ -13207,7 +13207,6 @@ export default class CancipPlugin extends Plugin {
   }
 
   async refreshLocalModelCatalog(): Promise<string[]> {
-    if (Platform.isMobileApp) return [];
     const discovered: Array<{ model: string; profileId: string }> = [];
     for (const profile of this.settings.apiProfiles) {
       const baseUrl = profile.apiUrl.trim().replace(/\/+$/, "").replace(/\/v1$/i, "");
@@ -40650,7 +40649,7 @@ class CancipView extends ItemView {
       ...this.plugin.agentModelOptions().map((item) => item.model),
       ...normalizeModelOptions(this.plugin.settings.modelOptions, this.plugin.settings.model)
     ]);
-    if (!Platform.isMobileApp && Date.now() - this.modelMenuCatalogRefreshAt > 30000) {
+    if (Date.now() - this.modelMenuCatalogRefreshAt > 30000) {
       this.modelMenuCatalogRefreshAt = Date.now();
       // Refreshing the catalog is asynchronous.  Do not reopen a menu that
       // the user has already dismissed (or that belongs to a view which has
