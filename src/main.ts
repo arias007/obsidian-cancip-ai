@@ -478,6 +478,12 @@ type ModelProbeResult = {
   error?: string;
 };
 
+function modelProbeSummary(result: ModelProbeResult, language = "zh"): string {
+  const okLabel = language.toLowerCase().startsWith("zh") ? "模型正常" : "Model OK";
+  const reply = result.responseText ? ` · ${trimContext(result.responseText, 120)}` : "";
+  return `${okLabel} · ${result.latencyMs} ms${reply}`;
+}
+
 type ModelMenuEntry = {
   model: string;
   profile: ApiProfile;
@@ -41110,7 +41116,7 @@ class CancipView extends ItemView {
       text.createDiv({ cls: "obcc-command-detail", text: this.modelSourceName(rowProfile) });
       const testResultEl = text.createDiv({ cls: "obcc-model-test-result" });
       const previousProbe = this.plugin.getModelTestResult(model, rowProfile.id);
-      if (previousProbe?.responseText) testResultEl.setText(`↳ ${trimContext(previousProbe.responseText, 120)}`);
+      if (previousProbe?.ok) testResultEl.setText(modelProbeSummary(previousProbe, this.plugin.language()));
       if (isActiveEntry) setIcon(body.createSpan({ cls: "obcc-command-check" }), "check");
       body.addEventListener("click", (event) => {
         if (Date.now() < suppressModelSelectUntil) {
@@ -41142,10 +41148,10 @@ class CancipView extends ItemView {
         testDirect.disabled = true;
         void this.plugin.testModel(model, rowProfile.id).then((result) => {
           testResultEl.setText(result.ok
-            ? `↳ ${result.responseText ? trimContext(result.responseText, 120) : this.t("modelTestNoReply")}`
+            ? modelProbeSummary(result, this.plugin.language())
             : `↳ ${result.error || this.t("modelTestFailed", { reason: "unknown error" })}`);
           new Notice(result.ok
-            ? this.t("modelTestPassed", { latency: result.latencyMs })
+            ? modelProbeSummary(result, this.plugin.language())
             : this.t("modelTestFailed", { reason: result.error || "unknown error" }));
         }).finally(() => { testDirect.disabled = false; });
       });
@@ -72095,8 +72101,8 @@ class CancipSettingTab extends PluginSettingTab {
       const row = new Setting(parent)
         .setName(model)
         .setDesc(probe
-          ? (probe.ok
-            ? this.plugin.t("modelTestPassed", { latency: probe.latencyMs })
+            ? (probe.ok
+              ? modelProbeSummary(probe, this.plugin.language())
             : this.plugin.t("modelTestFailed", { reason: probe.error || "unknown error" }))
           : (model === this.plugin.settings.model ? this.plugin.t("settingsDefaultModel") : ""));
       row.settingEl.addClass("obcc-model-list-entry");
@@ -72118,7 +72124,7 @@ class CancipSettingTab extends PluginSettingTab {
               try {
                 const result = await this.plugin.testModel(model, sourceId);
                 new Notice(result.ok
-                  ? this.plugin.t("modelTestPassed", { latency: result.latencyMs })
+                  ? modelProbeSummary(result, this.plugin.language())
                   : this.plugin.t("modelTestFailed", { reason: result.error || "unknown error" }));
                 this.renderSettings();
               } finally {
