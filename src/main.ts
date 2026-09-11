@@ -40748,6 +40748,7 @@ class CancipView extends ItemView {
     let lastModelGroup = "";
     const groupRows = new Map<string, HTMLElement[]>();
     const groupExpanded = new Set<string>();
+    let sourceDrag: { profileId: string; targetProfileId: string; after: boolean } | null = null;
     const defaultModelSet = new Set<string>(MODEL_PRESETS.slice(0, 8));
     const defaultGroupName = this.t("defaultModelsGroup");
     const entryGroups = new Map<string, ModelMenuEntry[]>();
@@ -40762,9 +40763,21 @@ class CancipView extends ItemView {
     const orderedEntries: ModelMenuEntry[] = [];
     const defaults = entryGroups.get(defaultGroupName) ?? [];
     orderedEntries.push(...defaults);
-    for (const [group, grouped] of entryGroups) {
-      if (group !== defaultGroupName) orderedEntries.push(...grouped);
-    }
+    const profileOrder = new Map(this.plugin.settings.apiProfiles.map((profile, index) => [profile.id, index]));
+    const sourceGroups = [...entryGroups.entries()]
+      .filter(([group]) => group !== defaultGroupName)
+      .sort(([, left], [, right]) => {
+        const leftOrder = profileOrder.get(left[0]?.profile.id ?? "") ?? Number.MAX_SAFE_INTEGER;
+        const rightOrder = profileOrder.get(right[0]?.profile.id ?? "") ?? Number.MAX_SAFE_INTEGER;
+        return leftOrder - rightOrder;
+      });
+    for (const [, grouped] of sourceGroups) orderedEntries.push(...grouped);
+    const clearSourceDrag = () => {
+      modelSection.querySelectorAll<HTMLElement>(".obcc-model-menu-group-title").forEach((title) => {
+        title.removeClass("is-drag-over", "is-drop-after", "is-dragging");
+      });
+      sourceDrag = null;
+    };
     for (const entry of orderedEntries) {
       const { model, profile: rowProfile } = entry;
       const isActiveEntry = model === this.plugin.settings.model;
@@ -40772,19 +40785,58 @@ class CancipView extends ItemView {
         ? defaultGroupName
         : this.modelSourceName(rowProfile);
       if (group !== lastModelGroup) {
-        const groupTitle = modelSection.createEl("button", { cls: "obcc-model-menu-group-title", attr: { type: "button", "aria-expanded": "false" } });
+        const groupProfileId = entryGroups.get(group)?.[0]?.profile.id ?? "";
+        const isSourceGroup = group !== defaultGroupName && Boolean(groupProfileId);
+        const groupTitle = modelSection.createEl("button", { cls: `obcc-model-menu-group-title ${isSourceGroup ? "is-source-group" : "is-default-group"}`, attr: { type: "button", "aria-expanded": "false" } });
+        setIcon(groupTitle.createSpan({ cls: "obcc-model-menu-group-icon" }), isSourceGroup ? "server" : "star");
+        const collapseIcon = groupTitle.createSpan({ cls: "obcc-model-menu-collapse-icon" });
+        setIcon(collapseIcon, "chevron-right");
         groupTitle.createSpan({ text: group });
         const groupCount = entryGroups.get(group)?.length ?? 0;
         const groupLimit = group === defaultGroupName ? 3 : 1;
-        groupTitle.createSpan({ cls: "obcc-model-menu-group-count", text: groupCount > groupLimit ? ` · ${groupLimit}/${groupCount}` : ` · ${groupCount}` });
+        // Show only the total; the collapsed preview size is an interaction
+        // detail and should not look like a second, conflicting count.
+        groupTitle.createSpan({ cls: "obcc-model-menu-group-count", text: ` · ${groupCount}` });
         groupTitle.dataset.group = group;
         groupTitle.dataset.limit = String(groupLimit);
+        groupTitle.dataset.profileId = groupProfileId;
+        groupTitle.draggable = isSourceGroup;
+        if (isSourceGroup) {
+          groupTitle.addEventListener("dragstart", (event) => {
+            sourceDrag = { profileId: groupProfileId, targetProfileId: "", after: false };
+            if (event.dataTransfer) {
+              event.dataTransfer.effectAllowed = "move";
+              event.dataTransfer.setData("text/plain", `model-source:${groupProfileId}`);
+            }
+            groupTitle.addClass("is-dragging");
+          });
+          groupTitle.addEventListener("dragend", clearSourceDrag);
+          groupTitle.addEventListener("dragover", (event) => {
+            if (!sourceDrag) return;
+            event.preventDefault();
+            const rect = groupTitle.getBoundingClientRect();
+            sourceDrag.targetProfileId = groupProfileId;
+            sourceDrag.after = event.clientY > rect.top + rect.height / 2;
+            modelSection.querySelectorAll<HTMLElement>(".obcc-model-menu-group-title").forEach((title) => title.removeClass("is-drag-over", "is-drop-after"));
+            groupTitle.addClass("is-drag-over");
+            groupTitle.toggleClass("is-drop-after", sourceDrag.after);
+          });
+          groupTitle.addEventListener("drop", (event) => {
+            event.preventDefault();
+            const dragged = event.dataTransfer?.getData("text/plain") ?? "";
+            const profileId = dragged.startsWith("model-source:") ? dragged.slice("model-source:".length) : sourceDrag?.profileId ?? "";
+            const after = sourceDrag?.after ?? false;
+            clearSourceDrag();
+            if (profileId && profileId !== groupProfileId) void this.reorderModelSourceFromMenu(profileId, groupProfileId, after);
+          });
+        }
         groupTitle.addEventListener("click", (event) => {
           event.preventDefault();
           event.stopPropagation();
           const expanded = groupExpanded.has(group);
           if (expanded) groupExpanded.delete(group); else groupExpanded.add(group);
           groupTitle.setAttribute("aria-expanded", String(!expanded));
+          setIcon(collapseIcon, expanded ? "chevron-right" : "chevron-down");
           const limit = Number(groupTitle.dataset.limit || "1");
           for (const item of groupRows.get(group) ?? []) item.toggleClass("is-model-group-collapsed", !expanded && (groupRows.get(group)?.indexOf(item) ?? 0) >= limit);
         });
@@ -41170,6 +41222,20 @@ class CancipView extends ItemView {
         }, 220);
       });
     });
+  }
+
+  private async reorderModelSourceFromMenu(sourceProfileId: string, targetProfileId: string, after = false): Promise<void> {
+    const profiles = [...this.plugin.settings.apiProfiles];
+    const from = profiles.findIndex((profile) => profile.id === sourceProfileId);
+    const to = profiles.findIndex((profile) => profile.id === targetProfileId);
+    if (from < 0 || to < 0 || from === to) return;
+    const [profile] = profiles.splice(from, 1);
+    const target = Math.max(0, Math.min(profiles.length, from < to ? (after ? to : to - 1) : (after ? to + 1 : to)));
+    profiles.splice(target, 0, profile);
+    this.plugin.settings.apiProfiles = profiles;
+    await this.plugin.saveSettings();
+    this.resetModelMenuCache();
+    this.openModelMenu();
   }
 
   private toggleCommandMenu(kind: ComposerMenuKind, title: string, items: ComposerMenuItem[]): void {
@@ -81699,7 +81765,11 @@ function normalizeModelOptions(raw: unknown, activeModel?: string): string[] {
   const unique = uniqueStrings(values);
   const active = activeModel?.trim();
   if (active && !unique.includes(active)) unique.push(active);
-  return unique.slice(0, 80);
+  // Provider catalogs (especially OpenRouter) can contain hundreds of
+  // models.  Keep the complete deduplicated list; the menu itself handles
+  // grouping, collapsing and search so discovery never silently truncates a
+  // provider's catalog.
+  return unique;
 }
 
 function defaultModelSourceByModel(models: readonly string[]): Record<string, string> {

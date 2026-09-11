@@ -3636,10 +3636,71 @@ details.obcc-process-step {
 }
 
 .obcc-model-menu-group-title {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
   margin-top: 5px;
+  padding: 4px 5px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
   color: var(--text-muted);
   font-size: 11px;
   font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+
+.obcc-model-menu-group-title:hover,
+.obcc-model-menu-group-title:focus-visible {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+  outline: none;
+}
+
+.obcc-model-menu-group-title.is-source-group {
+  border-left: 2px solid var(--interactive-accent);
+  padding-left: 7px;
+}
+
+.obcc-model-menu-group-title.is-default-group {
+  border-left: 2px solid var(--background-modifier-border);
+  padding-left: 7px;
+}
+
+.obcc-model-menu-group-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--text-faint);
+}
+
+.obcc-model-menu-group-icon svg {
+  width: 13px;
+  height: 13px;
+}
+
+.obcc-model-menu-collapse-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--text-faint);
+}
+
+.obcc-model-menu-collapse-icon svg {
+  width: 12px;
+  height: 12px;
+}
+
+.obcc-model-menu-group-title.is-dragging {
+  opacity: 0.6;
+}
+
+.obcc-model-menu-group-title.is-drag-over {
+  box-shadow: inset 0 0 0 1px var(--interactive-accent);
+}
+
+.obcc-model-menu-group-title.is-drop-after {
+  box-shadow: inset 0 -2px 0 var(--interactive-accent);
 }
 
 .obcc-model-menu-group-title.is-model-search-hidden,
