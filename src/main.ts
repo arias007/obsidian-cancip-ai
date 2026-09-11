@@ -45386,11 +45386,16 @@ class CancipView extends ItemView {
     const headline = this.processStepHeadline(message, display);
     const brief = this.processBriefForMessage(message, headline, "");
     const kind = step.dataset.processStepKind as ProcessStepKind | undefined;
+    const generatedTitle = this.processStepTitleFromBrief(brief, headline);
+    const conciseReceivedTitle = /^完成\s*[:：]/i.test(generatedTitle)
+      ? (this.processReasoningSummary(message, [], message.processAuditSections ?? [], display.visibleContent)
+        || (isChineseLanguage(this.plugin.language()) ? "模型回复" : "Model response"))
+      : generatedTitle;
     const title = kind === "think"
       ? (isChineseLanguage(this.plugin.language()) ? "思考" : "Thinking")
       : kind === "context"
-        ? (isChineseLanguage(this.plugin.language()) ? "上下文" : "Context")
-        : this.processStepTitleFromBrief(brief, headline)
+        ? (isChineseLanguage(this.plugin.language()) ? "准备上下文" : "Prepare context")
+        : conciseReceivedTitle
       || (isChineseLanguage(this.plugin.language()) ? "模型回复" : "Model response");
     const titleEl = step.querySelector<HTMLElement>(".obcc-process-step-title-text");
     if (titleEl && titleEl.textContent !== title) titleEl.setText(title);
@@ -66396,11 +66401,15 @@ class CancipView extends ItemView {
         setIcon(automationBadge.createSpan({ cls: "obcc-process-automation-badge-icon" }), "clock-3");
         automationBadge.createSpan({ text: trimContext(stepInfo.rendered.message.automationTitle, 28) });
       }
+      const generatedTitle = this.processStepTitleFromBrief(stepInfo.brief, stepInfo.headline);
+      const conciseReceivedTitle = /^完成\s*[:：]/i.test(generatedTitle)
+        ? (stepInfo.reasoningSummary || (isChineseLanguage(this.plugin.language()) ? "模型回复" : "Model response"))
+        : generatedTitle;
       const processTitle = stepInfo.kind === "think"
         ? (isChineseLanguage(this.plugin.language()) ? "思考" : "Thinking")
         : stepInfo.kind === "context"
-          ? (isChineseLanguage(this.plugin.language()) ? "上下文" : "Context")
-          : this.processStepTitleFromBrief(stepInfo.brief, stepInfo.headline);
+          ? (isChineseLanguage(this.plugin.language()) ? "准备上下文" : "Prepare context")
+          : conciseReceivedTitle;
       stepTitle.createSpan({
         cls: "obcc-process-step-title-text",
         text: stepInfo.count > 1 ? `${processTitle} x${stepInfo.count}` : processTitle
@@ -66461,7 +66470,7 @@ class CancipView extends ItemView {
       // the DOM initially, then materialize Markdown, audit fields, subagent
       // cards, and tool results on the first expansion of this step.
       this.renderWhenProcessStepOpen(stepBody, () => {
-        if (stepUsage) this.renderProcessStepUsage(stepBody, stepUsage, stepInfo.rendered.message.modelTiming);
+        if (stepUsage) this.renderProcessStepUsage(stepBody, stepUsage, stepInfo.rendered.message.modelTiming, stepInfo.rendered.message.id);
         if (stepInfo.kind === "think" && stepInfo.reasoningSummary) {
           this.renderProcessReasoning(stepBody, stepInfo.reasoningSummary, stepInfo.reasoningDetail);
         }
@@ -66489,8 +66498,13 @@ class CancipView extends ItemView {
     this.renderProcessRecordMeta(body, items);
   }
 
-  private renderProcessStepUsage(parent: HTMLElement, usage: TokenUsage, timing?: ModelTiming): void {
-    const section = parent.createDiv({ cls: "obcc-process-token-usage" });
+  private renderProcessStepUsage(parent: HTMLElement, usage: TokenUsage, timing?: ModelTiming, keySuffix = ""): void {
+    const details = parent.createEl("details", { cls: "obcc-process-token-usage-details" });
+    this.wireDetails(details, `process-token:${keySuffix || `${usage.inputTokens}:${usage.outputTokens}:${usage.totalTokens}`}`, false, false, true);
+    const summary = details.createEl("summary", { cls: "obcc-process-token-summary" });
+    setIcon(summary.createSpan({ cls: "obcc-process-token-usage-icon", attr: { "aria-hidden": "true" } }), "database");
+    summary.createSpan({ text: `${isChineseLanguage(this.plugin.language()) ? "Token" : "Tokens"} · ${usage.outputTokens}${usage.estimated ? "≈" : ""} tok` });
+    const section = details.createDiv({ cls: "obcc-process-token-usage" });
     const title = section.createDiv({ cls: "obcc-process-token-usage-title" });
     setIcon(title.createSpan({ cls: "obcc-process-token-usage-icon" }), "database");
     title.createSpan({ text: isChineseLanguage(this.plugin.language()) ? "Token" : "Tokens" });
