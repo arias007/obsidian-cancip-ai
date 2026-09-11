@@ -3618,7 +3618,37 @@ details.obcc-process-step {
   border: 1px solid var(--background-modifier-border);
   border-radius: 10px;
   background: var(--background-secondary);
-  contain: layout paint;
+  contain: layout;
+  position: relative;
+  transition: transform 180ms cubic-bezier(.2,.8,.2,1), box-shadow 160ms ease, opacity 160ms ease;
+}
+
+.obcc-model-menu-search {
+  flex: 1 1 120px;
+  min-width: 90px;
+  height: 26px;
+  padding: 3px 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 7px;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: 12px;
+}
+
+.obcc-model-menu-group-title {
+  margin-top: 5px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.obcc-model-menu-group-title.is-model-search-hidden,
+.obcc-model-menu-row.is-model-search-hidden {
+  display: none;
+}
+
+.obcc-model-menu-row.is-model-group-collapsed {
+  display: none;
 }
 
 .obcc-model-menu-row.is-drag-over,
@@ -3635,6 +3665,8 @@ details.obcc-process-step {
 
 .obcc-model-menu-row.is-dragging {
   opacity: 0.7;
+  transform: scale(1.015);
+  box-shadow: 0 8px 18px rgb(0 0 0 / 15%);
 }
 
 .obcc-model-menu-row.is-drop-after {
@@ -3674,8 +3706,36 @@ details.obcc-process-step {
   align-items: center;
   gap: 2px;
   justify-content: flex-end;
-  max-width: 86px;
+  max-width: 64px;
   overflow: visible;
+  position: relative;
+}
+
+.obcc-model-menu-more-popover {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-primary);
+  box-shadow: 0 8px 22px rgb(0 0 0 / 18%);
+}
+
+.obcc-model-menu-test-action {
+  color: var(--interactive-accent);
+}
+
+.obcc-model-menu-more-popover.is-hidden {
+  display: none;
+}
+
+.obcc-model-menu-more-item {
+  flex: 0 0 auto;
 }
 
 .obcc-model-menu-action {

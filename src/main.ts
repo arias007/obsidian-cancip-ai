@@ -457,6 +457,26 @@ type ApiProfile = {
   model: string;
 };
 
+type ApiProbeResult = {
+  ok: boolean;
+  profileId: string;
+  endpoint: string;
+  latencyMs: number;
+  modelCount: number;
+  checkedAt: string;
+  error?: string;
+};
+
+type ModelProbeResult = {
+  ok: boolean;
+  model: string;
+  profileId: string;
+  endpoint: string;
+  latencyMs: number;
+  checkedAt: string;
+  error?: string;
+};
+
 type ModelMenuEntry = {
   model: string;
   profile: ApiProfile;
@@ -5653,6 +5673,17 @@ const EN = {
   settingsLocalModelsRefresh: "Refresh local models",
   settingsLocalModelsFound: "Added {count} local model(s) to the model list",
   settingsLocalModelsNone: "No Ollama-compatible local models were found",
+  testApiProfile: "Test source",
+  refreshApiProfileModels: "Refresh models",
+  apiProfileTestPassed: "Source OK · {count} models · {latency} ms",
+  apiProfileTestFailed: "Source test failed: {reason}",
+  testModel: "Test model",
+  modelTestPassed: "Model OK · {latency} ms",
+  modelTestFailed: "Model test failed: {reason}",
+  modelSearch: "Search models",
+  modelSearchDesc: "Filter by model ID or source name.",
+  modelSearchPlaceholder: "Search model IDs...",
+  defaultModelsGroup: "Default models",
   settingsAgentConnected: "connected",
   settingsAgentUnavailable: "unavailable",
   settingsScore: "Cancip Score",
@@ -5668,6 +5699,7 @@ const EN = {
   scoreFeatureCount: "Scored entities",
   scoreButtonLabel: "Score {score} · used {uses} · accepted {accepts}",
   contextCompactionStats: "Compacted {source} -> {target} tokens",
+  contextCompactionMarker: "Compacted through {time} · {source} -> {target} tokens",
   settingsSkillsEnabled: "Enable Skills",
   settingsSkillsEnabledDesc: "Discovers agent-style SKILL.md / *.skill.md files and exposes them to @ mentions and cancip.skills commands.",
   settingsSkillRoots: "Skill roots",
@@ -6881,6 +6913,17 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     settingsLocalModelsRefresh: "刷新本地模型",
     settingsLocalModelsFound: "已把 {count} 个本地模型加入模型列表",
     settingsLocalModelsNone: "没有发现兼容 Ollama 的本地模型",
+    testApiProfile: "测试模型源",
+    refreshApiProfileModels: "刷新模型",
+    apiProfileTestPassed: "模型源正常 · {count} 个模型 · {latency} ms",
+    apiProfileTestFailed: "模型源测试失败：{reason}",
+    testModel: "测试模型",
+    modelTestPassed: "模型正常 · {latency} ms",
+    modelTestFailed: "模型测试失败：{reason}",
+    modelSearch: "搜索模型",
+    modelSearchDesc: "按模型 ID 或模型源名称筛选。",
+    modelSearchPlaceholder: "搜索模型 ID…",
+    defaultModelsGroup: "默认模型",
     settingsAgentConnected: "已连接",
     settingsAgentUnavailable: "不可用",
     settingsScore: "Cancip Score",
@@ -6896,6 +6939,7 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     scoreFeatureCount: "评分对象",
     scoreButtonLabel: "评分 {score} · 使用 {uses} · 接受 {accepts}",
     contextCompactionStats: "上下文已压缩 {source} -> {target} Token",
+    contextCompactionMarker: "已压缩至 {time} · {source} -> {target} Token",
     settingsSkillsEnabled: "启用 Skills",
     settingsSkillsEnabledDesc: "发现 agent-style SKILL.md / *.skill.md，并暴露给 @ 提及和 cancip.skills 命令。",
     settingsSkillRoots: "Skill 根目录",
@@ -10018,6 +10062,10 @@ export default class CancipPlugin extends Plugin {
   private agentCliInstallPromise: Promise<string> | null = null;
   private settingsSavePromise: Promise<void> | null = null;
   private settingsSaveQueuedSnapshot: Settings | null = null;
+  private apiProfileTestFlights = new Map<string, Promise<ApiProbeResult>>();
+  private apiProfileTestResults = new Map<string, ApiProbeResult>();
+  private modelTestFlights = new Map<string, Promise<ModelProbeResult>>();
+  private modelTestResults = new Map<string, ModelProbeResult>();
   private settingTab: CancipSettingTab | null = null;
   private activeUtterance: SpeechSynthesisUtterance | null = null;
   private activeTtsParts: string[] = [];
@@ -13162,24 +13210,16 @@ export default class CancipPlugin extends Plugin {
     if (Platform.isMobileApp) return [];
     const discovered: Array<{ model: string; profileId: string }> = [];
     for (const profile of this.settings.apiProfiles) {
-      if (!isLocalModelApiUrl(profile.apiUrl)) continue;
       const baseUrl = profile.apiUrl.trim().replace(/\/+$/, "").replace(/\/v1$/i, "");
       const configuredRoot = profile.apiUrl.trim().replace(/\/+$/, "");
       const modelsUrl = /\/v1$/i.test(configuredRoot) ? `${configuredRoot}/models` : `${configuredRoot}/v1/models`;
       const headers: Record<string, string> = { Accept: "application/json" };
       if (profile.apiKey.trim()) headers.Authorization = `Bearer ${profile.apiKey.trim()}`;
-      const [ollamaResponse, compatibleResponse] = await Promise.all([
-        withTimeout(
-          requestUrl({ url: `${baseUrl}/api/tags`, method: "GET", headers, throw: false }),
-          2200,
-          "Ollama model discovery timed out"
-        ).catch(() => null),
-        withTimeout(
-          requestUrl({ url: modelsUrl, method: "GET", headers, throw: false }),
-          2200,
-          "OpenAI-compatible model discovery timed out"
-        ).catch(() => null)
-      ]);
+      const ollamaResponsePromise = isLocalModelApiUrl(profile.apiUrl)
+        ? withTimeout(requestUrl({ url: `${baseUrl}/api/tags`, method: "GET", headers, throw: false }), 2200, "Ollama model discovery timed out").catch(() => null)
+        : Promise.resolve(null);
+      const compatibleResponsePromise = withTimeout(requestUrl({ url: modelsUrl, method: "GET", headers, throw: false }), 5000, "Model discovery timed out").catch(() => null);
+      const [ollamaResponse, compatibleResponse] = await Promise.all([ollamaResponsePromise, compatibleResponsePromise]);
       if (ollamaResponse && ollamaResponse.status >= 200 && ollamaResponse.status < 300
         && isRecord(ollamaResponse.json) && Array.isArray(ollamaResponse.json.models)) {
         for (const item of ollamaResponse.json.models) {
@@ -13198,7 +13238,10 @@ export default class CancipPlugin extends Plugin {
       }
     }
     if (!discovered.length) return [];
-    const models = uniqueStrings(discovered.map((item) => item.model)).slice(0, 80);
+    // Keep the provider catalog complete. OpenMinis treats the remote catalog
+    // as authoritative for discovery while preserving manually entered IDs;
+    // truncating here made valid provider models silently disappear.
+    const models = uniqueStrings(discovered.map((item) => item.model));
     const nextOptions = normalizeModelOptions([...this.settings.modelOptions, ...models], this.settings.model);
     const nextSources = { ...this.settings.modelSourceByModel };
     for (const item of discovered) nextSources[item.model] = item.profileId;
@@ -13210,6 +13253,122 @@ export default class CancipPlugin extends Plugin {
       this.refreshOpenViews();
     }
     return models;
+  }
+
+  getApiProfileTestResult(id: string): ApiProbeResult | null {
+    const resolved = resolveApiProfileId(id, this.settings.apiProfiles);
+    return resolved ? this.apiProfileTestResults.get(resolved) ?? null : null;
+  }
+
+  getModelTestResult(model: string, profileId?: string): ModelProbeResult | null {
+    const resolvedProfile = resolveApiProfileId(profileId || this.settings.modelSourceByModel[model] || this.settings.activeApiProfileId, this.settings.apiProfiles) || this.activeApiProfile().id;
+    return this.modelTestResults.get(`${resolvedProfile}:${model.trim()}`) ?? null;
+  }
+
+  async testApiProfile(id: string): Promise<ApiProbeResult> {
+    const resolvedId = resolveApiProfileId(id, this.settings.apiProfiles) || this.activeApiProfile().id;
+    const existing = this.apiProfileTestFlights.get(resolvedId);
+    if (existing) return existing;
+    const profile = this.settings.apiProfiles.find((item) => item.id === resolvedId) ?? this.activeApiProfile();
+    const run = (async (): Promise<ApiProbeResult> => {
+      const root = profile.apiUrl.trim().replace(/\/+$/, "");
+      const configuredRoot = root.replace(/\/v1$/i, "");
+      const endpoints = uniqueStrings([
+        /\/v1$/i.test(root) ? `${root}/models` : `${root}/v1/models`,
+        `${configuredRoot}/api/tags`
+      ]);
+      const headers: Record<string, string> = { Accept: "application/json" };
+      if (profile.apiKey.trim()) headers.Authorization = `Bearer ${profile.apiKey.trim()}`;
+      const started = Date.now();
+      let lastError = "";
+      for (const endpoint of endpoints) {
+        try {
+          const response = await withTimeout(requestUrl({ url: endpoint, method: "GET", headers, throw: false }), 12000, "model source test timed out");
+          if (response.status < 200 || response.status >= 300) {
+            lastError = `HTTP ${response.status}`;
+            continue;
+          }
+          const json = response.json;
+          const modelCount = isRecord(json) && Array.isArray(json.data)
+            ? json.data.length
+            : isRecord(json) && Array.isArray(json.models) ? json.models.length : 0;
+          const result: ApiProbeResult = {
+            ok: true,
+            profileId: resolvedId,
+            endpoint,
+            latencyMs: Math.max(0, Date.now() - started),
+            modelCount,
+            checkedAt: new Date().toISOString()
+          };
+          this.apiProfileTestResults.set(resolvedId, result);
+          return result;
+        } catch (error) {
+          lastError = error instanceof Error ? error.message : String(error);
+        }
+      }
+      const result: ApiProbeResult = {
+        ok: false,
+        profileId: resolvedId,
+        endpoint: endpoints[0] || root,
+        latencyMs: Math.max(0, Date.now() - started),
+        modelCount: 0,
+        checkedAt: new Date().toISOString(),
+        error: lastError || "No model endpoint responded"
+      };
+      this.apiProfileTestResults.set(resolvedId, result);
+      return result;
+    })();
+    this.apiProfileTestFlights.set(resolvedId, run);
+    try {
+      return await run;
+    } finally {
+      if (this.apiProfileTestFlights.get(resolvedId) === run) this.apiProfileTestFlights.delete(resolvedId);
+    }
+  }
+
+  async testModel(model: string, profileId?: string): Promise<ModelProbeResult> {
+    const modelId = model.trim();
+    const resolvedProfileId = resolveApiProfileId(profileId || this.settings.modelSourceByModel[modelId] || this.settings.activeApiProfileId, this.settings.apiProfiles) || this.activeApiProfile().id;
+    const key = `${resolvedProfileId}:${modelId}`;
+    const existing = this.modelTestFlights.get(key);
+    if (existing) return existing;
+    const profile = this.settings.apiProfiles.find((item) => item.id === resolvedProfileId) ?? this.activeApiProfile();
+    const run = (async (): Promise<ModelProbeResult> => {
+      const root = profile.apiUrl.trim().replace(/\/+$/, "");
+      const base = root.replace(/\/v1$/i, "");
+      const compatibleUrl = /\/v1$/i.test(root) ? `${root}/chat/completions` : `${root}/v1/chat/completions`;
+      const responsesUrl = /\/v1$/i.test(root) ? `${root}/responses` : `${root}/v1/responses`;
+      const candidates: Array<{ url: string; body: unknown }> = profile.apiMode === "responses"
+        ? [{ url: responsesUrl, body: { model: modelId, input: "ping", max_output_tokens: 1 } }, { url: compatibleUrl, body: { model: modelId, messages: [{ role: "user", content: "ping" }], max_tokens: 1, stream: false } }]
+        : [{ url: compatibleUrl, body: { model: modelId, messages: [{ role: "user", content: "ping" }], max_tokens: 1, stream: false } }, { url: responsesUrl, body: { model: modelId, input: "ping", max_output_tokens: 1 } }];
+      const started = Date.now();
+      let lastError = "";
+      for (const candidate of candidates) {
+        try {
+          const headers: Record<string, string> = { "Content-Type": "application/json", Accept: "application/json" };
+          if (profile.apiKey.trim()) headers.Authorization = `Bearer ${profile.apiKey.trim()}`;
+          const response = await withTimeout(requestUrl({ url: candidate.url, method: "POST", headers, body: JSON.stringify(candidate.body), throw: false }), 15000, "model test timed out");
+          if (response.status < 200 || response.status >= 300) {
+            lastError = `HTTP ${response.status}`;
+            continue;
+          }
+          const result: ModelProbeResult = { ok: true, model: modelId, profileId: resolvedProfileId, endpoint: candidate.url, latencyMs: Math.max(0, Date.now() - started), checkedAt: new Date().toISOString() };
+          this.modelTestResults.set(key, result);
+          return result;
+        } catch (error) {
+          lastError = error instanceof Error ? error.message : String(error);
+        }
+      }
+      const result: ModelProbeResult = { ok: false, model: modelId, profileId: resolvedProfileId, endpoint: candidates[0]?.url || root, latencyMs: Math.max(0, Date.now() - started), checkedAt: new Date().toISOString(), error: lastError || "Model test failed" };
+      this.modelTestResults.set(key, result);
+      return result;
+    })();
+    this.modelTestFlights.set(key, run);
+    try {
+      return await run;
+    } finally {
+      if (this.modelTestFlights.get(key) === run) this.modelTestFlights.delete(key);
+    }
   }
 
   async restartAgentBridge(): Promise<void> {
@@ -37296,6 +37455,8 @@ class CancipView extends ItemView {
   private menuEl: HTMLElement | null = null;
   private modelMenuSignature = "";
   private modelMenuEllipsisTimer: number | null = null;
+  private modelMenuSearchQuery = "";
+  private modelMenuCatalogRefreshAt = 0;
   private headerMenuEl: HTMLElement | null = null;
   private moreButtonEl: HTMLButtonElement | null = null;
   private overlayLayerEl: HTMLElement | null = null;
@@ -37392,6 +37553,7 @@ class CancipView extends ItemView {
   private subagentStartedAt = "";
   private subagentCompletedAt = "";
   private sessionHistoryCache: { at: number; mergeFiles: boolean; entries: SessionHistoryEntry[] } | null = null;
+  private sessionHistoryCacheDirty = true;
   private sessionHistoryReadPromise: { mergeFiles: boolean; promise: Promise<SessionHistoryEntry[]> } | null = null;
   private sessionHistoryWriteQueue: Promise<void> = Promise.resolve();
   private syncedSessionHistoryPaths = new Set<string>();
@@ -37539,6 +37701,11 @@ class CancipView extends ItemView {
     this.skillCache = null;
   }
 
+  private invalidateSessionHistoryCache(): void {
+    this.sessionHistoryCacheDirty = true;
+    this.sessionHistoryReadPromise = null;
+  }
+
   vaultSyncWatchedPaths(): string[] {
     return [`${SESSION_HISTORY_DIR}/${this.sessionId}.json`];
   }
@@ -37561,7 +37728,7 @@ class CancipView extends ItemView {
     }
     if (kinds.has("sessions")) {
       this.sessionHistoryCache = null;
-      this.sessionHistoryReadPromise = null;
+      this.invalidateSessionHistoryCache();
       for (const path of paths) {
         const normalized = normalizePath(path.replace(/\\/g, "/"));
         if (normalized === SESSION_HISTORY_DIR) this.sessionHistoryRefreshIndexedFiles = true;
@@ -40483,9 +40650,14 @@ class CancipView extends ItemView {
       ...this.plugin.agentModelOptions().map((item) => item.model),
       ...normalizeModelOptions(this.plugin.settings.modelOptions, this.plugin.settings.model)
     ]);
+    if (!Platform.isMobileApp && Date.now() - this.modelMenuCatalogRefreshAt > 30000) {
+      this.modelMenuCatalogRefreshAt = Date.now();
+      void this.plugin.refreshLocalModelCatalog().then(() => this.openModelMenu()).catch(() => undefined);
+    }
     const menuSignature = stableTextHash(JSON.stringify({
       activeProfile: active.id,
       selectedModel: this.plugin.settings.model,
+      search: this.modelMenuSearchQuery,
       models: presets,
       sources: this.plugin.settings.modelSourceByModel
     }));
@@ -40514,6 +40686,23 @@ class CancipView extends ItemView {
     // sluggish when the configured model list is large.
     modelSection.detach();
     const modelHead = modelSection.createDiv({ cls: "obcc-model-menu-section-head" });
+    const search = modelHead.createEl("input", {
+      cls: "obcc-model-menu-search",
+      attr: { type: "search", placeholder: this.t("modelSearchPlaceholder"), "aria-label": this.t("modelSearch") }
+    });
+    search.value = this.modelMenuSearchQuery;
+    search.addEventListener("input", () => {
+      this.modelMenuSearchQuery = search.value.trim();
+      const query = this.modelMenuSearchQuery.toLocaleLowerCase();
+      modelSection.querySelectorAll<HTMLElement>(".obcc-model-menu-row[data-search]").forEach((row) => {
+        row.toggleClass("is-model-search-hidden", Boolean(query) && !(row.dataset.search || "").includes(query));
+      });
+      modelSection.querySelectorAll<HTMLElement>(".obcc-model-menu-group-title").forEach((title) => {
+        const group = title.dataset.group || "";
+        const visible = Array.from(modelSection.querySelectorAll<HTMLElement>(`.obcc-model-menu-row[data-group="${cssEscapeAttr(group)}"]`)).some((row) => !row.hasClass("is-model-search-hidden"));
+        title.toggleClass("is-model-search-hidden", Boolean(query) && !visible);
+      });
+    });
     modelHead.createSpan({ text: this.t("modelList") });
     this.createModelMenuIconButton(modelHead, "plus", this.t("addModel"), () => void this.addModelOptionFromMenu());
     let pointerDrag: { model: string; pointerId: number; startY: number; targetModel: string; after: boolean } | null = null;
@@ -40547,10 +40736,62 @@ class CancipView extends ItemView {
       targetRow.addClass("is-drag-over");
       targetRow.toggleClass("is-drop-after", pointerDrag.after);
     };
+    let lastModelGroup = "";
+    const groupRows = new Map<string, HTMLElement[]>();
+    const groupExpanded = new Set<string>();
+    const defaultModelSet = new Set<string>(MODEL_PRESETS.slice(0, 8));
+    const defaultGroupName = this.t("defaultModelsGroup");
+    const entryGroups = new Map<string, ModelMenuEntry[]>();
     for (const entry of entries) {
+      const group = defaultModelSet.has(entry.model) || entry.profile.id === "default"
+        ? defaultGroupName
+        : this.modelSourceName(entry.profile);
+      const grouped = entryGroups.get(group) ?? [];
+      grouped.push(entry);
+      entryGroups.set(group, grouped);
+    }
+    const orderedEntries: ModelMenuEntry[] = [];
+    const defaults = entryGroups.get(defaultGroupName) ?? [];
+    orderedEntries.push(...defaults);
+    for (const [group, grouped] of entryGroups) {
+      if (group !== defaultGroupName) orderedEntries.push(...grouped);
+    }
+    for (const entry of orderedEntries) {
       const { model, profile: rowProfile } = entry;
       const isActiveEntry = model === this.plugin.settings.model;
+      const group = defaultModelSet.has(model) || rowProfile.id === "default"
+        ? defaultGroupName
+        : this.modelSourceName(rowProfile);
+      if (group !== lastModelGroup) {
+        const groupTitle = modelSection.createEl("button", { cls: "obcc-model-menu-group-title", attr: { type: "button", "aria-expanded": "false" } });
+        groupTitle.createSpan({ text: group });
+        const groupCount = entryGroups.get(group)?.length ?? 0;
+        const groupLimit = group === defaultGroupName ? 3 : 1;
+        groupTitle.createSpan({ cls: "obcc-model-menu-group-count", text: groupCount > groupLimit ? ` · ${groupLimit}/${groupCount}` : ` · ${groupCount}` });
+        groupTitle.dataset.group = group;
+        groupTitle.dataset.limit = String(groupLimit);
+        groupTitle.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          const expanded = groupExpanded.has(group);
+          if (expanded) groupExpanded.delete(group); else groupExpanded.add(group);
+          groupTitle.setAttribute("aria-expanded", String(!expanded));
+          const limit = Number(groupTitle.dataset.limit || "1");
+          for (const item of groupRows.get(group) ?? []) item.toggleClass("is-model-group-collapsed", !expanded && (groupRows.get(group)?.indexOf(item) ?? 0) >= limit);
+        });
+        lastModelGroup = group;
+      }
       const row = modelSection.createDiv({ cls: `obcc-model-menu-row ${isActiveEntry ? "is-active" : ""}` });
+      row.dataset.group = group;
+      row.dataset.search = `${model} ${this.modelSourceName(rowProfile)}`.toLocaleLowerCase();
+      const rowsForGroup = groupRows.get(group) ?? [];
+      rowsForGroup.push(row);
+      groupRows.set(group, rowsForGroup);
+      const groupLimit = group === defaultGroupName ? 3 : 1;
+      if (rowsForGroup.length > groupLimit) row.addClass("is-model-group-collapsed");
+      if (this.modelMenuSearchQuery && !row.dataset.search.includes(this.modelMenuSearchQuery.toLocaleLowerCase())) {
+        row.addClass("is-model-search-hidden");
+      }
       row.draggable = true;
       row.dataset.model = model;
       row.addEventListener("dragstart", (event) => {
@@ -40656,11 +40897,47 @@ class CancipView extends ItemView {
         void this.setModelFromMenu(model, rowProfile.id);
       });
       const actions = row.createDiv({ cls: "obcc-model-menu-actions" });
-      this.createModelMenuIconButton(actions, "copy", this.t("copyModelInfo"), () => void this.copyModelInfo(model, rowProfile));
-      if (!localAgentProviderFromModel(model)) {
-        this.createModelMenuIconButton(actions, "pencil", this.t("editModel"), () => void this.editModelOptionFromMenu(model, rowProfile.id));
-        this.createModelMenuIconButton(actions, "trash-2", this.t("removeModel"), () => void this.removeModelOptionFromMenu(model), presets.length <= 1);
-      }
+      const more = this.createModelMenuIconButton(actions, "more-horizontal", this.t("moreMenu"), () => {
+        const menu = row.querySelector<HTMLElement>(".obcc-model-menu-more-popover");
+        if (!menu) return;
+        const open = menu.hasClass("is-hidden");
+        menu.toggleClass("is-hidden", !open);
+        more.setAttribute("aria-expanded", String(open));
+      });
+      more.setAttribute("aria-expanded", "false");
+      const testDirect = this.createModelMenuIconButton(actions, "zap", this.t("testModel"), () => {
+        void this.plugin.testModel(model, rowProfile.id).then((result) => new Notice(result.ok
+          ? this.t("modelTestPassed", { latency: result.latencyMs })
+          : this.t("modelTestFailed", { reason: result.error || "unknown error" })));
+      });
+      testDirect.classList.add("obcc-model-menu-test-action");
+      const moreMenu = row.createDiv({ cls: "obcc-model-menu-more-popover is-hidden" });
+        const copy = this.createModelMenuIconButton(moreMenu, "copy", this.t("copyModelInfo"), () => {
+          moreMenu.addClass("is-hidden");
+          void this.copyModelInfo(model, rowProfile);
+        });
+        copy.classList.add("obcc-model-menu-more-item");
+        if (!localAgentProviderFromModel(model)) {
+          const edit = this.createModelMenuIconButton(moreMenu, "pencil", this.t("editModel"), () => {
+            moreMenu.addClass("is-hidden");
+            more.setAttribute("aria-expanded", "false");
+            void this.editModelOptionFromMenu(model, rowProfile.id);
+          });
+          edit.classList.add("obcc-model-menu-more-item");
+          const remove = this.createModelMenuIconButton(moreMenu, "trash-2", this.t("removeModel"), () => {
+            moreMenu.addClass("is-hidden");
+            more.setAttribute("aria-expanded", "false");
+            void this.removeModelOptionFromMenu(model);
+          }, presets.length <= 1);
+          remove.classList.add("obcc-model-menu-more-item");
+        }
+    }
+    if (this.modelMenuSearchQuery) {
+      modelSection.querySelectorAll<HTMLElement>(".obcc-model-menu-group-title").forEach((title) => {
+        const group = title.dataset.group || "";
+        const visible = Array.from(modelSection.querySelectorAll<HTMLElement>(`.obcc-model-menu-row[data-group="${cssEscapeAttr(group)}"]`)).some((row) => !row.hasClass("is-model-search-hidden"));
+        title.toggleClass("is-model-search-hidden", !visible);
+      });
     }
     this.menuEl.appendChild(modelSection);
     this.modelMenuSignature = menuSignature;
@@ -40851,6 +41128,10 @@ class CancipView extends ItemView {
 
   private async reorderModelOptionFromMenu(model: string, targetModel: string, after = false): Promise<void> {
     if (!model || !targetModel || model === targetModel) return;
+    const beforeRects = new Map<string, DOMRect>();
+    this.menuEl?.querySelectorAll<HTMLElement>(".obcc-model-menu-row[data-model]").forEach((row) => {
+      if (row.dataset.model) beforeRects.set(row.dataset.model, row.getBoundingClientRect());
+    });
     const options = normalizeModelOptions(this.plugin.settings.modelOptions, this.plugin.activeApiProfile().model);
     const from = options.findIndex((item) => item === model);
     const to = options.findIndex((item) => item === targetModel);
@@ -40861,6 +41142,25 @@ class CancipView extends ItemView {
     this.plugin.settings.modelOptions = options;
     await this.plugin.saveSettings();
     this.openModelMenu();
+    const viewWindow = this.containerEl.ownerDocument.defaultView ?? window;
+    viewWindow.requestAnimationFrame(() => {
+      this.menuEl?.querySelectorAll<HTMLElement>(".obcc-model-menu-row[data-model]").forEach((row) => {
+        const key = row.dataset.model || "";
+        const previous = beforeRects.get(key);
+        if (!previous) return;
+        const next = row.getBoundingClientRect();
+        const deltaY = previous.top - next.top;
+        if (Math.abs(deltaY) < 1) return;
+        row.style.transform = `translateY(${deltaY}px)`;
+        row.style.transition = "none";
+        void row.offsetHeight;
+        row.style.transition = "transform 180ms cubic-bezier(.2,.8,.2,1)";
+        row.style.transform = "";
+        viewWindow.setTimeout(() => {
+          row.style.transition = "";
+        }, 220);
+      });
+    });
   }
 
   private toggleCommandMenu(kind: ComposerMenuKind, title: string, items: ComposerMenuItem[]): void {
@@ -48583,6 +48883,7 @@ class CancipView extends ItemView {
     const remaining = entries.filter((item) => item.id !== sessionId && !item.eventOnly).sort(compareSessionHistoryEntries);
     await adapter.write(SESSION_HISTORY_INDEX_PATH, `${JSON.stringify({ schemaVersion: SESSION_HISTORY_SCHEMA_VERSION, entries: remaining }, null, 2)}\n`);
     this.sessionHistoryCache = { at: Date.now(), mergeFiles: false, entries: remaining };
+    this.sessionHistoryCacheDirty = false;
     this.sessionHistoryReadPromise = null;
     this.plugin.clearSessionRequest(sessionId);
     if (unfinished) {
@@ -48999,6 +49300,7 @@ class CancipView extends ItemView {
       };
       await this.app.vault.adapter.write(SESSION_HISTORY_INDEX_PATH, `${JSON.stringify(payload, null, 2)}\n`);
       this.sessionHistoryCache = { at: Date.now(), mergeFiles: false, entries: persistedEntries };
+      this.sessionHistoryCacheDirty = false;
       this.sessionHistoryReadPromise = null;
     });
     this.sessionHistoryWriteQueue = run.catch(() => undefined);
@@ -49091,7 +49393,7 @@ class CancipView extends ItemView {
     const maxAgeMs = 12000;
     const mergeFiles = options.mergeFiles === true || options.refreshFiles === true;
     const cache = this.sessionHistoryCache;
-    const cacheCanServe = cache
+    const cacheCanServe = !this.sessionHistoryCacheDirty && cache
       && Date.now() - cache.at < maxAgeMs
       && (cache.mergeFiles || !mergeFiles);
     if (!options.force && !options.refreshFiles && cacheCanServe) {
@@ -49105,6 +49407,7 @@ class CancipView extends ItemView {
     try {
       const entries = await readPromise;
       this.sessionHistoryCache = { at: Date.now(), mergeFiles, entries };
+      this.sessionHistoryCacheDirty = false;
       return entries;
     } finally {
       if (this.sessionHistoryReadPromise?.promise === readPromise) this.sessionHistoryReadPromise = null;
@@ -50451,7 +50754,8 @@ class CancipView extends ItemView {
     if (!this.plugin.settings.contextCompactionShowStats) return "";
     return this.formatAuditSections([{
       title: this.t("settingsContextCompaction"),
-      content: this.t("contextCompactionStats", {
+      content: this.t("contextCompactionMarker", {
+        time: new Date(state.throughCreatedAt || state.updatedAt).toLocaleString(),
         source: state.estimatedSourceTokens,
         target: state.estimatedCompactedTokens
       })
@@ -69116,6 +69420,8 @@ const SETTINGS_PAGE_KEYS: Record<string, Array<keyof Settings>> = {
 };
 
 class CancipSettingTab extends PluginSettingTab {
+  private modelSearchQuery = "";
+  private modelSearchTimer: number | null = null;
   private detailsOpenState = new Map<string, boolean>();
   private renderingSettings = false;
   private activeSettingsPage = "common";
@@ -71399,6 +71705,23 @@ class CancipSettingTab extends PluginSettingTab {
     const active = this.plugin.activeApiProfile();
     let draftModel = "";
     let draftSourceId = active.id;
+    const searchRow = new Setting(parent)
+      .setName(this.plugin.t("modelSearch"))
+      .setDesc(this.plugin.t("modelSearchDesc"));
+    searchRow.settingEl.addClass("obcc-model-search");
+    searchRow.addSearch((search) => {
+      search
+        .setPlaceholder(this.plugin.t("modelSearchPlaceholder"))
+        .setValue(this.modelSearchQuery)
+        .onChange((value) => {
+          this.modelSearchQuery = value.trim();
+          if (this.modelSearchTimer !== null) window.clearTimeout(this.modelSearchTimer);
+          this.modelSearchTimer = window.setTimeout(() => {
+            this.modelSearchTimer = null;
+            this.renderSettings();
+          }, 140);
+        });
+    });
     const addRow = new Setting(parent)
       .setName(this.plugin.t("addModel"))
       .setDesc(this.plugin.t("settingsModelListDesc"));
@@ -71440,16 +71763,42 @@ class CancipSettingTab extends PluginSettingTab {
           });
       });
 
-    const models = normalizeModelOptions(this.plugin.settings.modelOptions, this.plugin.settings.model)
+    const allModels = normalizeModelOptions(this.plugin.settings.modelOptions, this.plugin.settings.model)
       .filter((model) => !localAgentProviderFromModel(model));
-    for (const model of models) {
+    const query = this.modelSearchQuery.toLocaleLowerCase();
+    const models = allModels.filter((model) => {
+      if (!query) return true;
+      const sourceId = resolveApiProfileId(this.plugin.settings.modelSourceByModel[model] || this.plugin.settings.activeApiProfileId, profiles) || active.id;
+      const source = profiles.find((profile) => profile.id === sourceId);
+      return model.toLocaleLowerCase().includes(query) || (source?.name || "").toLocaleLowerCase().includes(query);
+    });
+    const topModels = allModels.filter((model) => MODEL_PRESETS.slice(0, 8).includes(model as typeof MODEL_PRESETS[number]));
+    const orderedModels = [
+      ...topModels.filter((model) => models.includes(model)),
+      ...models.filter((model) => !topModels.includes(model))
+    ];
+    let lastGroup = "";
+    for (const model of orderedModels) {
       const sourceId = resolveApiProfileId(
         this.plugin.settings.modelSourceByModel[model] || this.plugin.settings.activeApiProfileId,
         profiles
       ) || active.id;
+      const source = profiles.find((profile) => profile.id === sourceId);
+      const group = topModels.includes(model)
+        ? this.plugin.t("defaultModelsGroup")
+        : (source?.name || source?.id || this.plugin.t("settingsApiProfile"));
+      if (group !== lastGroup) {
+        parent.createEl("h4", { cls: "obcc-model-group-title", text: group });
+        lastGroup = group;
+      }
+      const probe = this.plugin.getModelTestResult(model, sourceId);
       const row = new Setting(parent)
         .setName(model)
-        .setDesc(model === this.plugin.settings.model ? this.plugin.t("settingsDefaultModel") : "");
+        .setDesc(probe
+          ? (probe.ok
+            ? this.plugin.t("modelTestPassed", { latency: probe.latencyMs })
+            : this.plugin.t("modelTestFailed", { reason: probe.error || "unknown error" }))
+          : (model === this.plugin.settings.model ? this.plugin.t("settingsDefaultModel") : ""));
       row.settingEl.addClass("obcc-model-list-entry");
       row
         .addDropdown((dropdown) => {
@@ -71458,6 +71807,23 @@ class CancipSettingTab extends PluginSettingTab {
             .setValue(sourceId)
             .onChange(async (value) => {
               await this.bindModelSourceFromSettings(model, value);
+            });
+        })
+        .addExtraButton((button) => {
+          button
+            .setIcon("zap")
+            .setTooltip(this.plugin.t("testModel"))
+            .onClick(async () => {
+              button.setDisabled(true);
+              try {
+                const result = await this.plugin.testModel(model, sourceId);
+                new Notice(result.ok
+                  ? this.plugin.t("modelTestPassed", { latency: result.latencyMs })
+                  : this.plugin.t("modelTestFailed", { reason: result.error || "unknown error" }));
+                this.renderSettings();
+              } finally {
+                button.setDisabled(false);
+              }
             });
         })
         .addExtraButton((button) => {
@@ -71595,9 +71961,15 @@ class CancipSettingTab extends PluginSettingTab {
       apiProfileDisplayLabel(profile, this.plugin.language())
     ]));
 
+    const sourceProbe = this.plugin.getApiProfileTestResult(active.id);
+    const sourceDescription = sourceProbe
+      ? `${this.plugin.t("settingsApiProfileDesc")} · ${sourceProbe.ok
+        ? this.plugin.t("apiProfileTestPassed", { count: sourceProbe.modelCount, latency: sourceProbe.latencyMs })
+        : this.plugin.t("apiProfileTestFailed", { reason: sourceProbe.error || "unknown error" })}`
+      : this.plugin.t("settingsApiProfileDesc");
     new Setting(parent)
       .setName(this.plugin.t("settingsApiProfile"))
-      .setDesc(this.plugin.t("settingsApiProfileDesc"))
+      .setDesc(sourceDescription)
       .addDropdown((dropdown) => {
         dropdown
           .addOptions(profileOptions)
@@ -71626,6 +71998,38 @@ class CancipSettingTab extends PluginSettingTab {
             this.editingApiProfileId = this.plugin.activeApiProfile().id;
             this.plugin.refreshOpenViews();
             this.renderSettings();
+          });
+      })
+      .addButton((button) => {
+        button
+          .setButtonText(this.plugin.t("testApiProfile"))
+          .onClick(async () => {
+            button.setDisabled(true);
+            try {
+              const result = await this.plugin.testApiProfile(active.id);
+              new Notice(result.ok
+                ? this.plugin.t("apiProfileTestPassed", { count: result.modelCount, latency: result.latencyMs })
+                : this.plugin.t("apiProfileTestFailed", { reason: result.error || "unknown error" }));
+              this.renderSettings();
+            } finally {
+              button.setDisabled(false);
+            }
+          });
+      })
+      .addButton((button) => {
+        button
+          .setButtonText(this.plugin.t("refreshApiProfileModels"))
+          .onClick(async () => {
+            button.setDisabled(true);
+            try {
+              const models = await this.plugin.refreshLocalModelCatalog();
+              new Notice(models.length
+                ? this.plugin.t("settingsLocalModelsFound", { count: models.length })
+                : this.plugin.t("settingsLocalModelsNone"));
+              this.renderSettings();
+            } finally {
+              button.setDisabled(false);
+            }
           });
       });
 
