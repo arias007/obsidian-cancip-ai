@@ -66128,11 +66128,11 @@ class CancipView extends ItemView {
           rendered: { ...merged.rendered, message: { ...merged.rendered.message, content: next.rendered.message.content } },
           headline: next.headline,
           brief: next.brief,
-           readableDetail: next.readableDetail,
-           detail: next.detail,
-           blocks: next.blocks,
-           auditSections: merged.auditSections,
-           hasDetail: true
+          readableDetail: next.readableDetail,
+          detail: next.detail,
+          blocks: next.blocks,
+          auditSections: merged.auditSections,
+          hasDetail: true
         });
         index = nextIndex;
         continue;
