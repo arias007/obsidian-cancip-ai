@@ -13208,6 +13208,7 @@ export default class CancipPlugin extends Plugin {
 
   async refreshLocalModelCatalog(onProfileDiscovered?: () => void): Promise<string[]> {
     const discovered: Array<{ model: string; profileId: string }> = [];
+    let settingsChanged = false;
     const applyProfileModels = async (profile: ApiProfile, profileModels: string[]): Promise<void> => {
       if (!profileModels.length) return;
       discovered.push(...profileModels.map((model) => ({ model, profileId: profile.id })));
@@ -13219,9 +13220,9 @@ export default class CancipPlugin extends Plugin {
       if (!changed) return;
       this.settings.modelOptions = nextOptions;
       this.settings.modelSourceByModel = nextSources;
+      settingsChanged = true;
       await this.saveSettings();
       if (onProfileDiscovered) onProfileDiscovered();
-      else this.refreshOpenViews();
     };
     for (const profile of this.settings.apiProfiles) {
       const baseUrl = profile.apiUrl.trim().replace(/\/+$/, "").replace(/\/v1$/i, "");
@@ -13258,6 +13259,10 @@ export default class CancipPlugin extends Plugin {
     // as authoritative for discovery while preserving manually entered IDs;
     // truncating here made valid provider models silently disappear.
     const models = uniqueStrings(discovered.map((item) => item.model));
+    // Refresh once after the complete background/settings refresh.  Refreshing
+    // the whole view after every provider made the model menu flicker and
+    // occasionally stalled while a large catalog was being painted.
+    if (settingsChanged && !onProfileDiscovered) this.refreshOpenViews();
     return models;
   }
 
@@ -37461,6 +37466,7 @@ class CancipView extends ItemView {
   private menuEl: HTMLElement | null = null;
   private modelMenuSignature = "";
   private modelMenuEllipsisTimer: number | null = null;
+  private modelMenuRefreshFrame: number | null = null;
   private modelMenuSearchQuery = "";
   private modelMenuExpandedGroups = new Set<string>();
   private modelMenuCatalogRefreshAt = 0;
@@ -40638,7 +40644,23 @@ class CancipView extends ItemView {
       window.clearTimeout(this.modelMenuEllipsisTimer);
       this.modelMenuEllipsisTimer = null;
     }
+    if (this.modelMenuRefreshFrame !== null) {
+      const viewWindow = this.containerEl.ownerDocument.defaultView ?? window;
+      viewWindow.cancelAnimationFrame(this.modelMenuRefreshFrame);
+      this.modelMenuRefreshFrame = null;
+    }
     this.modelMenuSignature = "";
+  }
+
+  private scheduleModelMenuCatalogRender(): void {
+    if (this.modelMenuRefreshFrame !== null) return;
+    const viewWindow = this.containerEl.ownerDocument.defaultView ?? window;
+    this.modelMenuRefreshFrame = viewWindow.requestAnimationFrame(() => {
+      this.modelMenuRefreshFrame = null;
+      if (this.activeMenu !== "model" || !this.menuEl || this.menuEl.hasClass("is-hidden")) return;
+      this.resetModelMenuCache();
+      this.openModelMenu();
+    });
   }
 
   private scheduleModelMenuPlacement(): void {
@@ -40672,8 +40694,7 @@ class CancipView extends ItemView {
         // appears progressively instead of waiting for every configured
         // provider to finish.
         if (this.activeMenu !== "model" || !this.menuEl || this.menuEl.hasClass("is-hidden")) return;
-        this.resetModelMenuCache();
-        this.openModelMenu();
+        this.scheduleModelMenuCatalogRender();
       }).catch(() => undefined);
     }
     const menuSignature = stableTextHash(JSON.stringify({
