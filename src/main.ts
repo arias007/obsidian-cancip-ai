@@ -66360,7 +66360,12 @@ class CancipView extends ItemView {
     details.toggleClass("is-live-process-record", liveProcessRecord);
     this.wireDetails(details, processFoldKey, liveProcessRecord ? !this.plugin.settings.processRecordRuntimeCollapsed : false, false, true);
     const processLabel = `${this.t("processRecord")} · ${steps.length}`;
-    this.createProcessSummary(details, processLabel, "list-tree");
+    const processSummary = this.createProcessSummary(details, processLabel, "list-tree");
+    processSummary.createSpan({
+      cls: "obcc-process-record-timer",
+      text: formatStepElapsed(this.processRecordElapsedMs(items)),
+      attr: { title: isChineseLanguage(this.plugin.language()) ? "本轮过程耗时" : "Total process time" }
+    });
     const body = details.createDiv({ cls: "obcc-process-body" });
     for (const [index, stepInfo] of steps.entries()) {
       const stepFoldKey = `${processFoldKey}:step-${stepInfo.rendered.message.id}`;
@@ -66560,7 +66565,6 @@ class CancipView extends ItemView {
   private renderProcessStepBrief(parent: HTMLElement, brief: ProcessStepBrief): void {
     const chinese = isChineseLanguage(this.plugin.language());
     const rows: Array<[string, string, string]> = [
-      [chinese ? "结果" : "Result", brief.result, "circle-check-big"],
       [chinese ? "下一步" : "Next", brief.next, "arrow-right"]
     ].filter(([, value]) => Boolean(value.trim())) as Array<[string, string, string]>;
     if (!rows.length) return;
@@ -66585,6 +66589,17 @@ class CancipView extends ItemView {
     const stored = progressElapsedMsFromContent(message.content);
     if (stored !== null) return stored;
     return this.progressStepTimers.has(message.id) ? Math.max(0, Date.now() - message.createdAt) : 0;
+  }
+
+  private processRecordElapsedMs(items: RenderedMessage[]): number {
+    const messages = items.map((item) => item.message).filter(Boolean);
+    const starts = messages.map((message) => message.modelTiming?.startedAt ?? message.createdAt).filter((value) => Number.isFinite(value));
+    const ends = messages.map((message) => message.modelTiming?.completedAt ?? message.createdAt).filter((value) => Number.isFinite(value));
+    if (!starts.length) return 0;
+    const start = Math.min(...starts);
+    const running = Boolean(this.activeRequest);
+    const end = running ? Date.now() : Math.max(...ends, start);
+    return Math.max(0, end - start);
   }
 
   private processRecordMetaLabel(items: RenderedMessage[]): string {
@@ -66719,7 +66734,9 @@ class CancipView extends ItemView {
         cls: `obcc-process-detail-group is-${section.group} obcc-process-detail-field`,
         attr: { "data-process-field": `${processFoldKey}:${section.stateSuffix}` }
       });
-      this.wireDetails(sectionEl, `process-field:${processFoldKey}:${section.stateSuffix}`, false, false, true);
+      // DSH keeps the actual request/response payload rows visible once the
+      // parent step is opened; only the expensive raw body is deferred.
+      this.wireDetails(sectionEl, `process-field:${processFoldKey}:${section.stateSuffix}`, true, false, true);
       const nextIndex = (groupIndexes.get(section.group) ?? 0) + 1;
       groupIndexes.set(section.group, nextIndex);
       const baseTitle = section.group === "sent"
@@ -67412,7 +67429,7 @@ class CancipView extends ItemView {
           this.renderWhenProcessStepOpen(details, raw.load);
         } else {
           const details = row.createEl("details", { cls: "obcc-tool-run-details" });
-          this.wireDetails(details, `tool-run:${message.id}:${run.id}`);
+          this.wireDetails(details, `tool-run:${message.id}:${run.id}`, true, false, true);
           this.createProcessSummary(details, this.t("toolRunResult"), "file-output").addClass("obcc-tool-run-result-label");
           details.createDiv({ cls: "obcc-process-detail-caption", text: isChineseLanguage(this.plugin.language()) ? "工具返回的原始结果" : "Raw tool result" });
           const raw = this.createProcessRawBlock(

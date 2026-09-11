@@ -2080,6 +2080,20 @@ body .obcc-code-action-layer.obcc-code-action-layer > button.copy-code-button.co
   user-select: none;
 }
 
+.obcc-process-record-timer {
+  display: inline-flex;
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 1px 6px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
 .obcc-process-icon-summary {
   display: inline-flex;
   align-items: center;
@@ -2123,7 +2137,7 @@ details.obcc-process-step {
 
 .obcc-process-step-head {
   display: grid;
-  grid-template-columns: 14px 20px minmax(0, 1fr) auto auto;
+  grid-template-columns: 14px 16px minmax(0, 1fr) auto auto;
   align-items: start;
   gap: 5px;
   min-height: 22px;
@@ -2320,7 +2334,7 @@ details.obcc-process-step {
 
 .obcc-process-step-detail-body {
   min-width: 0;
-  margin: 6px 0 0 39px;
+  margin: 6px 0 0 20px;
   padding: 0;
   color: var(--text-muted);
   overflow-wrap: anywhere;
