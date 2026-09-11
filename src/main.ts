@@ -13206,8 +13206,23 @@ export default class CancipPlugin extends Plugin {
     };
   }
 
-  async refreshLocalModelCatalog(): Promise<string[]> {
+  async refreshLocalModelCatalog(onProfileDiscovered?: () => void): Promise<string[]> {
     const discovered: Array<{ model: string; profileId: string }> = [];
+    const applyProfileModels = async (profile: ApiProfile, profileModels: string[]): Promise<void> => {
+      if (!profileModels.length) return;
+      discovered.push(...profileModels.map((model) => ({ model, profileId: profile.id })));
+      const nextOptions = normalizeModelOptions([...this.settings.modelOptions, ...profileModels], this.settings.model);
+      const nextSources = { ...this.settings.modelSourceByModel };
+      for (const model of profileModels) nextSources[model] = profile.id;
+      const changed = JSON.stringify(nextOptions) !== JSON.stringify(this.settings.modelOptions)
+        || JSON.stringify(nextSources) !== JSON.stringify(this.settings.modelSourceByModel);
+      if (!changed) return;
+      this.settings.modelOptions = nextOptions;
+      this.settings.modelSourceByModel = nextSources;
+      await this.saveSettings();
+      if (onProfileDiscovered) onProfileDiscovered();
+      else this.refreshOpenViews();
+    };
     for (const profile of this.settings.apiProfiles) {
       const baseUrl = profile.apiUrl.trim().replace(/\/+$/, "").replace(/\/v1$/i, "");
       const configuredRoot = profile.apiUrl.trim().replace(/\/+$/, "");
@@ -13219,12 +13234,13 @@ export default class CancipPlugin extends Plugin {
         : Promise.resolve(null);
       const compatibleResponsePromise = withTimeout(requestUrl({ url: modelsUrl, method: "GET", headers, throw: false }), 5000, "Model discovery timed out").catch(() => null);
       const [ollamaResponse, compatibleResponse] = await Promise.all([ollamaResponsePromise, compatibleResponsePromise]);
+      const profileModels: string[] = [];
       if (ollamaResponse && ollamaResponse.status >= 200 && ollamaResponse.status < 300
         && isRecord(ollamaResponse.json) && Array.isArray(ollamaResponse.json.models)) {
         for (const item of ollamaResponse.json.models) {
           if (!isRecord(item) || typeof item.name !== "string") continue;
           const model = item.name.trim();
-          if (model) discovered.push({ model, profileId: profile.id });
+          if (model) profileModels.push(model);
         }
       }
       if (compatibleResponse && compatibleResponse.status >= 200 && compatibleResponse.status < 300
@@ -13232,25 +13248,16 @@ export default class CancipPlugin extends Plugin {
         for (const item of compatibleResponse.json.data) {
           if (!isRecord(item) || typeof item.id !== "string") continue;
           const model = item.id.trim();
-          if (model) discovered.push({ model, profileId: profile.id });
+          if (model) profileModels.push(model);
         }
       }
+      await applyProfileModels(profile, uniqueStrings(profileModels));
     }
     if (!discovered.length) return [];
     // Keep the provider catalog complete. OpenMinis treats the remote catalog
     // as authoritative for discovery while preserving manually entered IDs;
     // truncating here made valid provider models silently disappear.
     const models = uniqueStrings(discovered.map((item) => item.model));
-    const nextOptions = normalizeModelOptions([...this.settings.modelOptions, ...models], this.settings.model);
-    const nextSources = { ...this.settings.modelSourceByModel };
-    for (const item of discovered) nextSources[item.model] = item.profileId;
-    if (JSON.stringify(nextOptions) !== JSON.stringify(this.settings.modelOptions)
-      || JSON.stringify(nextSources) !== JSON.stringify(this.settings.modelSourceByModel)) {
-      this.settings.modelOptions = nextOptions;
-      this.settings.modelSourceByModel = nextSources;
-      await this.saveSettings();
-      this.refreshOpenViews();
-    }
     return models;
   }
 
@@ -40656,7 +40663,10 @@ class CancipView extends ItemView {
       // since been closed).  The old unconditional callback was able to make
       // the cached popover visible again with its previous coordinates,
       // leaving a model list stranded at the document's top-left corner.
-      void this.plugin.refreshLocalModelCatalog().then(() => {
+      void this.plugin.refreshLocalModelCatalog(() => {
+        // Rebuild after each source completes, so a large OpenRouter catalog
+        // appears progressively instead of waiting for every configured
+        // provider to finish.
         if (this.activeMenu !== "model" || !this.menuEl || this.menuEl.hasClass("is-hidden")) return;
         this.resetModelMenuCache();
         this.openModelMenu();
@@ -40832,10 +40842,10 @@ class CancipView extends ItemView {
         groupTitle.addEventListener("click", (event) => {
           event.preventDefault();
           event.stopPropagation();
-          const expanded = groupExpanded.has(group);
-          if (expanded) groupExpanded.delete(group); else groupExpanded.add(group);
-          groupTitle.setAttribute("aria-expanded", String(!expanded));
-          setIcon(collapseIcon, expanded ? "chevron-right" : "chevron-down");
+          const expanded = !groupExpanded.has(group);
+          if (expanded) groupExpanded.add(group); else groupExpanded.delete(group);
+          groupTitle.setAttribute("aria-expanded", String(expanded));
+          setIcon(collapseIcon, expanded ? "chevron-down" : "chevron-right");
           const limit = Number(groupTitle.dataset.limit || "1");
           for (const item of groupRows.get(group) ?? []) item.toggleClass("is-model-group-collapsed", !expanded && (groupRows.get(group)?.indexOf(item) ?? 0) >= limit);
         });
