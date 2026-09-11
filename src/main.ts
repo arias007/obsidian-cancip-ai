@@ -13245,7 +13245,17 @@ export default class CancipPlugin extends Plugin {
       await this.saveSettings();
       if (onProfileDiscovered) onProfileDiscovered();
     };
+    // Multiple saved profiles can point to the same provider (for example a
+    // keyed "openrouter" profile plus an older empty-key profile).  Query one
+    // canonical profile per endpoint, preferring the profile with a key, so a
+    // stale duplicate can never replace the complete provider catalog.
+    const profilesByEndpoint = new Map<string, ApiProfile>();
     for (const profile of this.settings.apiProfiles) {
+      const endpoint = apiEndpointIdentity(profile.apiUrl);
+      const existing = profilesByEndpoint.get(endpoint);
+      if (!existing || (!existing.apiKey.trim() && profile.apiKey.trim())) profilesByEndpoint.set(endpoint, profile);
+    }
+    for (const profile of profilesByEndpoint.values()) {
       const baseUrl = profile.apiUrl.trim().replace(/\/+$/, "").replace(/\/v1$/i, "");
       const configuredRoot = profile.apiUrl.trim().replace(/\/+$/, "");
       const modelsUrl = /\/v1$/i.test(configuredRoot) ? `${configuredRoot}/models` : `${configuredRoot}/v1/models`;
@@ -40810,7 +40820,7 @@ class CancipView extends ItemView {
     for (const entry of entries) {
       const group = defaultModelSet.has(entry.model) || entry.profile.id === "default"
         ? defaultGroupName
-        : this.modelSourceName(entry.profile);
+        : this.modelSourceGroupKey(entry.profile);
       const grouped = entryGroups.get(group) ?? [];
       grouped.push(entry);
       entryGroups.set(group, grouped);
@@ -40838,7 +40848,7 @@ class CancipView extends ItemView {
       const isActiveEntry = model === this.plugin.settings.model;
       const group = defaultModelSet.has(model) || rowProfile.id === "default"
         ? defaultGroupName
-        : this.modelSourceName(rowProfile);
+        : this.modelSourceGroupKey(rowProfile);
       if (group !== lastModelGroup) {
         const groupProfileId = entryGroups.get(group)?.[0]?.profile.id ?? "";
         const isSourceGroup = group !== defaultGroupName && Boolean(groupProfileId);
@@ -41120,9 +41130,26 @@ class CancipView extends ItemView {
     if (agentProfile) return agentProfile;
     const profileId = this.plugin.settings.modelSourceByModel?.[model]?.trim();
     const resolvedProfileId = resolveApiProfileId(profileId || defaultModelSourceIdForModel(model), this.plugin.settings.apiProfiles);
-    return this.plugin.settings.apiProfiles.find((profile) => profile.id === resolvedProfileId)
+    const resolved = this.plugin.settings.apiProfiles.find((profile) => profile.id === resolvedProfileId)
       ?? this.plugin.settings.apiProfiles.find((profile) => profile.model === model)
       ?? fallback;
+    // Collapse duplicate profiles for the same endpoint to the keyed one in
+    // the picker.  This keeps all OpenRouter models under one source heading
+    // and ensures selecting a discovered model uses the working credentials.
+    const endpoint = apiEndpointIdentity(resolved.apiUrl);
+    return this.plugin.settings.apiProfiles
+      .filter((profile) => apiEndpointIdentity(profile.apiUrl) === endpoint)
+      .sort((left, right) => Number(Boolean(right.apiKey.trim())) - Number(Boolean(left.apiKey.trim())))[0]
+      ?? resolved;
+  }
+
+  private modelSourceGroupKey(profile: ApiProfile): string {
+    const endpoint = apiEndpointIdentity(profile.apiUrl);
+    const canonical = this.plugin.settings.apiProfiles
+      .filter((item) => apiEndpointIdentity(item.apiUrl) === endpoint)
+      .sort((left, right) => Number(Boolean(right.apiKey.trim())) - Number(Boolean(left.apiKey.trim())))[0]
+      ?? profile;
+    return this.modelSourceName(canonical);
   }
 
   private async setModelFromMenu(model: string, profileId?: string): Promise<void> {
