@@ -474,6 +474,7 @@ type ModelProbeResult = {
   endpoint: string;
   latencyMs: number;
   checkedAt: string;
+  responseText?: string;
   error?: string;
 };
 
@@ -5680,6 +5681,7 @@ const EN = {
   testModel: "Test model",
   modelTestPassed: "Model OK · {latency} ms",
   modelTestFailed: "Model test failed: {reason}",
+  modelTestNoReply: "No text reply",
   modelSearch: "Search models",
   modelSearchDesc: "Filter by model ID or source name.",
   modelSearchPlaceholder: "Search model IDs...",
@@ -6920,6 +6922,7 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     testModel: "测试模型",
     modelTestPassed: "模型正常 · {latency} ms",
     modelTestFailed: "模型测试失败：{reason}",
+    modelTestNoReply: "未返回文本",
     modelSearch: "搜索模型",
     modelSearchDesc: "按模型 ID 或模型源名称筛选。",
     modelSearchPlaceholder: "搜索模型 ID…",
@@ -13398,7 +13401,13 @@ export default class CancipPlugin extends Plugin {
             lastError = `HTTP ${response.status}`;
             continue;
           }
-          const result: ModelProbeResult = { ok: true, model: modelId, profileId: resolvedProfileId, endpoint: candidate.url, latencyMs: Math.max(0, Date.now() - started), checkedAt: new Date().toISOString() };
+          const json = response.json;
+          const responseText = isRecord(json) && Array.isArray(json.choices)
+            ? String((isRecord(json.choices[0]) && isRecord(json.choices[0].message) ? json.choices[0].message.content : "") || "").trim()
+            : isRecord(json) && typeof json.output_text === "string"
+              ? json.output_text.trim()
+              : "";
+          const result: ModelProbeResult = { ok: true, model: modelId, profileId: resolvedProfileId, endpoint: candidate.url, latencyMs: Math.max(0, Date.now() - started), checkedAt: new Date().toISOString(), responseText: responseText || undefined };
           this.modelTestResults.set(key, result);
           return result;
         } catch (error) {
@@ -40893,6 +40902,7 @@ class CancipView extends ItemView {
       targetRow.toggleClass("is-drop-after", pointerDrag.after);
     };
     let lastModelGroup = "";
+    let currentModelGroupFrame: HTMLElement | null = null;
     const groupRows = new Map<string, HTMLElement[]>();
     const groupExpanded = this.modelMenuExpandedGroups;
     let sourceDrag: { profileId: string; targetProfileId: string; after: boolean } | null = null;
@@ -40933,10 +40943,11 @@ class CancipView extends ItemView {
         ? defaultGroupName
         : this.modelSourceGroupKey(rowProfile);
       if (group !== lastModelGroup) {
+        currentModelGroupFrame = modelSection.createDiv({ cls: "obcc-model-menu-group-frame" });
         const groupProfileId = entryGroups.get(group)?.[0]?.profile.id ?? "";
         const isSourceGroup = group !== defaultGroupName && Boolean(groupProfileId);
         const initiallyExpanded = groupExpanded.has(group);
-        const groupTitle = modelSection.createEl("button", { cls: `obcc-model-menu-group-title ${isSourceGroup ? "is-source-group" : "is-default-group"}`, attr: { type: "button", "aria-expanded": String(initiallyExpanded) } });
+        const groupTitle = currentModelGroupFrame.createEl("button", { cls: `obcc-model-menu-group-title ${isSourceGroup ? "is-source-group" : "is-default-group"}`, attr: { type: "button", "aria-expanded": String(initiallyExpanded) } });
         setIcon(groupTitle.createSpan({ cls: "obcc-model-menu-group-icon" }), isSourceGroup ? "server" : "star");
         const collapseIcon = groupTitle.createSpan({ cls: "obcc-model-menu-collapse-icon" });
         setIcon(collapseIcon, initiallyExpanded ? "chevron-down" : "chevron-right");
@@ -40991,7 +41002,7 @@ class CancipView extends ItemView {
         });
         lastModelGroup = group;
       }
-      const row = modelSection.createDiv({ cls: `obcc-model-menu-row ${isActiveEntry ? "is-active" : ""}` });
+      const row = (currentModelGroupFrame ?? modelSection).createDiv({ cls: `obcc-model-menu-row ${isActiveEntry ? "is-active" : ""}` });
       row.dataset.group = group;
       row.dataset.search = `${model} ${this.modelSourceName(rowProfile)}`.toLocaleLowerCase();
       const rowsForGroup = groupRows.get(group) ?? [];
@@ -41097,6 +41108,9 @@ class CancipView extends ItemView {
       modelTitle.setAttr("title", fullModelLabel);
       modelTitle.setAttr("aria-label", fullModelLabel);
       text.createDiv({ cls: "obcc-command-detail", text: this.modelSourceName(rowProfile) });
+      const testResultEl = text.createDiv({ cls: "obcc-model-test-result" });
+      const previousProbe = this.plugin.getModelTestResult(model, rowProfile.id);
+      if (previousProbe?.responseText) testResultEl.setText(`↳ ${trimContext(previousProbe.responseText, 120)}`);
       if (isActiveEntry) setIcon(body.createSpan({ cls: "obcc-command-check" }), "check");
       body.addEventListener("click", (event) => {
         if (Date.now() < suppressModelSelectUntil) {
@@ -41113,12 +41127,27 @@ class CancipView extends ItemView {
         const open = menu.hasClass("is-hidden");
         menu.toggleClass("is-hidden", !open);
         more.setAttribute("aria-expanded", String(open));
+        if (open) {
+          const rect = more.getBoundingClientRect();
+          menu.setCssProps({
+            position: "fixed",
+            left: `${Math.max(8, Math.floor(rect.right - 150))}px`,
+            top: `${Math.min(window.innerHeight - 44, Math.floor(rect.bottom + 4))}px`
+          });
+          menu.style.zIndex = "10000";
+        }
       });
       more.setAttribute("aria-expanded", "false");
       const testDirect = this.createModelMenuIconButton(actions, "zap", this.t("testModel"), () => {
-        void this.plugin.testModel(model, rowProfile.id).then((result) => new Notice(result.ok
-          ? this.t("modelTestPassed", { latency: result.latencyMs })
-          : this.t("modelTestFailed", { reason: result.error || "unknown error" })));
+        testDirect.disabled = true;
+        void this.plugin.testModel(model, rowProfile.id).then((result) => {
+          testResultEl.setText(result.ok
+            ? `↳ ${result.responseText ? trimContext(result.responseText, 120) : this.t("modelTestNoReply")}`
+            : `↳ ${result.error || this.t("modelTestFailed", { reason: "unknown error" })}`);
+          new Notice(result.ok
+            ? this.t("modelTestPassed", { latency: result.latencyMs })
+            : this.t("modelTestFailed", { reason: result.error || "unknown error" }));
+        }).finally(() => { testDirect.disabled = false; });
       });
       testDirect.classList.add("obcc-model-menu-test-action");
       const moreMenu = row.createDiv({ cls: "obcc-model-menu-more-popover is-hidden" });
@@ -41174,19 +41203,10 @@ class CancipView extends ItemView {
         title.toggleClass("is-model-search-hidden", !visible);
       });
     }
-    if (this.modelMenuEllipsisTimer !== null) window.clearTimeout(this.modelMenuEllipsisTimer);
-    const modelMenuWindow = this.containerEl.ownerDocument.defaultView ?? window;
-    this.modelMenuEllipsisTimer = modelMenuWindow.setTimeout(() => {
-      this.modelMenuEllipsisTimer = null;
-      const titles = this.menuEl
-        ? Array.from(this.menuEl.querySelectorAll<HTMLElement>(".obcc-model-menu-text .obcc-command-title"))
-        : [];
-      for (const modelTitle of titles) {
-        if (!modelTitle.isConnected) continue;
-        const full = modelTitle.dataset.fullText ?? modelTitle.textContent ?? "";
-        setMiddleEllipsisText(modelTitle, full, { observe: false });
-      }
-    }, 120);
+    // Model titles use the native CSS ellipsis now. Measuring every title with
+    // canvas after opening a large catalog caused another synchronous layout
+    // pass and hid more of the name than the available width required.
+    this.modelMenuEllipsisTimer = null;
     this.scheduleModelMenuPlacement();
   }
 

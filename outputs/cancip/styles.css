@@ -3623,6 +3623,17 @@ details.obcc-process-step {
   transition: transform 180ms cubic-bezier(.2,.8,.2,1), box-shadow 160ms ease, opacity 160ms ease;
 }
 
+.obcc-model-menu-group-frame {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 5px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--background-secondary) 72%, transparent);
+  contain: layout;
+}
+
 .obcc-model-menu-search {
   flex: 1 1 120px;
   min-width: 90px;
@@ -3759,6 +3770,16 @@ details.obcc-process-step {
   text-overflow: ellipsis;
   white-space: nowrap;
   text-align: left;
+}
+
+.obcc-model-test-result {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.25;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .obcc-model-menu-actions {
