@@ -41206,7 +41206,20 @@ class CancipView extends ItemView {
     // Model titles use the native CSS ellipsis now. Measuring every title with
     // canvas after opening a large catalog caused another synchronous layout
     // pass and hid more of the name than the available width required.
-    this.modelMenuEllipsisTimer = null;
+    const modelMenuWindow = this.containerEl.ownerDocument.defaultView ?? window;
+    this.modelMenuEllipsisTimer = modelMenuWindow.setTimeout(() => {
+      this.modelMenuEllipsisTimer = null;
+      const titles = this.menuEl
+        ? Array.from(this.menuEl.querySelectorAll<HTMLElement>(".obcc-model-menu-text .obcc-command-title")).slice(0, 24)
+        : [];
+      for (const modelTitle of titles) {
+        if (!modelTitle.isConnected) continue;
+        const full = modelTitle.dataset.fullText ?? modelTitle.textContent ?? "";
+        // Apply middle ellipsis only to the first visible batch; the rest keep
+        // the browser-native ellipsis until they are brought into view.
+        setMiddleEllipsisText(modelTitle, full, { observe: false });
+      }
+    }, 180);
     this.scheduleModelMenuPlacement();
   }
 
