@@ -66043,8 +66043,18 @@ class CancipView extends ItemView {
   }
 
   private mergeProcessRecordSteps(left: ProcessRecordStep, right: ProcessRecordStep): ProcessRecordStep {
+    const leftUsage = left.rendered.message.modelUsage;
+    const rightUsage = right.rendered.message.modelUsage;
+    const leftTiming = left.rendered.message.modelTiming;
+    const rightTiming = right.rendered.message.modelTiming;
+    const sameMessage = left.rendered.message.id === right.rendered.message.id;
     const mergedMessage: ChatMessage = {
       ...left.rendered.message,
+      // A low-signal model row may be folded into the adjacent tool row. Keep
+      // its telemetry on the surviving row so the compact header and expanded
+      // usage panel still account for the model call exactly once.
+      modelUsage: mergeProcessModelUsage(leftUsage, rightUsage, sameMessage),
+      modelTiming: mergeProcessModelTiming(leftTiming, rightTiming, sameMessage),
       toolRuns: uniqueToolRunsById([
         ...(left.rendered.message.toolRuns ?? []),
         ...(right.rendered.message.toolRuns ?? [])
@@ -66079,6 +66089,75 @@ class CancipView extends ItemView {
       count: Math.max(left.count, right.count),
       elapsedMs: Math.max(left.elapsedMs, right.elapsedMs)
     };
+  }
+
+  private isLowSignalModelProcessStep(step: ProcessRecordStep): boolean {
+    const message = step.rendered.message;
+    if (!message.modelUsage && !message.modelTiming) return false;
+    if (message.toolRuns?.length || message.changedFileRuns?.length) return false;
+    if (step.readableDetail || step.blocks.length) return false;
+    const headline = step.headline.replace(/\s+/g, " ").trim();
+    if (!headline) return true;
+    return /^(?:模型(?:回复|生成回复|判断任务|根据验证结果生成最终回答)|model response|model generates the response|model decision|model produces the final answer|完成\s*[:：]\s*(?:[\w.-]+|["'`]?\w+["'`]?\s*[:：])|completed?\s*[:：]\s*(?:[\w.-]+|["'`]?\w+["'`]?\s*[:：]))$/i.test(headline);
+  }
+
+  private coalesceLowSignalModelSteps(steps: ProcessRecordStep[]): ProcessRecordStep[] {
+    if (steps.length < 2) return steps.filter((step) => !this.isLowSignalModelProcessStep(step));
+    const output: ProcessRecordStep[] = [];
+    for (let index = 0; index < steps.length; index += 1) {
+      const current = steps[index];
+      if (!this.isLowSignalModelProcessStep(current)) {
+        output.push(current);
+        continue;
+      }
+      let nextIndex = index + 1;
+      while (nextIndex < steps.length && this.isLowSignalModelProcessStep(steps[nextIndex])) nextIndex += 1;
+      const next = steps[nextIndex];
+      if (next) {
+        // Keep the actionable row's title and result; fold model telemetry and
+        // audit material into its expandable body instead of showing a second
+        // generated-rationale row.
+        let merged = this.mergeProcessRecordSteps(next, current);
+        for (let evidenceIndex = index + 1; evidenceIndex < nextIndex; evidenceIndex += 1) {
+          merged = this.mergeProcessRecordSteps(merged, steps[evidenceIndex]);
+        }
+        // The actionable neighbour owns the visible title/brief. The model
+        // row contributes only telemetry and expandable audit evidence.
+        output.push({
+          ...merged,
+          rendered: { ...merged.rendered, message: { ...merged.rendered.message, content: next.rendered.message.content } },
+          headline: next.headline,
+          brief: next.brief,
+           readableDetail: next.readableDetail,
+           detail: next.detail,
+           blocks: next.blocks,
+           auditSections: merged.auditSections,
+           hasDetail: true
+        });
+        index = nextIndex;
+        continue;
+      }
+      // Preserve telemetry from a trailing model row by attaching it to the
+      // previous actionable row instead of creating a second empty line.
+      const previous = output[output.length - 1];
+      if (previous && !this.isLowSignalModelProcessStep(previous)) {
+        let merged = this.mergeProcessRecordSteps(previous, current);
+        for (let evidenceIndex = index + 1; evidenceIndex < steps.length; evidenceIndex += 1) {
+          merged = this.mergeProcessRecordSteps(merged, steps[evidenceIndex]);
+        }
+        output[output.length - 1] = {
+          ...merged,
+          rendered: { ...merged.rendered, message: { ...merged.rendered.message, content: previous.rendered.message.content } },
+          headline: previous.headline,
+          brief: previous.brief,
+          readableDetail: previous.readableDetail,
+          detail: previous.detail,
+          blocks: previous.blocks,
+          hasDetail: true
+        };
+      }
+    }
+    return output;
   }
 
   private renderProcessRecord(items: RenderedMessage[]): void {
@@ -66140,7 +66219,7 @@ class CancipView extends ItemView {
         };
       })
       .filter((step) => this.processStepTitleFromBrief(step.brief, step.headline) && (step.hasDetail || step.headline.length > 0));
-    const steps = this.dedupeProcessRecordSteps(rawSteps);
+    const steps = this.coalesceLowSignalModelSteps(this.dedupeProcessRecordSteps(rawSteps));
     if (!steps.length) return;
     const processFoldKey = this.processRecordFoldKey(items);
     const item = this.messagesEl.createDiv({ cls: "obcc-message obcc-assistant is-process-record" });
@@ -66225,26 +66304,31 @@ class CancipView extends ItemView {
       });
       if (!stepInfo.hasDetail) continue;
       const stepBody = step.createDiv({ cls: "obcc-process-step-detail-body" });
-      if (stepUsage) this.renderProcessStepUsage(stepBody, stepUsage, stepInfo.rendered.message.modelTiming);
-      this.renderProcessStepBrief(stepBody, stepInfo.brief);
-      if (stepInfo.readableDetail) {
-        const readableSection = stepBody.createDiv({ cls: "obcc-process-inline-section is-explanation" });
-        this.createProcessInlineSectionTitle(readableSection, isChineseLanguage(this.plugin.language()) ? "说明" : "Explanation", "message-square-text");
-        const readable = readableSection.createDiv({ cls: "obcc-process-step-readable markdown-rendered" });
-        this.renderWhenProcessStepOpen(readable, () => this.renderMarkdown(readable, stepInfo.readableDetail));
-      }
-      if (stepInfo.auditSections.length || stepInfo.detail) {
-        this.renderStructuredProcessDetail(stepBody, stepInfo.detail, stepFoldKey, stepInfo.auditSections);
-      }
-      if (subagentRuns.length) {
-        const cards = stepBody.createDiv({
-          cls: "obcc-process-subagent-cards is-loading",
-          attr: { "data-process-subagent-message-id": stepInfo.rendered.message.id }
-        });
-        void this.hydrateProcessSubagentCards(cards, stepInfo);
-      }
-      this.renderHiddenToolJson(stepBody, stepInfo.blocks, stepInfo.rendered.display.hasProcessFold, true);
-      this.renderToolRuns(stepBody, stepInfo.rendered.message, true);
+      // DSH-style progressive disclosure: keep only the inexpensive shell in
+      // the DOM initially, then materialize Markdown, audit fields, subagent
+      // cards, and tool results on the first expansion of this step.
+      this.renderWhenProcessStepOpen(stepBody, () => {
+        if (stepUsage) this.renderProcessStepUsage(stepBody, stepUsage, stepInfo.rendered.message.modelTiming);
+        this.renderProcessStepBrief(stepBody, stepInfo.brief);
+        if (stepInfo.readableDetail) {
+          const readableSection = stepBody.createDiv({ cls: "obcc-process-inline-section is-explanation" });
+          this.createProcessInlineSectionTitle(readableSection, isChineseLanguage(this.plugin.language()) ? "说明" : "Explanation", "message-square-text");
+          const readable = readableSection.createDiv({ cls: "obcc-process-step-readable markdown-rendered" });
+          this.renderWhenProcessStepOpen(readable, () => this.renderMarkdown(readable, stepInfo.readableDetail));
+        }
+        if (stepInfo.auditSections.length || stepInfo.detail) {
+          this.renderStructuredProcessDetail(stepBody, stepInfo.detail, stepFoldKey, stepInfo.auditSections);
+        }
+        if (subagentRuns.length) {
+          const cards = stepBody.createDiv({
+            cls: "obcc-process-subagent-cards is-loading",
+            attr: { "data-process-subagent-message-id": stepInfo.rendered.message.id }
+          });
+          void this.hydrateProcessSubagentCards(cards, stepInfo);
+        }
+        this.renderHiddenToolJson(stepBody, stepInfo.blocks, stepInfo.rendered.display.hasProcessFold, true);
+        this.renderToolRuns(stepBody, stepInfo.rendered.message, true);
+      });
     }
     this.renderProcessRecordMeta(body, items);
   }
@@ -86677,6 +86761,38 @@ function normalizeTokenUsage(raw: unknown): TokenUsage | undefined {
     cacheWriteTokens: tokenNumber(raw.cacheWriteTokens) ?? 0,
     reasoningTokens: tokenNumber(raw.reasoningTokens) ?? 0,
     estimated: raw.estimated === true
+  };
+}
+
+/**
+ * Process rows can represent more than one model lifecycle event after the
+ * compact projection folds low-signal reasoning rows into an actionable row.
+ * Sum distinct message telemetry while keeping the old value for a duplicate
+ * render of the same message (SSE redraws must never double-count tokens).
+ */
+function mergeProcessModelUsage(left: TokenUsage | undefined, right: TokenUsage | undefined, sameMessage = false): TokenUsage | undefined {
+  if (!left) return right ? { ...right } : undefined;
+  if (!right || sameMessage) return { ...left };
+  return {
+    inputTokens: left.inputTokens + right.inputTokens,
+    outputTokens: left.outputTokens + right.outputTokens,
+    totalTokens: left.totalTokens + right.totalTokens,
+    cacheReadTokens: (left.cacheReadTokens ?? 0) + (right.cacheReadTokens ?? 0),
+    cacheWriteTokens: (left.cacheWriteTokens ?? 0) + (right.cacheWriteTokens ?? 0),
+    reasoningTokens: (left.reasoningTokens ?? 0) + (right.reasoningTokens ?? 0),
+    estimated: left.estimated || right.estimated
+  };
+}
+
+function mergeProcessModelTiming(left: ModelTiming | undefined, right: ModelTiming | undefined, sameMessage = false): ModelTiming | undefined {
+  if (!left) return right ? { ...right } : undefined;
+  if (!right || sameMessage) return { ...left };
+  const firstTokenCandidates = [left.firstTokenAt, right.firstTokenAt].filter((value): value is number => Number.isFinite(value));
+  const completedCandidates = [left.completedAt, right.completedAt].filter((value): value is number => Number.isFinite(value));
+  return {
+    startedAt: Math.min(left.startedAt, right.startedAt),
+    firstTokenAt: firstTokenCandidates.length ? Math.min(...firstTokenCandidates) : undefined,
+    completedAt: completedCandidates.length ? Math.max(...completedCandidates) : undefined
   };
 }
 
