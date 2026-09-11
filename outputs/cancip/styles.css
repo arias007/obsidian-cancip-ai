@@ -3583,6 +3583,9 @@ details.obcc-process-step {
   overflow-y: auto;
   overflow-x: hidden;
   transform-origin: right bottom;
+  background: var(--background-primary-alt);
+  border: 1px solid var(--interactive-accent);
+  box-shadow: 0 14px 36px rgb(0 0 0 / 24%);
 }
 
 .obcc-model-menu-section {
@@ -3628,10 +3631,20 @@ details.obcc-process-step {
   gap: 4px;
   min-width: 0;
   padding: 5px;
-  border: 1px solid var(--background-modifier-border);
+  border: 2px solid var(--background-modifier-border-hover);
   border-radius: 12px;
-  background: color-mix(in srgb, var(--background-secondary) 72%, transparent);
+  background: var(--background-secondary-alt);
   contain: layout;
+}
+
+.obcc-model-menu-group-frame.is-source {
+  border-color: var(--interactive-accent);
+  background: color-mix(in srgb, var(--interactive-accent) 8%, var(--background-secondary-alt));
+}
+
+.obcc-model-menu-group-frame.is-default {
+  border-color: var(--background-modifier-border-hover);
+  background: var(--background-secondary);
 }
 
 .obcc-model-menu-search {
@@ -3639,7 +3652,7 @@ details.obcc-process-step {
   min-width: 90px;
   height: 26px;
   padding: 3px 8px;
-  border: 1px solid var(--background-modifier-border);
+  border: 1px solid var(--background-modifier-border-hover);
   border-radius: 7px;
   background: var(--background-primary);
   color: var(--text-normal);
@@ -4378,7 +4391,7 @@ details.obcc-process-step {
   padding: 8px 8px 8px 7px;
   border: 1px solid var(--background-modifier-border);
   border-radius: 10px;
-  background: var(--background-secondary);
+  background: var(--background-primary);
   contain: layout paint;
 }
 
@@ -9274,7 +9287,7 @@ input.obcc-review-correction-input {
     max-width: 116px;
   }
 
-  .obcc-model-menu-row {
+.obcc-model-menu-row {
     grid-template-columns: minmax(0, 1fr) max-content;
   }
 

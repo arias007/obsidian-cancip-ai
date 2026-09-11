@@ -13388,8 +13388,8 @@ export default class CancipPlugin extends Plugin {
       const compatibleUrl = /\/v1$/i.test(root) ? `${root}/chat/completions` : `${root}/v1/chat/completions`;
       const responsesUrl = /\/v1$/i.test(root) ? `${root}/responses` : `${root}/v1/responses`;
       const candidates: Array<{ url: string; body: unknown }> = profile.apiMode === "responses"
-        ? [{ url: responsesUrl, body: { model: modelId, input: "ping", max_output_tokens: 1 } }, { url: compatibleUrl, body: { model: modelId, messages: [{ role: "user", content: "ping" }], max_tokens: 1, stream: false } }]
-        : [{ url: compatibleUrl, body: { model: modelId, messages: [{ role: "user", content: "ping" }], max_tokens: 1, stream: false } }, { url: responsesUrl, body: { model: modelId, input: "ping", max_output_tokens: 1 } }];
+        ? [{ url: responsesUrl, body: { model: modelId, input: "你好！请自然地向用户打个招呼，并用一句简短的话介绍你自己。", max_output_tokens: 32 } }, { url: compatibleUrl, body: { model: modelId, messages: [{ role: "user", content: "你好！请自然地向用户打个招呼，并用一句简短的话介绍你自己。" }], max_tokens: 32, stream: false } }]
+        : [{ url: compatibleUrl, body: { model: modelId, messages: [{ role: "user", content: "你好！请自然地向用户打个招呼，并用一句简短的话介绍你自己。" }], max_tokens: 32, stream: false } }, { url: responsesUrl, body: { model: modelId, input: "你好！请自然地向用户打个招呼，并用一句简短的话介绍你自己。", max_output_tokens: 32 } }];
       const started = Date.now();
       let lastError = "";
       for (const candidate of candidates) {
@@ -40943,9 +40943,9 @@ class CancipView extends ItemView {
         ? defaultGroupName
         : this.modelSourceGroupKey(rowProfile);
       if (group !== lastModelGroup) {
-        currentModelGroupFrame = modelSection.createDiv({ cls: "obcc-model-menu-group-frame" });
         const groupProfileId = entryGroups.get(group)?.[0]?.profile.id ?? "";
         const isSourceGroup = group !== defaultGroupName && Boolean(groupProfileId);
+        currentModelGroupFrame = modelSection.createDiv({ cls: `obcc-model-menu-group-frame ${isSourceGroup ? "is-source" : "is-default"}` });
         const initiallyExpanded = groupExpanded.has(group);
         const groupTitle = currentModelGroupFrame.createEl("button", { cls: `obcc-model-menu-group-title ${isSourceGroup ? "is-source-group" : "is-default-group"}`, attr: { type: "button", "aria-expanded": String(initiallyExpanded) } });
         setIcon(groupTitle.createSpan({ cls: "obcc-model-menu-group-icon" }), isSourceGroup ? "server" : "star");
