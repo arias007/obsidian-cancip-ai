@@ -9995,6 +9995,7 @@ export default class CancipPlugin extends Plugin {
   private automationFirstRunTimer: number | null = null;
   private automationIntervalTimer: number | null = null;
   private automationScheduleCleanupRegistered = false;
+  private automationDueCheckPromise: Promise<void> | null = null;
   private automationStateCache: { at: number; tasks: AutomationTask[] } | null = null;
   private automationStateReadPromise: Promise<AutomationTask[]> | null = null;
   private automationStatePersistedSignature = "";
@@ -18399,6 +18400,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
   }
 
   async saveSettings(): Promise<void> {
+    const previousAutomationSchedule = `${this.settings.automationsEnabled}|${this.settings.automationCheckMinutes}|${this.settings.automationStartupGraceEnabled}|${this.settings.automationStartupGraceMinutes}`;
     const snapshot = normalizeSettings(cloneJsonObject(this.settings) as Partial<Settings>);
     if (!snapshot.systemPrompt || isBundledSystemPrompt(snapshot.systemPrompt)) {
       snapshot.systemPrompt = defaultSystemPromptForNavigationPath(memoryPathForFolder(snapshot.memoryFolder, "CANCIP_NAV.md"));
@@ -18422,7 +18424,8 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     }
     await this.settingsSavePromise;
     this.applyStatusBarVisibility();
-    this.scheduleAutomations();
+    const nextAutomationSchedule = `${this.settings.automationsEnabled}|${this.settings.automationCheckMinutes}|${this.settings.automationStartupGraceEnabled}|${this.settings.automationStartupGraceMinutes}`;
+    if (previousAutomationSchedule !== nextAutomationSchedule || !this.automationScheduleCleanupRegistered) this.scheduleAutomations();
   }
 
   private async flushQueuedSettingsSaves(): Promise<void> {
@@ -28115,6 +28118,17 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
   }
 
   async maybeRunDueAutomations(): Promise<void> {
+    if (this.automationDueCheckPromise) return await this.automationDueCheckPromise;
+    const run = this.maybeRunDueAutomationsUnlocked();
+    this.automationDueCheckPromise = run;
+    try {
+      await run;
+    } finally {
+      if (this.automationDueCheckPromise === run) this.automationDueCheckPromise = null;
+    }
+  }
+
+  private async maybeRunDueAutomationsUnlocked(): Promise<void> {
     if (!this.settings.automationsEnabled) return;
     if (this.automationStartupDelayRemainingMs() > 0) return;
     const tasks = await this.loadAutomations();
@@ -32274,6 +32288,7 @@ class CancipDocumentWorkbenchView extends FileView {
   private noteDrawCanvas: HTMLCanvasElement | null = null;
   private noteDrawStage: HTMLElement | null = null;
   private noteDrawResizeObserver: ResizeObserver | null = null;
+  private noteDrawResizeFrame: number | null = null;
   private noteDrawUnsubscribe: (() => void) | null = null;
   private noteDrawStrokes: DocumentDrawingStroke[] = [];
   private noteDrawTextStrokes: DocumentDrawingTextStroke[] = [];
@@ -34048,6 +34063,11 @@ class CancipDocumentWorkbenchView extends FileView {
     this.noteDrawUnsubscribe = null;
     this.noteDrawResizeObserver?.disconnect();
     this.noteDrawResizeObserver = null;
+    if (this.noteDrawResizeFrame !== null) {
+      const win = this.noteDrawStage?.ownerDocument.defaultView ?? activeWindow;
+      win.cancelAnimationFrame(this.noteDrawResizeFrame);
+      this.noteDrawResizeFrame = null;
+    }
     this.noteDrawCanvas = null;
     this.noteDrawStage = null;
     this.noteDrawStrokes = [];
@@ -35550,7 +35570,14 @@ class CancipDocumentWorkbenchView extends FileView {
     this.noteDrawCanvas = canvas;
     this.noteDrawStrokes = await this.readNoteDrawStrokes(file);
     this.noteDrawResizeObserver = typeof ResizeObserver === "function"
-      ? new ResizeObserver(() => this.resizeNoteDrawCanvas())
+      ? new ResizeObserver(() => {
+        if (this.noteDrawResizeFrame !== null) return;
+        const win = stage.ownerDocument.defaultView ?? activeWindow;
+        this.noteDrawResizeFrame = win.requestAnimationFrame(() => {
+          this.noteDrawResizeFrame = null;
+          if (this.noteDrawStage === stage && this.noteDrawCanvas?.isConnected) this.resizeNoteDrawCanvas();
+        });
+      })
       : null;
     this.noteDrawResizeObserver?.observe(stage);
     this.resizeNoteDrawCanvas();
@@ -36146,6 +36173,8 @@ class CancipReviewLeafView extends ItemView {
   private keyboardLockHeight = 0;
   private keyboardLockedElements: HTMLElement[] = [];
   private reviewTreeResizeObserver: ResizeObserver | null = null;
+  private reviewTreeLayoutFrame: number | null = null;
+  private reviewTreeLayoutTimers: number[] = [];
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -36183,6 +36212,11 @@ class CancipReviewLeafView extends ItemView {
     this.openReviewSwipe = null;
     this.reviewTreeResizeObserver?.disconnect();
     this.reviewTreeResizeObserver = null;
+    const win = this.contentEl.ownerDocument.defaultView;
+    if (this.reviewTreeLayoutFrame !== null) win?.cancelAnimationFrame(this.reviewTreeLayoutFrame);
+    this.reviewTreeLayoutFrame = null;
+    for (const timer of this.reviewTreeLayoutTimers) win?.clearTimeout(timer);
+    this.reviewTreeLayoutTimers = [];
   }
 
   async openPackage(path = "", itemPath = "", refreshSession = true): Promise<void> {
@@ -36308,15 +36342,29 @@ class CancipReviewLeafView extends ItemView {
   }
 
   private scheduleReviewTreeLayoutSync(tree: HTMLElement): void {
-    this.syncReviewTreeLayout(tree);
     const win = tree.ownerDocument.defaultView;
-    win?.requestAnimationFrame(() => this.syncReviewTreeLayout(tree));
-    win?.setTimeout(() => this.syncReviewTreeLayout(tree), 120);
-    win?.setTimeout(() => this.syncReviewTreeLayout(tree), 480);
+    if (!win || !tree.isConnected) return;
+    for (const timer of this.reviewTreeLayoutTimers) win.clearTimeout(timer);
+    this.reviewTreeLayoutTimers = [];
+    const queue = () => {
+      if (this.reviewTreeLayoutFrame !== null) return;
+      this.reviewTreeLayoutFrame = win.requestAnimationFrame(() => {
+        this.reviewTreeLayoutFrame = null;
+        if (tree.isConnected) this.syncReviewTreeLayout(tree);
+      });
+    };
+    queue();
+    for (const delay of [120, 480]) {
+      const timer = win.setTimeout(() => {
+        this.reviewTreeLayoutTimers = this.reviewTreeLayoutTimers.filter((id) => id !== timer);
+        queue();
+      }, delay);
+      this.reviewTreeLayoutTimers.push(timer);
+    }
     this.reviewTreeResizeObserver?.disconnect();
     const ResizeObserverCtor = win?.ResizeObserver;
     if (ResizeObserverCtor) {
-      this.reviewTreeResizeObserver = new ResizeObserverCtor(() => this.syncReviewTreeLayout(tree));
+      this.reviewTreeResizeObserver = new ResizeObserverCtor(() => queue());
       this.reviewTreeResizeObserver.observe(this.contentEl);
     }
   }
@@ -37573,6 +37621,9 @@ class CancipView extends ItemView {
   private programmaticScrollReleaseTimer: number | null = null;
   private footerResizeObserver: ResizeObserver | null = null;
   private footerLayoutFrame: number | null = null;
+  private footerLayoutApplying = false;
+  private footerLayoutQueued = false;
+  private footerLayoutSignature = "";
   private footerResizeCleanup: (() => void) | null = null;
   private prepareInputFocus: (() => void) | null = null;
   private drainQueueAfterRequest = true;
@@ -38648,6 +38699,9 @@ class CancipView extends ItemView {
     this.footerResizeObserver = null;
     this.footerResizeCleanup?.();
     this.footerResizeCleanup = null;
+    this.footerLayoutQueued = false;
+    this.footerLayoutApplying = false;
+    this.footerLayoutSignature = "";
     if (this.footerLayoutFrame !== null) window.cancelAnimationFrame(this.footerLayoutFrame);
     this.footerLayoutFrame = null;
     this.cleanupAutocompleteUi();
@@ -39060,18 +39114,19 @@ class CancipView extends ItemView {
     let footerLayoutFallbackTimer: number | null = null;
     const nativeListenerHandles: Array<{ remove: () => void | Promise<void> }> = [];
     const sync = () => {
-      if (this.footerLayoutFrame !== null) viewWindow.cancelAnimationFrame(this.footerLayoutFrame);
-      if (footerLayoutFallbackTimer !== null) viewWindow.clearTimeout(footerLayoutFallbackTimer);
+      if (disposed || this.footerLayoutApplying || this.footerLayoutQueued) return;
+      this.footerLayoutQueued = true;
       let applied = false;
       const apply = () => {
         if (applied) return;
         applied = true;
+        this.footerLayoutQueued = false;
         if (this.footerLayoutFrame !== null) viewWindow.cancelAnimationFrame(this.footerLayoutFrame);
         this.footerLayoutFrame = null;
         if (footerLayoutFallbackTimer !== null) viewWindow.clearTimeout(footerLayoutFallbackTimer);
         footerLayoutFallbackTimer = null;
         const footer = this.footerEl;
-        if (!footer) return;
+        if (!footer || disposed) return;
         const current = viewportMetrics();
         if (!inputFocused) {
           baseline = current;
@@ -39099,19 +39154,25 @@ class CancipView extends ItemView {
         const messageFooterClearance = keyboardVisible
           ? Math.max(0, Math.ceil(this.messagesEl.getBoundingClientRect().bottom - footerTop - messageBottomPadding - messageGap + 2))
           : 0;
+        const footerLeft = footerFloating ? Math.max(0, Math.floor(rootRect.left)) : 0;
+        const footerRight = footerFloating ? Math.max(0, Math.floor(layoutWidth - rootRect.right)) : 0;
+        const signature = [footerHeightPx, footerBottom, messageOcclusion, messageFooterClearance, footerLeft, footerRight, keyboardVisible ? 1 : 0].join("|");
+        if (signature === this.footerLayoutSignature) return;
+        this.footerLayoutSignature = signature;
+        this.footerLayoutApplying = true;
         root.toggleClass("has-visual-keyboard", keyboardVisible);
         root.setCssProps({
           "--obcc-keyboard-inset": "0px",
           "--obcc-keyboard-occlusion": `${messageOcclusion}px`,
           "--obcc-message-footer-clearance": `${messageFooterClearance}px`,
           "--obcc-footer-viewport-bottom": `${footerBottom}px`,
-          "--obcc-footer-left": footerFloating ? `${Math.max(0, Math.floor(rootRect.left))}px` : "0px",
-          "--obcc-footer-right": footerFloating ? `${Math.max(0, Math.floor(layoutWidth - rootRect.right))}px` : "0px"
+          "--obcc-footer-left": `${footerLeft}px`,
+          "--obcc-footer-right": `${footerRight}px`
         });
         footer.setCssProps({
           "--obcc-footer-viewport-bottom": `${footerBottom}px`,
-          "--obcc-footer-left": footerFloating ? `${Math.max(0, Math.floor(rootRect.left))}px` : "0px",
-          "--obcc-footer-right": footerFloating ? `${Math.max(0, Math.floor(layoutWidth - rootRect.right))}px` : "0px"
+          "--obcc-footer-left": `${footerLeft}px`,
+          "--obcc-footer-right": `${footerRight}px`
         });
         const footerHeight = `${footerHeightPx}px`;
         root.setCssProps({ "--obcc-footer-height": footerHeight });
@@ -39123,6 +39184,7 @@ class CancipView extends ItemView {
         }
         keyboardWasVisible = keyboardVisible;
         previousMessageFooterClearance = messageFooterClearance;
+        this.footerLayoutApplying = false;
       };
       this.footerLayoutFrame = viewWindow.requestAnimationFrame(apply);
       footerLayoutFallbackTimer = viewWindow.setTimeout(apply, 80);
@@ -90797,6 +90859,7 @@ function modelReceivedDisplayText(audit: ModelCallAudit): string {
 }
 
 const middleEllipsisObservers = new WeakMap<HTMLElement, ResizeObserver>();
+const middleEllipsisStates = new WeakMap<HTMLElement, { raf: number | null; rendering: boolean; width: number; full: string; rendered: string }>();
 
 function middleEllipsisByChars(value: string, maxChars = 18): string {
   const chars = Array.from(value);
@@ -90813,33 +90876,49 @@ function setMiddleEllipsisText(element: HTMLElement, value: string, options: { o
   element.setAttr("title", full);
   element.setAttr("aria-label", full);
   middleEllipsisObservers.get(element)?.disconnect();
+  const previous = middleEllipsisStates.get(element);
+  if (previous && previous.raf !== null) (element.ownerDocument.defaultView ?? activeWindow).cancelAnimationFrame(previous.raf);
+  const state = { raf: null as number | null, rendering: false, width: -1, full, rendered: "" };
+  middleEllipsisStates.set(element, state);
 
   const render = () => {
+    if (state.rendering || state.full !== full) return;
+    state.rendering = true;
     if (!element.isConnected) {
-      element.setText(middleEllipsisByChars(full));
+      const fallback = middleEllipsisByChars(full);
+      if (state.rendered !== fallback) { element.setText(fallback); state.rendered = fallback; }
+      state.rendering = false;
       return;
     }
     const available = Math.max(0, element.clientWidth - 4);
+    if (state.width === available && state.rendered) { state.rendering = false; return; }
+    state.width = available;
     if (available <= 0) {
-      element.setText(middleEllipsisByChars(full));
+      const fallback = middleEllipsisByChars(full);
+      if (state.rendered !== fallback) { element.setText(fallback); state.rendered = fallback; }
+      state.rendering = false;
       return;
     }
     const chars = Array.from(full);
     if (!chars.length) {
-      element.setText("");
+      if (state.rendered !== "") { element.setText(""); state.rendered = ""; }
+      state.rendering = false;
       return;
     }
     const style = window.getComputedStyle(element);
     const canvas = document.createElement("canvas");
     const context = canvas.getContext("2d");
     if (!context) {
-      element.setText(middleEllipsisByChars(full));
+      const fallback = middleEllipsisByChars(full);
+      if (state.rendered !== fallback) { element.setText(fallback); state.rendered = fallback; }
+      state.rendering = false;
       return;
     }
     context.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
     const fits = (text: string) => context.measureText(text).width <= available;
     if (fits(full)) {
-      element.setText(full);
+      if (state.rendered !== full) { element.setText(full); state.rendered = full; }
+      state.rendering = false;
       return;
     }
     let low = 2;
@@ -90857,13 +90936,18 @@ function setMiddleEllipsisText(element: HTMLElement, value: string, options: { o
         high = visible - 1;
       }
     }
-    element.setText(best);
+    if (state.rendered !== best) { element.setText(best); state.rendered = best; }
+    state.rendering = false;
   };
 
   render();
   if (options.observe === false) return;
   if (typeof ResizeObserver !== "undefined") {
-    const observer = new ResizeObserver(render);
+    const observer = new ResizeObserver(() => {
+      if (state.raf !== null) return;
+      const win = element.ownerDocument.defaultView ?? activeWindow;
+      state.raf = win.requestAnimationFrame(() => { state.raf = null; render(); });
+    });
     observer.observe(element);
     middleEllipsisObservers.set(element, observer);
   } else {
