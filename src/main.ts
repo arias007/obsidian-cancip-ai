@@ -37462,6 +37462,7 @@ class CancipView extends ItemView {
   private modelMenuSignature = "";
   private modelMenuEllipsisTimer: number | null = null;
   private modelMenuSearchQuery = "";
+  private modelMenuExpandedGroups = new Set<string>();
   private modelMenuCatalogRefreshAt = 0;
   private headerMenuEl: HTMLElement | null = null;
   private moreButtonEl: HTMLButtonElement | null = null;
@@ -40656,7 +40657,10 @@ class CancipView extends ItemView {
       ...this.plugin.agentModelOptions().map((item) => item.model),
       ...normalizeModelOptions(this.plugin.settings.modelOptions, this.plugin.settings.model)
     ]);
-    if (Date.now() - this.modelMenuCatalogRefreshAt > 30000) {
+    // A short freshness window keeps provider catalogs live when a source
+    // changes, without starting duplicate requests while the menu is being
+    // opened repeatedly.
+    if (Date.now() - this.modelMenuCatalogRefreshAt > 5000) {
       this.modelMenuCatalogRefreshAt = Date.now();
       // Refreshing the catalog is asynchronous.  Do not reopen a menu that
       // the user has already dismissed (or that belongs to a view which has
@@ -40756,7 +40760,7 @@ class CancipView extends ItemView {
     };
     let lastModelGroup = "";
     const groupRows = new Map<string, HTMLElement[]>();
-    const groupExpanded = new Set<string>();
+    const groupExpanded = this.modelMenuExpandedGroups;
     let sourceDrag: { profileId: string; targetProfileId: string; after: boolean } | null = null;
     const defaultModelSet = new Set<string>(MODEL_PRESETS.slice(0, 8));
     const defaultGroupName = this.t("defaultModelsGroup");
