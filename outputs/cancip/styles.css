@@ -2152,6 +2152,93 @@ details.obcc-process-step {
   font-size: 10px;
 }
 
+/* DSH-inspired semantic trajectory rows.  The numeric anchor remains in the
+ * DOM for stable references, while the visual row is driven by its lifecycle
+ * kind and compact summary. */
+.obcc-process-step-index[aria-hidden="true"] {
+  width: 0;
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  overflow: hidden;
+  opacity: 0;
+}
+
+.obcc-process-step-kind-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 18px;
+  color: var(--text-muted);
+}
+
+.obcc-process-step-kind-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.obcc-process-step.is-think .obcc-process-step-kind-icon {
+  color: var(--interactive-accent);
+}
+
+.obcc-process-step.is-tool .obcc-process-step-kind-icon {
+  color: var(--text-accent);
+}
+
+.obcc-process-step.is-context .obcc-process-step-kind-icon {
+  color: var(--text-faint);
+}
+
+.obcc-process-step-summary {
+  display: inline-block;
+  min-width: 0;
+  margin-left: 6px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 400;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: baseline;
+}
+
+.obcc-process-step.is-think .obcc-process-step-summary {
+  color: var(--text-faint);
+  font-style: italic;
+}
+
+.obcc-process-reasoning {
+  margin: 0 0 8px;
+  padding: 7px 9px;
+  border-left: 2px solid var(--interactive-accent);
+  border-radius: 3px;
+  background: var(--background-secondary-alt);
+}
+
+.obcc-process-reasoning-title {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.obcc-process-reasoning-icon,
+.obcc-process-reasoning-icon svg {
+  width: 13px;
+  height: 13px;
+}
+
+.obcc-process-reasoning-text {
+  color: var(--text-normal);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
 .obcc-process-step-title {
   min-width: 0;
   overflow-wrap: anywhere;

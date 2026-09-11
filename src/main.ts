@@ -2108,6 +2108,11 @@ type ProcessStepBrief = {
   next: string;
 };
 
+/** DSH-style semantic row variants.  A process row is a lifecycle event, not
+ * merely the next item in an array; the variant drives its icon, title and
+ * disclosure body. */
+type ProcessStepKind = "context" | "think" | "tool" | "result";
+
 type RenderedMessage = {
   message: ChatMessage;
   display: MessageDisplay;
@@ -2116,6 +2121,9 @@ type RenderedMessage = {
 
 type ProcessRecordStep = {
   rendered: RenderedMessage;
+  kind: ProcessStepKind;
+  reasoningSummary: string;
+  reasoningDetail: string;
   headline: string;
   brief: ProcessStepBrief;
   readableDetail: string;
@@ -45377,10 +45385,23 @@ class CancipView extends ItemView {
     const display = prepareMessageDisplay(redactSensitiveText(message.content));
     const headline = this.processStepHeadline(message, display);
     const brief = this.processBriefForMessage(message, headline, "");
-    const title = this.processStepTitleFromBrief(brief, headline)
+    const kind = step.dataset.processStepKind as ProcessStepKind | undefined;
+    const title = kind === "think"
+      ? (isChineseLanguage(this.plugin.language()) ? "思考" : "Thinking")
+      : kind === "context"
+        ? (isChineseLanguage(this.plugin.language()) ? "上下文" : "Context")
+        : this.processStepTitleFromBrief(brief, headline)
       || (isChineseLanguage(this.plugin.language()) ? "模型回复" : "Model response");
     const titleEl = step.querySelector<HTMLElement>(".obcc-process-step-title-text");
     if (titleEl && titleEl.textContent !== title) titleEl.setText(title);
+    if (kind === "think") {
+      const summary = this.processReasoningSummary(message, [], message.processAuditSections ?? [], "");
+      const summaryEl = step.querySelector<HTMLElement>(".obcc-process-step-summary");
+      if (summaryEl && summary && summaryEl.textContent !== summary) {
+        summaryEl.setText(summary);
+        summaryEl.setAttr("title", summary);
+      }
+    }
 
     const usage = message.modelUsage;
     if (usage) {
@@ -66075,6 +66096,15 @@ class CancipView extends ItemView {
     return {
       ...left,
       rendered: { ...left.rendered, message: mergedMessage },
+      kind: left.kind === "tool" || right.kind === "tool"
+        ? "tool"
+        : left.kind === "think" || right.kind === "think"
+          ? "think"
+          : left.kind === "context" || right.kind === "context"
+            ? "context"
+            : "result",
+      reasoningSummary: left.reasoningSummary || right.reasoningSummary,
+      reasoningDetail: left.reasoningDetail || right.reasoningDetail,
       brief: {
         reasoning: right.brief.reasoning || left.brief.reasoning,
         action: right.brief.action || left.brief.action,
@@ -66093,12 +66123,89 @@ class CancipView extends ItemView {
 
   private isLowSignalModelProcessStep(step: ProcessRecordStep): boolean {
     const message = step.rendered.message;
+    // A genuine reasoning row is intentionally kept as its own DSH-style
+    // Think disclosure.  Only protocol-only model lifecycle rows are folded
+    // into the adjacent actionable row.
+    if (step.kind === "think" && step.reasoningSummary) return false;
     if (!message.modelUsage && !message.modelTiming) return false;
     if (message.toolRuns?.length || message.changedFileRuns?.length) return false;
     if (step.readableDetail || step.blocks.length) return false;
     const headline = step.headline.replace(/\s+/g, " ").trim();
     if (!headline) return true;
     return /^(?:模型(?:回复|生成回复|判断任务|根据验证结果生成最终回答)|model response|model generates the response|model decision|model produces the final answer|完成\s*[:：]\s*(?:[\w.-]+|["'`]?\w+["'`]?\s*[:：])|completed?\s*[:：]\s*(?:[\w.-]+|["'`]?\w+["'`]?\s*[:：]))$/i.test(headline);
+  }
+
+  private processReasoningSummary(
+    message: ChatMessage,
+    blocks: FoldedMessageBlock[],
+    auditSections: ProcessAuditSection[],
+    visibleDetail: string
+  ): string {
+    const candidates = [
+      message.processBrief?.reasoning,
+      ...blocks
+        .filter((block) => /^(?:reasoning|thinking|思考|推理)(?:\b|\s|[:：])/i.test(block.title.trim()))
+        .map((block) => block.content),
+      ...auditSections
+        .filter((section) => /^(?:reasoning|thinking|思考|推理)(?:\b|\s|[:：])/i.test(section.title.trim()))
+        .map((section) => section.content),
+      visibleDetail
+    ];
+    for (const candidate of candidates) {
+      const lines = redactSensitiveText(candidate ?? "")
+        .replace(/<details\b[^>]*>[\s\S]*?<\/details>/gi, " ")
+        .split(/\r?\n/)
+        .map((line) => line.replace(/^\s*(?:#{1,6}|[-*•]|\d+[.)、])\s*/, "").replace(/\s+/g, " ").trim())
+        .filter((line) => line && !isProcessProtocolLeakLine(line) && !isPromptishProgressNoteLine(line));
+      const first = lines.find((line) => line.length >= 12);
+      if (!first) continue;
+      if (/^(?:思考过程|思考|推理过程|reasoning|thinking)[:：]?$/i.test(first)) continue;
+      return trimContext(first, 140);
+    }
+    return "";
+  }
+
+  private processReasoningDetail(
+    message: ChatMessage,
+    blocks: FoldedMessageBlock[],
+    auditSections: ProcessAuditSection[],
+    visibleDetail: string
+  ): string {
+    const candidates = [
+      message.processBrief?.reasoning,
+      ...blocks
+        .filter((block) => /^(?:reasoning|thinking|思考|推理)(?:\b|\s|[:：])/i.test(block.title.trim()))
+        .map((block) => block.content),
+      ...auditSections
+        .filter((section) => /^(?:reasoning|thinking|思考|推理)(?:\b|\s|[:：])/i.test(section.title.trim()))
+        .map((section) => section.content),
+      visibleDetail
+    ];
+    for (const candidate of candidates) {
+      const lines = redactSensitiveText(candidate ?? "")
+        .replace(/<details\b[^>]*>[\s\S]*?<\/details>/gi, " ")
+        .split(/\r?\n/)
+        .map((line) => line.replace(/^\s*(?:#{1,6}|[-*•]|\d+[.)、])\s*/, "").trimEnd())
+        .filter((line) => line.trim() && !isProcessProtocolLeakLine(line.trim()) && !isPromptishProgressNoteLine(line.trim()));
+      const detail = lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+      if (detail.length >= 12) return trimContext(detail, 6000);
+    }
+    return "";
+  }
+
+  private processStepKind(
+    message: ChatMessage,
+    headline: string,
+    reasoningSummary: string,
+    blocks: FoldedMessageBlock[],
+    auditSections: ProcessAuditSection[],
+    visibleDetail: string
+  ): ProcessStepKind {
+    if (message.toolRuns?.length || message.changedFileRuns?.length) return "tool";
+    if (reasoningSummary && !visibleDetail && !hasCancipActionMarker(message.content)) return "think";
+    const contextText = [headline, ...blocks.map((block) => block.title), ...auditSections.map((section) => section.title)].join(" ");
+    if (/上下文|context|准备|prepar/i.test(contextText) && !visibleDetail) return "context";
+    return "result";
   }
 
   private coalesceLowSignalModelSteps(steps: ProcessRecordStep[]): ProcessRecordStep[] {
@@ -66197,6 +66304,26 @@ class CancipView extends ItemView {
         const blocks = allBlocks.filter((block) => !structuredSet.has(block));
         const detail = structuredBlocks.map((item) => item.content).filter(Boolean).join("\n\n");
         const brief = this.processBriefForMessage(normalizedRendered.message, headline, visibleDetail);
+        const reasoningSummary = this.processReasoningSummary(
+          normalizedRendered.message,
+          blocks,
+          auditSections,
+          visibleDetail
+        );
+        const reasoningDetail = this.processReasoningDetail(
+          normalizedRendered.message,
+          blocks,
+          auditSections,
+          visibleDetail
+        );
+        const kind = this.processStepKind(
+          normalizedRendered.message,
+          headline,
+          reasoningSummary,
+          blocks,
+          auditSections,
+          visibleDetail
+        );
         const hasDetail = Object.values(brief).some((value) => Boolean(value.trim()))
           || Boolean(visibleDetail)
           || Boolean(detail)
@@ -66207,6 +66334,9 @@ class CancipView extends ItemView {
           || Boolean(normalizedRendered.message.modelUsage);
         return {
           rendered: normalizedRendered,
+          kind,
+          reasoningSummary,
+          reasoningDetail,
           headline,
           brief,
           readableDetail: visibleDetail,
@@ -66236,6 +66366,8 @@ class CancipView extends ItemView {
       const stepFoldKey = `${processFoldKey}:step-${stepInfo.rendered.message.id}`;
       const step = body.createEl("details", { cls: "obcc-process-step" });
       step.dataset.processStepMessageId = stepInfo.rendered.message.id;
+      step.dataset.processStepKind = stepInfo.kind;
+      step.addClass(`is-${stepInfo.kind}`);
       const subagentRuns = this.processStepSubagentRuns(stepInfo);
       const stepRuns = uniqueToolRunsById([...(stepInfo.rendered.message.toolRuns ?? []), ...(stepInfo.rendered.message.changedFileRuns ?? [])]);
       const isLiveStep = this.progressStepTimers.has(stepInfo.rendered.message.id)
@@ -66244,7 +66376,12 @@ class CancipView extends ItemView {
       this.wireDetails(step, `process-step:${stepFoldKey}`, isLiveStep || needsIntervention, false, true);
       const stepHead = this.createProcessSummary(step, "");
       stepHead.addClass("obcc-process-step-head");
-      stepHead.createSpan({ cls: "obcc-process-step-index", text: String(index + 1) });
+      // Keep the index in the DOM for stable anchors and plan references, but
+      // let the semantic variant (Think/Tool/Context/Result) carry the visual
+      // hierarchy, as in DSH's trajectory rows.
+      stepHead.createSpan({ cls: "obcc-process-step-index", text: String(index + 1), attr: { "aria-hidden": "true" } });
+      const kindIcon = stepHead.createSpan({ cls: "obcc-process-step-kind-icon", attr: { "aria-hidden": "true" } });
+      setIcon(kindIcon, stepInfo.kind === "think" ? "sparkles" : stepInfo.kind === "tool" ? "wrench" : stepInfo.kind === "context" ? "layers-3" : "check" );
       const stepTitle = stepHead.createSpan({ cls: "obcc-process-step-title" });
       if (stepInfo.rendered.message.automationTitle) {
         const automationBadge = stepTitle.createSpan({
@@ -66254,11 +66391,22 @@ class CancipView extends ItemView {
         setIcon(automationBadge.createSpan({ cls: "obcc-process-automation-badge-icon" }), "clock-3");
         automationBadge.createSpan({ text: trimContext(stepInfo.rendered.message.automationTitle, 28) });
       }
-      const processTitle = this.processStepTitleFromBrief(stepInfo.brief, stepInfo.headline);
+      const processTitle = stepInfo.kind === "think"
+        ? (isChineseLanguage(this.plugin.language()) ? "思考" : "Thinking")
+        : stepInfo.kind === "context"
+          ? (isChineseLanguage(this.plugin.language()) ? "上下文" : "Context")
+          : this.processStepTitleFromBrief(stepInfo.brief, stepInfo.headline);
       stepTitle.createSpan({
         cls: "obcc-process-step-title-text",
         text: stepInfo.count > 1 ? `${processTitle} x${stepInfo.count}` : processTitle
       });
+      if (stepInfo.reasoningSummary) {
+        stepTitle.createSpan({
+          cls: "obcc-process-step-summary",
+          text: stepInfo.reasoningSummary,
+          attr: { title: stepInfo.reasoningSummary }
+        });
+      }
       const stepUsage = stepInfo.rendered.message.modelUsage;
       if (stepUsage) {
         const tokenBadge = stepHead.createSpan({
@@ -66309,6 +66457,9 @@ class CancipView extends ItemView {
       // cards, and tool results on the first expansion of this step.
       this.renderWhenProcessStepOpen(stepBody, () => {
         if (stepUsage) this.renderProcessStepUsage(stepBody, stepUsage, stepInfo.rendered.message.modelTiming);
+        if (stepInfo.kind === "think" && stepInfo.reasoningSummary) {
+          this.renderProcessReasoning(stepBody, stepInfo.reasoningSummary, stepInfo.reasoningDetail);
+        }
         this.renderProcessStepBrief(stepBody, stepInfo.brief);
         if (stepInfo.readableDetail) {
           const readableSection = stepBody.createDiv({ cls: "obcc-process-inline-section is-explanation" });
@@ -66380,6 +66531,18 @@ class CancipView extends ItemView {
           ? this.t("toolRunExecuting")
           : this.t("toolRunExecuted");
     return this.progressStepBrief(headline, readableDetail, status, { task: messageTask, planNext: null });
+  }
+
+  /** Render the compact Think body used by DSH's ReasoningRow.  The summary is
+   * deliberately a single sanitized line; full protocol/audit payloads stay
+   * behind the existing field disclosures and are never duplicated here. */
+  private renderProcessReasoning(parent: HTMLElement, summary: string, detail = ""): void {
+    const section = parent.createDiv({ cls: "obcc-process-reasoning" });
+    const title = section.createDiv({ cls: "obcc-process-reasoning-title" });
+    setIcon(title.createSpan({ cls: "obcc-process-reasoning-icon", attr: { "aria-hidden": "true" } }), "sparkles");
+    title.createSpan({ text: isChineseLanguage(this.plugin.language()) ? "思考摘要" : "Thinking summary" });
+    const body = section.createDiv({ cls: "obcc-process-reasoning-text" });
+    this.renderMarkdown(body, detail || summary);
   }
 
   private taskPromptBeforeMessage(message: ChatMessage): string {
