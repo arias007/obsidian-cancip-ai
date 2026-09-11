@@ -13206,7 +13206,28 @@ export default class CancipPlugin extends Plugin {
     };
   }
 
+  private modelCatalogRefreshPromise: Promise<string[]> | null = null;
+
   async refreshLocalModelCatalog(onProfileDiscovered?: () => void): Promise<string[]> {
+    // Several entry points (startup warmup, the model picker and settings)
+    // can request discovery at the same time.  Without a single-flight guard,
+    // a slower/stale request could save its smaller catalog after a complete
+    // OpenRouter response and make the list jump from hundreds back to five.
+    if (this.modelCatalogRefreshPromise) {
+      const models = await this.modelCatalogRefreshPromise;
+      onProfileDiscovered?.();
+      return models;
+    }
+    const run = this.refreshLocalModelCatalogImpl(onProfileDiscovered);
+    this.modelCatalogRefreshPromise = run;
+    try {
+      return await run;
+    } finally {
+      if (this.modelCatalogRefreshPromise === run) this.modelCatalogRefreshPromise = null;
+    }
+  }
+
+  private async refreshLocalModelCatalogImpl(onProfileDiscovered?: () => void): Promise<string[]> {
     const discovered: Array<{ model: string; profileId: string }> = [];
     let settingsChanged = false;
     const applyProfileModels = async (profile: ApiProfile, profileModels: string[]): Promise<void> => {
