@@ -2086,6 +2086,28 @@ body .obcc-code-action-layer.obcc-code-action-layer > button.copy-code-button.co
   margin-left: auto;
 }
 
+.obcc-process-record-details > summary.obcc-process-record-summary {
+  justify-content: flex-start;
+  gap: 5px;
+  width: 100%;
+  min-width: 0;
+}
+
+.obcc-root details > summary.obcc-process-record-summary::before {
+  display: inline-flex;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin-right: 1px;
+}
+
+.obcc-process-record-summary .obcc-process-summary-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .obcc-process-record-timer {
   display: inline-flex;
   flex: 0 0 auto;
@@ -2196,6 +2218,10 @@ details.obcc-process-step {
 .obcc-process-step-kind-icon svg {
   width: 14px;
   height: 14px;
+}
+
+.obcc-process-step-kind-icon.is-empty {
+  display: none;
 }
 
 .obcc-process-step.is-think .obcc-process-step-kind-icon {
@@ -13397,7 +13423,14 @@ body.is-phone .obcc-review-leaf.has-review-nav .obcc-review-file-nav-tree,
 }
 
 .obcc-process-step-head {
-  grid-template-columns: 14px 20px minmax(0, 1fr) max-content max-content;
+  /* summary::before + hidden anchor + semantic icon + title + token + time */
+  grid-template-columns: 14px 0 16px minmax(0, 1fr) max-content max-content;
+}
+
+.obcc-process-step.is-result .obcc-process-step-head {
+  /* Result rows have no decorative checkmark; let the title start directly
+   * after the fold arrow instead of leaving a phantom icon column. */
+  grid-template-columns: 14px 0 minmax(0, 1fr) max-content max-content;
 }
 
 .obcc-package-install-desc,

@@ -66366,6 +66366,8 @@ class CancipView extends ItemView {
     this.wireDetails(details, processFoldKey, liveProcessRecord ? !this.plugin.settings.processRecordRuntimeCollapsed : false, false, true);
     const processLabel = `${this.t("processRecord")} · ${steps.length}`;
     const processSummary = this.createProcessSummary(details, processLabel, "list-tree");
+    processSummary.addClass("obcc-process-record-summary");
+    processSummary.createSpan({ cls: "obcc-process-summary-label", text: processLabel });
     processSummary.createSpan({
       cls: "obcc-process-record-timer",
       text: formatStepElapsed(this.processRecordElapsedMs(items)),
@@ -66391,7 +66393,10 @@ class CancipView extends ItemView {
       // hierarchy, as in DSH's trajectory rows.
       stepHead.createSpan({ cls: "obcc-process-step-index", text: String(index + 1), attr: { "aria-hidden": "true" } });
       const kindIcon = stepHead.createSpan({ cls: "obcc-process-step-kind-icon", attr: { "aria-hidden": "true" } });
-      setIcon(kindIcon, stepInfo.kind === "think" ? "sparkles" : stepInfo.kind === "tool" ? "wrench" : stepInfo.kind === "context" ? "layers-3" : "check" );
+      if (stepInfo.kind === "think") setIcon(kindIcon, "sparkles");
+      else if (stepInfo.kind === "tool") setIcon(kindIcon, "wrench");
+      else if (stepInfo.kind === "context") setIcon(kindIcon, "layers-3");
+      else kindIcon.addClass("is-empty");
       const stepTitle = stepHead.createSpan({ cls: "obcc-process-step-title" });
       if (stepInfo.rendered.message.automationTitle) {
         const automationBadge = stepTitle.createSpan({
@@ -66951,7 +66956,10 @@ class CancipView extends ItemView {
       cls: "obcc-process-summary obcc-process-record-details is-live-process-record"
     });
     this.wireDetails(details, this.processRecordFoldKey(), !this.plugin.settings.processRecordRuntimeCollapsed, false, true);
-    this.createProcessSummary(details, `${this.t("processRecord")} · 1`, "list-tree");
+    const processLabel = `${this.t("processRecord")} · 1`;
+    const processSummary = this.createProcessSummary(details, processLabel, "list-tree");
+    processSummary.addClass("obcc-process-record-summary");
+    processSummary.createSpan({ cls: "obcc-process-summary-label", text: processLabel });
     const body = details.createDiv({ cls: "obcc-process-body" });
     const summary = this.contextPreparationHeadline(taskSource);
     const brief = this.progressStepBrief(summary, "", this.t("toolRunExecuting"), { task: taskSource });
