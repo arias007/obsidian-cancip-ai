@@ -3638,8 +3638,8 @@ details.obcc-process-step {
 }
 
 .obcc-model-menu-group-frame.is-source {
-  border-color: var(--interactive-accent);
-  background: color-mix(in srgb, var(--interactive-accent) 8%, var(--background-secondary-alt));
+  border-color: var(--background-modifier-border-hover);
+  background: var(--background-secondary-alt);
 }
 
 .obcc-model-menu-group-frame.is-default {
@@ -3684,7 +3684,7 @@ details.obcc-process-step {
 }
 
 .obcc-model-menu-group-title.is-source-group {
-  border-left: 2px solid var(--interactive-accent);
+  border-left: 2px solid var(--background-modifier-border-hover);
   padding-left: 7px;
 }
 
@@ -3744,8 +3744,9 @@ details.obcc-process-step {
 }
 
 .obcc-model-menu-row.is-active {
-  border-color: var(--interactive-accent);
-  background: var(--background-modifier-hover);
+  border: 2px solid var(--interactive-accent);
+  background: color-mix(in srgb, var(--interactive-accent) 10%, var(--background-primary));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--interactive-accent) 22%, transparent);
 }
 
 .obcc-model-menu-row.is-dragging {
