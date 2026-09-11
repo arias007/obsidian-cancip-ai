@@ -40652,7 +40652,16 @@ class CancipView extends ItemView {
     ]);
     if (!Platform.isMobileApp && Date.now() - this.modelMenuCatalogRefreshAt > 30000) {
       this.modelMenuCatalogRefreshAt = Date.now();
-      void this.plugin.refreshLocalModelCatalog().then(() => this.openModelMenu()).catch(() => undefined);
+      // Refreshing the catalog is asynchronous.  Do not reopen a menu that
+      // the user has already dismissed (or that belongs to a view which has
+      // since been closed).  The old unconditional callback was able to make
+      // the cached popover visible again with its previous coordinates,
+      // leaving a model list stranded at the document's top-left corner.
+      void this.plugin.refreshLocalModelCatalog().then(() => {
+        if (this.activeMenu !== "model" || !this.menuEl || this.menuEl.hasClass("is-hidden")) return;
+        this.resetModelMenuCache();
+        this.openModelMenu();
+      }).catch(() => undefined);
     }
     const menuSignature = stableTextHash(JSON.stringify({
       activeProfile: active.id,
@@ -41326,7 +41335,10 @@ class CancipView extends ItemView {
     // drag handlers) made the menu feel delayed on large model catalogs.
     if (!wasModelMenu) this.menuEl.empty();
     this.menuEl.addClass("is-hidden");
-    if (!wasModelMenu) this.menuEl.removeAttribute("style");
+    // Inline coordinates are written by placeCommandMenu().  Clear them on
+    // every close, including the model menu, so a later asynchronous refresh
+    // or a detached/reused overlay can never paint at stale coordinates.
+    this.menuEl.removeAttribute("style");
     this.menuEl.removeClass("is-add");
     this.menuEl.removeClass("is-access");
     this.menuEl.removeClass("is-model");
