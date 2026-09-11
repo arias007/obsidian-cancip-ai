@@ -40807,24 +40807,9 @@ class CancipView extends ItemView {
       ...this.plugin.agentModelOptions().map((item) => item.model),
       ...normalizeModelOptions(this.plugin.settings.modelOptions, this.plugin.settings.model)
     ]);
-    // A short freshness window keeps provider catalogs live when a source
-    // changes, without starting duplicate requests while the menu is being
-    // opened repeatedly.
-    if (Date.now() - this.modelMenuCatalogRefreshAt > 5000) {
-      this.modelMenuCatalogRefreshAt = Date.now();
-      // Refreshing the catalog is asynchronous.  Do not reopen a menu that
-      // the user has already dismissed (or that belongs to a view which has
-      // since been closed).  The old unconditional callback was able to make
-      // the cached popover visible again with its previous coordinates,
-      // leaving a model list stranded at the document's top-left corner.
-      void this.plugin.refreshLocalModelCatalog(() => {
-        // Rebuild after each source completes, so a large OpenRouter catalog
-        // appears progressively instead of waiting for every configured
-        // provider to finish.
-        if (this.activeMenu !== "model" || !this.menuEl || this.menuEl.hasClass("is-hidden")) return;
-        this.scheduleModelMenuCatalogRender();
-      }).catch(() => undefined);
-    }
+    // Discovery runs in the idle/startup path. Opening the picker must stay a
+    // local operation: starting network discovery here can contend with DOM
+    // construction and make a large provider catalog block Obsidian.
     const menuSignature = stableTextHash(JSON.stringify({
       activeProfile: active.id,
       selectedModel: this.plugin.settings.model,
@@ -40940,7 +40925,8 @@ class CancipView extends ItemView {
       });
       sourceDrag = null;
     };
-    for (const entry of orderedEntries) {
+    const renderModelEntries = (batch: ModelMenuEntry[]): void => {
+    for (const entry of batch) {
       const { model, profile: rowProfile } = entry;
       const isActiveEntry = model === this.plugin.settings.model;
       const group = defaultModelSet.has(model) || rowProfile.id === "default"
@@ -41156,6 +41142,31 @@ class CancipView extends ItemView {
           remove.classList.add("obcc-model-menu-more-item");
         }
     }
+    };
+    this.menuEl.appendChild(modelSection);
+    this.modelMenuSignature = menuSignature;
+    this.scheduleModelMenuPlacement();
+    let renderIndex = 0;
+    const renderNextBatch = () => {
+      if (this.activeMenu !== "model" || !this.menuEl || this.menuEl.hasClass("is-hidden")) return;
+      const end = Math.min(orderedEntries.length, renderIndex + 24);
+      renderModelEntries(orderedEntries.slice(renderIndex, end));
+      renderIndex = end;
+      if (renderIndex < orderedEntries.length) {
+        const viewWindow = this.containerEl.ownerDocument.defaultView ?? window;
+        this.modelMenuRefreshFrame = viewWindow.requestAnimationFrame(() => {
+          this.modelMenuRefreshFrame = null;
+          renderNextBatch();
+        });
+        return;
+      }
+      this.finalizeModelMenuRender(modelSection);
+    };
+    renderNextBatch();
+    return;
+  }
+
+  private finalizeModelMenuRender(modelSection: HTMLElement): void {
     if (this.modelMenuSearchQuery) {
       modelSection.querySelectorAll<HTMLElement>(".obcc-model-menu-group-title").forEach((title) => {
         const group = title.dataset.group || "";
@@ -41163,8 +41174,6 @@ class CancipView extends ItemView {
         title.toggleClass("is-model-search-hidden", !visible);
       });
     }
-    this.menuEl.appendChild(modelSection);
-    this.modelMenuSignature = menuSignature;
     if (this.modelMenuEllipsisTimer !== null) window.clearTimeout(this.modelMenuEllipsisTimer);
     const modelMenuWindow = this.containerEl.ownerDocument.defaultView ?? window;
     this.modelMenuEllipsisTimer = modelMenuWindow.setTimeout(() => {
