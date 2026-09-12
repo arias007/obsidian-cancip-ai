@@ -1744,7 +1744,14 @@ type NoteDrawSurfaceHandle = {
   apiVersion?: string;
   ready?: Promise<void>;
   surface?: Record<string, unknown> | null;
+  activate?: (options?: string | Record<string, unknown>) => unknown;
+  deactivate?: (options?: Record<string, unknown>) => unknown;
   toggle?: (options?: Record<string, unknown>) => unknown;
+  setTool?: (tool: string, options?: Record<string, unknown>) => unknown;
+  getState?: (options?: Record<string, unknown>) => unknown;
+  getElements?: (options?: Record<string, unknown>) => unknown;
+  refresh?: () => unknown;
+  on?: (event: string, listener: (detail: unknown) => void) => void | (() => void);
   destroy?: () => unknown;
 };
 
@@ -14606,7 +14613,16 @@ export default class CancipPlugin extends Plugin {
       "html",
       "xml",
       "yaml",
-      "yml"
+      "yml",
+      // Workbench-backed document formats use the same view-level Read
+      // action as ordinary notes; speakFile extracts readable text on demand.
+      "docx",
+      "xlsx",
+      "pptx",
+      "epub",
+      "odt",
+      "ods",
+      "odp"
     ].includes(extension);
   }
 
@@ -17390,6 +17406,12 @@ export default class CancipPlugin extends Plugin {
       const cursor = this.activeTtsViewportBaseCursor(file, fullText);
       const text = sliceTtsTextFromAnchorToEnd(fullText, visibleText, maxChars, cursor) || visibleText || fullText;
       return { text, sourceText: fullText || text };
+    }
+    const kind = documentFormatKind(file);
+    if (["docx", "xlsx", "pptx", "epub", "archive"].includes(kind)) {
+      const document = await this.loadDocumentSnapshot(file);
+      const sourceText = document.markdown || document.sourceText || "";
+      return { text: trimContext(sourceText, maxChars), sourceText };
     }
     const text = await this.app.vault.cachedRead(file);
     return { text: trimContext(text, maxChars), sourceText: text };
@@ -32425,6 +32447,9 @@ class CancipDocumentWorkbenchView extends FileView {
   private noteDrawContentWidth = 0;
   private nativeNoteDrawSurfaceHandle: NoteDrawSurfaceHandle | null = null;
   private nativeNoteDrawSurfaceHost: HTMLElement | null = null;
+  private nativeNoteDrawSurfaceUnsubscribe: (() => void) | null = null;
+  private nativeNoteDrawActivationGuardCleanup: (() => void) | null = null;
+  private nativeNoteDrawSurfaceMountSettled = false;
   private noteDrawSurfaceViewportListeners = new Set<() => void>();
   private readonly noteDrawSurfaceId = `workbench-${++nextDocumentWorkbenchSurfaceId}`;
   private documentHorizontalExtentWidth = 0;
@@ -32807,9 +32832,18 @@ class CancipDocumentWorkbenchView extends FileView {
       return;
     }
     if (this.mode === "reading") {
+      this.contentEl.removeClass("notedraw-body-control");
       await this.openNativeMarkdownMode(this.mode);
       return;
     }
+
+    // NoteDraw's automatic workspace scan treats every non-Markdown root
+    // view as a generic workspace surface.  Cancip's document workbench is
+    // already mounted through the registered-surface API below; marking the
+    // workbench root as a body-control makes NoteDraw skip it as a generic
+    // workspace candidate and prevents a second controller from cleaning up
+    // the registered canvas/toolbar underneath us.
+    this.contentEl.toggleClass("notedraw-body-control", this.mode === "preview");
 
     const shell = root.createDiv({ cls: "obcc-document-shell" });
     const header = shell.createDiv({ cls: "obcc-document-header" });
@@ -32962,11 +32996,15 @@ class CancipDocumentWorkbenchView extends FileView {
       this.workbenchTopModeButton = button;
     }
     const sourceMode = this.rawMarkdownMode();
-    const modeLabel = sourceMode ? this.plugin.t("documentPreview") : this.plugin.t("documentSourceMarkdown");
+    // Match Obsidian's native Markdown view action: the icon describes the
+    // current view and clicking it switches to the other view.
+    const currentModeLabel = sourceMode ? this.plugin.t("documentEdit") : this.plugin.t("documentReading");
+    const targetModeLabel = sourceMode ? this.plugin.t("documentReading") : this.plugin.t("documentEdit");
+    const modeLabel = `${currentModeLabel}\n${targetModeLabel}`;
     this.workbenchTopModeButton.setAttr("aria-label", modeLabel);
     this.workbenchTopModeButton.setAttr("title", modeLabel);
     this.workbenchTopModeButton.toggleClass("is-active", sourceMode);
-    const modeIcon = sourceMode ? "eye" : "file-code-2";
+    const modeIcon = sourceMode ? "eye" : "edit-3";
     if (this.workbenchTopModeButton.dataset.cancipIcon !== modeIcon) {
       this.workbenchTopModeButton.dataset.cancipIcon = modeIcon;
       setIcon(this.workbenchTopModeButton, modeIcon);
@@ -33986,16 +34024,41 @@ class CancipDocumentWorkbenchView extends FileView {
     }
   }
 
+  /**
+   * NoteDraw also scans generic workspace views.  A Cancip workbench owns a
+   * registered surface, so its handle is only reusable while the controller
+   * and the visible DOM nodes still belong to that registered surface.  The
+   * mount promise is allowed to settle once before requiring the canvas and
+   * toolbar: during the first mount those nodes are created asynchronously.
+   */
+  private noteDrawSurfaceHandleIsUsable(stage: HTMLElement, handle: NoteDrawSurfaceHandle | null): boolean {
+    if (!handle || !stage.isConnected) return false;
+    const surface = handle.surface;
+    if (!isRecord(surface) || surface.customSurface !== true) return false;
+    const controller = (stage as HTMLElement & { _noteDrawController?: unknown })._noteDrawController;
+    if (!isRecord(controller) || controller.destroyed === true || controller.registeredSurface !== true) return false;
+    if (!this.nativeNoteDrawSurfaceMountSettled) return true;
+    const canvas = controller.canvas;
+    const toolbar = controller.toolbar;
+    return canvas instanceof HTMLElement && canvas.isConnected
+      && toolbar instanceof HTMLElement && toolbar.isConnected;
+  }
+
   private registerNoteDrawWorkbenchSurface(stage: HTMLElement): NoteDrawSurfaceHandle | null {
     const api = this.noteDrawPublicApi();
     const filePath = normalizePath(this.snapshot?.file.path ?? this.filePath);
     if (!api || typeof api.registerSurface !== "function" || !filePath) return null;
-    if (this.nativeNoteDrawSurfaceHandle && this.nativeNoteDrawSurfaceHost === stage) {
+    if (this.nativeNoteDrawSurfaceHandle
+      && this.nativeNoteDrawSurfaceHost === stage
+      && this.noteDrawSurfaceHandleIsUsable(stage, this.nativeNoteDrawSurfaceHandle)) {
       return this.nativeNoteDrawSurfaceHandle;
     }
     this.nativeNoteDrawSurfaceHandle?.destroy?.();
+    this.nativeNoteDrawSurfaceUnsubscribe?.();
+    this.nativeNoteDrawSurfaceUnsubscribe = null;
     this.nativeNoteDrawSurfaceHandle = null;
     this.nativeNoteDrawSurfaceHost = null;
+    this.nativeNoteDrawSurfaceMountSettled = false;
     try {
       const handle = api.registerSurface({
         owner: "cancip",
@@ -34005,7 +34068,11 @@ class CancipDocumentWorkbenchView extends FileView {
         source: {
           kind: "vault",
           path: filePath,
-          title: this.snapshot?.file.name ?? filePath.split("/").pop() ?? filePath
+          title: this.snapshot?.file.name ?? filePath.split("/").pop() ?? filePath,
+          format: this.snapshot?.file.extension ?? filePath.split(".").pop() ?? "",
+          mediaType: this.snapshot?.file.extension?.toLowerCase() === "docx"
+            ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            : ""
         },
         capabilities: {
           drawing: true,
@@ -34018,17 +34085,133 @@ class CancipDocumentWorkbenchView extends FileView {
       if (!handle || typeof handle !== "object") return null;
       this.nativeNoteDrawSurfaceHandle = handle;
       this.nativeNoteDrawSurfaceHost = stage;
+      this.installNoteDrawOfficeActivationGuard(stage, handle);
+      // The visible square NoteDraw button is owned by NoteDraw itself and
+      // therefore does not pass through Cancip's fallback toggle method.  Use
+      // the public surface event to make DOCX/Office workbench activation
+      // selection-safe regardless of the last global NoteDraw tool.
+      // `surface-changed` is emitted for every tool change as well as for the
+      // inactive -> active transition.  Keep the transition edge so selecting
+      // the pen/text/eraser in NoteDraw's own toolbar is never mistaken for a
+      // new surface activation and immediately forced back to selection mode.
+      let previousActive = this.noteDrawSurfaceIsActive(handle);
+      const onSurfaceChanged = (detail: unknown): void => {
+        if (this.nativeNoteDrawSurfaceHandle !== handle || !stage.isConnected || !isRecord(detail)) return;
+        const eventSurface = isRecord(detail.surface) ? detail.surface : null;
+        const eventActive = typeof detail.active === "boolean"
+          ? detail.active
+          : typeof eventSurface?.active === "boolean" ? eventSurface.active : null;
+        const active = eventActive ?? this.noteDrawSurfaceIsActive(handle);
+        const tool = String(detail.tool ?? eventSurface?.tool ?? "").trim().toLowerCase();
+        const becameActive = active && !previousActive;
+        previousActive = active;
+        if (!becameActive || tool === "select" || tool === "selection") return;
+        void Promise.resolve(handle.activate?.({ tool: "select" })).then(() => {
+          this.scheduleNoteDrawWorkbenchSurfaceSync(stage, handle);
+        }).catch((error) => {
+          this.plugin.devErrors.push(`document workbench NoteDraw select activation failed: ${String(error)}`);
+        });
+      };
+      try {
+        const unsubscribe = handle.on?.("surface-changed", onSurfaceChanged);
+        this.nativeNoteDrawSurfaceUnsubscribe = typeof unsubscribe === "function" ? unsubscribe : null;
+      } catch (error) {
+        this.plugin.devErrors.push(`document workbench NoteDraw surface event binding failed: ${String(error)}`);
+      }
       void Promise.resolve(handle.ready).then(() => {
         if (this.nativeNoteDrawSurfaceHandle !== handle || !stage.isConnected) return;
+        this.nativeNoteDrawSurfaceMountSettled = true;
         this.syncDocumentZoomSurfaces(stage);
         this.notifyNoteDrawSurfaceViewport();
+        this.scheduleNoteDrawWorkbenchSurfaceSync(stage, handle);
       }).catch((error) => {
+        if (this.nativeNoteDrawSurfaceHandle === handle) this.nativeNoteDrawSurfaceMountSettled = true;
         this.plugin.devErrors.push(`document workbench NoteDraw surface ready failed: ${String(error)}`);
       });
       return handle;
     } catch (error) {
       this.plugin.devErrors.push(`document workbench NoteDraw registerSurface failed: ${String(error)}`);
       return null;
+    }
+  }
+
+  /**
+   * NoteDraw's header wand remembers the last Markdown editing tool.  On an
+   * Office preview that can be `edit-md`, which leaves the selection layer
+   * disabled and makes DOCX elements look unselectable.  The header click is
+   * owned by NoteDraw, so wait until its handler completes and force the
+   * registered surface into the normal element-selection tool.  Toolbar
+   * clicks are intentionally not intercepted; users can still choose pen or
+   * text after activation.
+   */
+  private installNoteDrawOfficeActivationGuard(stage: HTMLElement, handle: NoteDrawSurfaceHandle): void {
+    this.nativeNoteDrawActivationGuardCleanup?.();
+    this.nativeNoteDrawActivationGuardCleanup = null;
+    const extension = this.snapshot?.file.extension.toLowerCase() ?? "";
+    if (!stage.isConnected || !["docx", "xlsx", "pptx", "epub", "odt", "ods", "odp"].includes(extension)) return;
+    const hostWindow = stage.ownerDocument.defaultView ?? activeWindow;
+    const onClick = (rawEvent: MouseEvent): void => {
+      const target = rawEvent.target;
+      const element = target instanceof Element ? target : null;
+      if (!element?.closest(".notedraw-webview-button")) return;
+      hostWindow.setTimeout(() => {
+        if (this.nativeNoteDrawSurfaceHandle !== handle || !stage.isConnected) return;
+        // The same wand is a toggle.  Do not re-activate a surface that the
+        // user has just turned off; only repair the tool after activation.
+        if (!this.noteDrawSurfaceIsActive(handle)) return;
+        void this.forceNoteDrawOfficeSelectionMode(stage, handle);
+      }, 0);
+    };
+    hostWindow.addEventListener("click", onClick, true);
+    this.nativeNoteDrawActivationGuardCleanup = () => hostWindow.removeEventListener("click", onClick, true);
+  }
+
+  private async forceNoteDrawOfficeSelectionMode(stage: HTMLElement, handle: NoteDrawSurfaceHandle): Promise<void> {
+    try {
+      await Promise.resolve(handle.ready);
+      if (this.nativeNoteDrawSurfaceHandle !== handle || !stage.isConnected) return;
+      if (!this.noteDrawSurfaceIsActive(handle)) return;
+      const controller = (stage as HTMLElement & { _noteDrawController?: unknown })._noteDrawController;
+      let selected = false;
+      if (isRecord(controller) && typeof controller.setToolFromApi === "function") {
+        selected = Reflect.apply(controller.setToolFromApi, controller, ["select"]) === true;
+      }
+      if (!selected && typeof handle.setTool === "function") {
+        await Promise.resolve(handle.setTool("select"));
+        selected = true;
+      }
+      if (!selected && typeof handle.activate === "function") await Promise.resolve(handle.activate({ tool: "select" }));
+      this.scheduleNoteDrawWorkbenchSurfaceSync(stage, handle);
+    } catch (error) {
+      this.plugin.devErrors.push(`document workbench NoteDraw Office selection activation failed: ${String(error)}`);
+    }
+  }
+
+  /**
+   * A registered NoteDraw surface is mounted before an Office iframe has
+   * reported its final height.  Ask the public API to load the drawing data
+   * and refresh after the host settles so existing elements are available for
+   * selection and edits are rendered on the same surface that owns storage.
+   */
+  private scheduleNoteDrawWorkbenchSurfaceSync(stage: HTMLElement, handle: NoteDrawSurfaceHandle): void {
+    const hostWindow = stage.ownerDocument.defaultView ?? activeWindow;
+    const sync = async (): Promise<void> => {
+      if (this.nativeNoteDrawSurfaceHandle !== handle || !stage.isConnected) return;
+      try {
+        // getState() ensures the controller has loaded its persisted drawing
+        // data and re-renders the current surface.  Do not call refresh() here:
+        // a refresh reads the on-disk snapshot and can overwrite a drawing
+        // that the user has just made while NoteDraw's autosave is pending.
+        await Promise.resolve(handle.getState?.());
+        this.syncDocumentZoomSurfaces(stage);
+        this.notifyNoteDrawSurfaceViewport();
+      } catch (error) {
+        this.plugin.devErrors.push(`document workbench NoteDraw refresh failed: ${String(error)}`);
+      }
+    };
+    hostWindow.requestAnimationFrame(() => { void sync(); });
+    for (const delay of [120, 420]) {
+      hostWindow.setTimeout(() => { void sync(); }, delay);
     }
   }
 
@@ -34093,6 +34276,13 @@ class CancipDocumentWorkbenchView extends FileView {
         await Promise.resolve(registeredSurface.ready);
         const result = await Promise.resolve(registeredSurface.toggle());
         const resultSurface = isRecord(result) && isRecord(result.surface) ? result.surface : registeredSurface.surface;
+        // A workbench surface can inherit NoteDraw's last source-edit mode.
+        // DOCX/Office previews have no editable Markdown source, so make the
+        // first active tool selection-safe and leave the pen in the toolbar.
+        if (isRecord(resultSurface) && resultSurface.active === true) {
+          await Promise.resolve(registeredSurface.activate?.({ tool: "select" }));
+          this.scheduleNoteDrawWorkbenchSurfaceSync(stage!, registeredSurface);
+        }
         this.updateNoteDrawWorkbenchButton(button, isRecord(resultSurface) && resultSurface.active === true);
         return;
       }
@@ -34179,8 +34369,14 @@ class CancipDocumentWorkbenchView extends FileView {
   private clearNoteDrawOverlay(): void {
     this.removeNoteDrawFallbackButtons(this.contentEl);
     this.nativeNoteDrawSurfaceHandle?.destroy?.();
+    this.nativeNoteDrawActivationGuardCleanup?.();
+    this.nativeNoteDrawActivationGuardCleanup = null;
+    this.nativeNoteDrawSurfaceUnsubscribe?.();
+    this.nativeNoteDrawSurfaceUnsubscribe = null;
     this.nativeNoteDrawSurfaceHandle = null;
     this.nativeNoteDrawSurfaceHost = null;
+    this.nativeNoteDrawSurfaceMountSettled = false;
+    this.contentEl.removeClass("notedraw-body-control");
     this.noteDrawSurfaceViewportListeners.clear();
     this.nativeNoteDrawControllerCleanup?.();
     this.nativeNoteDrawControllerCleanup = null;
@@ -34257,6 +34453,13 @@ class CancipDocumentWorkbenchView extends FileView {
       return /(?:edit\s*md|编辑\s*md|編輯\s*md|md\s*(?:edit|编辑|編輯)|md\s*bearbeiten|modifier\s*md|editar\s*md)/i.test(label)
         || Boolean(button.querySelector("svg.lucide-file-pen-line, .lucide-file-pen-line"));
     };
+    const isSelectButton = (button: HTMLButtonElement): boolean => {
+      const notedraw = controller();
+      if (notedraw?.selectButton === button) return true;
+      const label = `${button.getAttribute("title") ?? ""} ${button.getAttribute("aria-label") ?? ""}`.trim().toLowerCase();
+      return /(?:select|selection|选择|選擇|auswahl|seleccionar)/i.test(label)
+        || Boolean(button.querySelector("svg.lucide-mouse-pointer-2, .lucide-mouse-pointer-2"));
+    };
     const controllerOwnsToolbar = (toolbar: HTMLElement): boolean => {
       if (stage.contains(toolbar)) return true;
       return controller()?.toolbar === toolbar;
@@ -34293,11 +34496,27 @@ class CancipDocumentWorkbenchView extends FileView {
     };
     const onClick = (event: MouseEvent): void => {
       const target = event.target;
-      const targetElement = target && (target as Element).instanceOf?.(hostElementCtor) ? target as Element : null;
+      const targetElement = target && ((target as Element).instanceOf?.(hostElementCtor) || target instanceof hostElementCtor)
+        ? target as Element
+        : null;
       const button = targetElement?.closest<HTMLButtonElement>(".notedraw-toolbar button");
-      if (!button || !isEditMarkdownButton(button)) return;
+      if (!button) return;
       const toolbar = button.closest<HTMLElement>(".notedraw-toolbar");
       if (!toolbar || !controllerOwnsToolbar(toolbar)) return;
+      // The select button belongs to NoteDraw, not Cancip's Markdown draft
+      // overlay.  Let NoteDraw complete its click first (it toggles the
+      // controller into `select`), then remove the Markdown editing layer so
+      // the selected element can be moved or edited normally.
+      if (isSelectButton(button)) {
+        if (this.noteDrawMarkdownEditMode || stage.hasClass("is-edit-md-mode")) {
+          hostWindow.setTimeout(() => {
+            leaveMarkdownEditMode();
+            syncFromController();
+          }, 0);
+        }
+        return;
+      }
+      if (!isEditMarkdownButton(button)) return;
       if (this.noteDrawMarkdownEditMode) {
         event.preventDefault();
         event.stopImmediatePropagation();
@@ -34321,7 +34540,8 @@ class CancipDocumentWorkbenchView extends FileView {
   }
 
   private renderEditor(parent: HTMLElement): void {
-    const sourceReadOnly = this.snapshot?.rawSourceEditable !== true;
+    const sourceReadOnly = this.snapshot?.rawSourceEditable !== true
+      && !["docx", "xlsx", "pptx", "epub"].includes(this.snapshot?.kind ?? "");
     const textarea = parent.createEl("textarea", {
       cls: `obcc-document-editor${sourceReadOnly ? " is-readonly" : ""}`,
       attr: {
@@ -34870,9 +35090,6 @@ class CancipDocumentWorkbenchView extends FileView {
     delete this.contentEl.dataset.url;
     this.contentEl.dataset.noteDrawSourcePath = snapshot.file.path;
     const stage = this.createDocumentWorkbenchStage(parent, snapshot);
-    // Register the real workbench surface before conversion/rendering so its
-    // square NoteDraw button appears immediately instead of after a long preview.
-    this.registerNoteDrawWorkbenchSurface(stage);
     const content = this.createDocumentWorkbenchContent(stage);
     if (this.dirty) {
       await MarkdownRenderer.render(this.app, this.currentMarkdown(), content, snapshot.file.path, this);
@@ -36058,7 +36275,14 @@ class CancipDocumentWorkbenchView extends FileView {
     const snapshot = this.snapshot;
     if (!snapshot) return "";
     if (!this.dirty) return snapshot.markdown;
-    if (this.rawMarkdownMode()) return markdownFromDocumentText(snapshot.file, this.editBuffer, snapshot.kind);
+    if (this.rawMarkdownMode()) {
+      // Binary workbench documents expose an extracted Markdown draft in the
+      // source view.  It is already Markdown and must not be decoded again as
+      // DOCX/XLSX/PPTX source bytes while the user is editing it.
+      return snapshot.rawSourceEditable
+        ? markdownFromDocumentText(snapshot.file, this.editBuffer, snapshot.kind)
+        : this.editBuffer;
+    }
     return snapshot.editableSource
       ? markdownFromDocumentText(snapshot.file, this.editBuffer, snapshot.kind)
       : this.editBuffer;
@@ -36069,7 +36293,13 @@ class CancipDocumentWorkbenchView extends FileView {
     if (!snapshot) return;
     try {
       if (this.rawMarkdownMode()) {
-        if (!snapshot.rawSourceEditable) throw new Error(this.plugin.t("documentSourceProtected"));
+        if (!snapshot.rawSourceEditable) {
+          const path = await this.plugin.exportDocumentConversion(snapshot.file, this.editBuffer, "md");
+          this.dirty = false;
+          new Notice(this.plugin.t("documentConverted", { path }));
+          await this.render();
+          return;
+        }
         this.clearRawSourceAutosaveTimer();
         if (await this.persistRawSourceBuffer(false)) await this.loadAndRender();
         return;
@@ -69797,10 +70027,11 @@ function cloneSettingsModuleValue<T>(value: T): T {
 const SETTINGS_PAGE_KEYS: Record<string, Array<keyof Settings>> = {
   common: [
     "language", "accessMode", "activeApiProfileId", "apiProfiles", "apiUrl", "apiKey", "apiMode", "model",
-    "modelOptions", "defaultModelOptions", "modelSourceByModel", "settingsOpenGroups", "showAttachmentButton", "compactHeader",
+    "modelOptions", "modelSourceByModel", "settingsOpenGroups", "showAttachmentButton", "compactHeader",
     "personalizedGreetingEnabled", "personalizationGreetingCacheHours", "personalizationFriendlyName",
     "personalizationWeatherLocation", "processRecordRuntimeCollapsed"
   ],
+  models: ["modelOptions", "defaultModelOptions", "modelSourceByModel"],
   overview: ["aiOverviewEnabled", "aiOverviewCards", "aiOverviewLayout", "aiOverviewAccent", "aiOverviewCardLimit", "aiOverviewAiManagementEnabled"],
   workbench: [
     "documentWorkbenchDefaultMode", "documentWorkbenchCompactHeader", "documentWorkbenchShowMetadata",
@@ -70231,48 +70462,44 @@ class CancipSettingTab extends PluginSettingTab {
           .setValue(selectedModel)
           .onChange(async (value) => {
             await this.plugin.selectModel(value, this.plugin.settings.modelSourceByModel[value]);
-           this.plugin.refreshOpenViews();
-           this.refreshSettings();
-         });
-       })
-      .addExtraButton((button) => {
-        button
-          .setIcon("plus")
-          .setTooltip(this.plugin.t("addDefaultModels"))
-          .onClick(async () => {
-            const models = normalizeModelOptions(this.plugin.settings.modelOptions, selectedModel)
-              .filter((model) => !localAgentProviderFromModel(model));
-            const defaults = new Set(this.plugin.settings.defaultModelOptions);
-            const items = models
-              .filter((model) => !defaults.has(model))
-              .map((model) => {
-                const profile = this.plugin.apiProfileForModel(model);
-                return { model, source: profile.name || profile.id };
-              });
-            if (!items.length) {
-              new Notice(this.plugin.t("addDefaultModelsEmpty"));
-              return;
-            }
-            const selected = await promptDefaultModelPicker(this.app, {
-              title: this.plugin.t("addDefaultModels"),
-              selectLabel: this.plugin.t("addDefaultModelsSelect"),
-              cancelLabel: this.plugin.t("cancel"),
-              emptyLabel: this.plugin.t("addDefaultModelsEmpty"),
-              items,
-              initial: []
-            });
-            if (!selected?.length) return;
-            this.plugin.settings.defaultModelOptions = uniqueStrings([
-              ...this.plugin.settings.defaultModelOptions,
-              ...selected,
-              selectedModel
-            ]);
-            await this.plugin.saveSettings();
             this.plugin.refreshOpenViews();
-            this.renderSettings();
+            this.refreshSettings();
           });
       });
+  }
 
+  private async addDefaultModelsFromSettings(): Promise<void> {
+    const selectedModel = this.plugin.settings.model || this.plugin.activeApiProfile().model;
+    const models = normalizeModelOptions(this.plugin.settings.modelOptions, selectedModel)
+      .filter((model) => !localAgentProviderFromModel(model));
+    const defaults = new Set(this.plugin.settings.defaultModelOptions);
+    const items = models
+      .filter((model) => !defaults.has(model))
+      .map((model) => {
+        const profile = this.plugin.apiProfileForModel(model);
+        return { model, source: profile.name || profile.id };
+      });
+    if (!items.length) {
+      new Notice(this.plugin.t("addDefaultModelsEmpty"));
+      return;
+    }
+    const selected = await promptDefaultModelPicker(this.app, {
+      title: this.plugin.t("addDefaultModels"),
+      selectLabel: this.plugin.t("addDefaultModelsSelect"),
+      cancelLabel: this.plugin.t("cancel"),
+      emptyLabel: this.plugin.t("addDefaultModelsEmpty"),
+      items,
+      initial: []
+    });
+    if (!selected?.length) return;
+    this.plugin.settings.defaultModelOptions = uniqueStrings([
+      ...this.plugin.settings.defaultModelOptions,
+      ...selected,
+      selectedModel
+    ]);
+    await this.plugin.saveSettings();
+    this.plugin.refreshOpenViews();
+    this.renderSettings();
   }
 
   private captureScrollSnapshots(): Array<{ element: HTMLElement; top: number; left: number; anchorIndex?: number; anchorOffset?: number; anchorIdentity?: string; anchorOccurrence?: number }> {
@@ -72443,6 +72670,25 @@ class CancipSettingTab extends PluginSettingTab {
         `${group.title} (${group.models.length})`,
         false
       );
+      if (groupId === "defaults") {
+        const summary = groupDetails.querySelector<HTMLElement>(":scope > summary");
+        if (summary) {
+          const addDefault = summary.createEl("button", {
+            cls: "clickable-icon obcc-model-group-add",
+            attr: {
+              type: "button",
+              title: this.plugin.t("addDefaultModels"),
+              "aria-label": this.plugin.t("addDefaultModels")
+            }
+          });
+          setIcon(addDefault, "plus");
+          addDefault.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            void this.addDefaultModelsFromSettings();
+          });
+        }
+      }
       const groupBody = groupDetails.createDiv({ cls: "obcc-settings-group-body obcc-model-group-body" });
       if (groupDetails.open) renderModelRows(groupBody, group.models);
       groupDetails.addEventListener("toggle", () => {

@@ -9765,6 +9765,16 @@ input.obcc-review-correction-input {
   user-select: none;
 }
 
+.obcc-model-group > summary .obcc-model-group-add {
+  margin-inline-start: auto;
+  flex: 0 0 auto;
+}
+
+.obcc-model-group > summary .obcc-model-group-add:hover,
+.obcc-model-group > summary .obcc-model-group-add:focus-visible {
+  color: var(--interactive-accent);
+}
+
 .obcc-settings-group-body {
   padding: 0 8px 4px;
 }
@@ -11357,6 +11367,14 @@ body.is-phone .obcc-review-leaf.has-review-detail .obcc-review-detail-rail-info,
   background: var(--background-primary);
 }
 
+/* The NoteDraw workspace guard intentionally uses its body-control marker so
+   the generic workspace scanner skips this root.  NoteDraw's own stylesheet
+   hides every body-control that is not a toolbar; keep the actual Cancip
+   workbench visible while retaining the scanner exclusion. */
+.view-content.obcc-document-workbench.notedraw-body-control {
+  display: block !important;
+}
+
 body.obcc-force-statusbar-visible .view-content.obcc-document-workbench {
   box-sizing: border-box;
   padding-bottom: max(52px, env(safe-area-inset-bottom));
@@ -11759,6 +11777,20 @@ body.is-phone.obcc-force-statusbar-visible .view-content.obcc-document-workbench
   display: block;
   max-width: 100%;
   overflow-x: auto;
+}
+
+/* Office previews are hosted in an isolated iframe.  Keep the registered
+   NoteDraw interaction layer above that iframe while the surface is active;
+   otherwise the iframe receives every pointer event and elements cannot be
+   selected or moved. */
+.obcc-document-stage.is-notedraw-registered-shell.is-drawing-active .notedraw-canvas,
+.obcc-document-stage.is-notedraw-registered-shell.is-drawing-active .notedraw-static-canvas,
+.obcc-document-stage.is-notedraw-registered-shell.is-drawing-active .notedraw-embed-layer {
+  z-index: 1001 !important;
+}
+
+.obcc-document-stage.is-notedraw-registered-shell.is-drawing-active .notedraw-canvas {
+  pointer-events: auto !important;
 }
 
 .obcc-document-drawing-overlay {
