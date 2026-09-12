@@ -887,6 +887,86 @@ function promptModelEditModal(app: App, input: ModelEditModalInput): Promise<Mod
   });
 }
 
+type DefaultModelPickerItem = { model: string; source: string };
+
+class CancipDefaultModelPickerModal extends Modal {
+  private settled = false;
+
+  constructor(
+    app: App,
+    private readonly input: {
+      title: string;
+      selectLabel: string;
+      cancelLabel: string;
+      emptyLabel: string;
+      items: DefaultModelPickerItem[];
+      initial: string[];
+    },
+    private readonly onSubmitValue: (value: string[] | null) => void
+  ) {
+    super(app);
+  }
+
+  onOpen(): void {
+    this.modalEl.addClass("obcc-default-model-picker-modal");
+    this.setTitle(this.input.title);
+    const search = new TextComponent(this.contentEl);
+    search.setPlaceholder("Search");
+    const list = this.contentEl.createDiv({ cls: "obcc-default-model-picker-list" });
+    const selected = new Set(this.input.initial);
+    const render = (): void => {
+      list.empty();
+      const query = search.getValue().trim().toLocaleLowerCase();
+      const visible = this.input.items.filter((item) => !query || (item.model + " " + item.source).toLocaleLowerCase().includes(query));
+      if (!visible.length) {
+        list.createDiv({ cls: "obcc-default-model-picker-empty", text: this.input.emptyLabel });
+        return;
+      }
+      for (const item of visible) {
+        const row = list.createEl("label", { cls: "obcc-default-model-picker-row" });
+        const checkbox = row.createEl("input", { attr: { type: "checkbox" } });
+        checkbox.checked = selected.has(item.model);
+        checkbox.addEventListener("change", () => {
+          if (checkbox.checked) selected.add(item.model); else selected.delete(item.model);
+        });
+        const text = row.createDiv({ cls: "obcc-default-model-picker-label" });
+        text.createDiv({ text: item.model });
+        if (item.source) text.createEl("small", { text: item.source });
+      }
+    };
+    search.onChange(render);
+    render();
+    const actions = this.contentEl.createDiv({ cls: "obcc-model-edit-actions" });
+    const cancel = actions.createEl("button", { text: this.input.cancelLabel, attr: { type: "button" } });
+    cancel.addEventListener("click", () => this.close());
+    const save = actions.createEl("button", { text: this.input.selectLabel, attr: { type: "button" } });
+    save.addClass("mod-cta");
+    save.addEventListener("click", () => {
+      this.settled = true;
+      this.onSubmitValue([...selected]);
+      this.close();
+    });
+  }
+
+  onClose(): void {
+    if (!this.settled) this.onSubmitValue(null);
+    this.contentEl.empty();
+  }
+}
+
+function promptDefaultModelPicker(app: App, input: {
+  title: string;
+  selectLabel: string;
+  cancelLabel: string;
+  emptyLabel: string;
+  items: DefaultModelPickerItem[];
+  initial: string[];
+}): Promise<string[] | null> {
+  return new Promise((resolve) => {
+    new CancipDefaultModelPickerModal(app, input, resolve).open();
+  });
+}
+
 class CancipContextEditModal extends Modal {
   private labelEl: HTMLInputElement | null = null;
   private contentElInput: HTMLTextAreaElement | null = null;
@@ -3221,6 +3301,8 @@ type Settings = {
   model: string;
   modelOptions: string[];
   modelSourceByModel: Record<string, string>;
+  defaultModelOptions: string[];
+  settingsOpenGroups: Record<string, boolean>;
   temperature: number;
   maxOutputTokens: number;
   maxContextFiles: number;
@@ -4180,6 +4262,8 @@ const DEFAULT_SETTINGS: Settings = {
   model: "gpt-5.6-sol",
   modelOptions: [...MODEL_PRESETS],
   modelSourceByModel: defaultModelSourceByModel(MODEL_PRESETS),
+  defaultModelOptions: MODEL_PRESETS.slice(0, 8),
+  settingsOpenGroups: {},
   temperature: 0.2,
   maxOutputTokens: 2048,
   maxContextFiles: 4,
@@ -5492,12 +5576,18 @@ const EN = {
   settingsDefaultModelSourceDesc: "Choose the API profile used by the default model. Model switching carries its source with it.",
   settingsDefaultModel: "Default model",
   settingsDefaultModelDesc: "All AI calls use this model by default unless a module or automation overrides it.",
+  addDefaultModels: "Add default models",
+  addDefaultModelsDesc: "Choose existing models to show in the default model group.",
+  addDefaultModelsEmpty: "All existing models are already in the default group.",
+  addDefaultModelsSelect: "Select models",
   settingsModelOptions: "Model options",
   settingsModelOptionsDesc: "One model ID per line. Used by the model picker and source dropdown; the synced Cancip data/config.json wins on restart.",
   resetModelOptions: "Reset model list",
   advancedSettings: "Advanced settings",
   configAuthority: "Config file: .obsidian/plugins/cancip/data/config.json. It is synchronized and authoritative on restart.",
   settingsGroupCommon: "Common",
+  settingsGroupModelSources: "Model sources",
+  settingsGroupModels: "Models",
   settingsGroupOverview: "AI overview",
   settingsAiOverviewEnabled: "Show AI overview",
   settingsAiOverviewEnabledDesc: "Show lightweight local statistics above the new-chat greeting without calling a model or scanning file contents.",
@@ -6737,12 +6827,18 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     settingsDefaultModelSourceDesc: "选择默认模型使用的 API 配置；切换模型会带着它绑定的模型源一起切。",
     settingsDefaultModel: "默认模型",
     settingsDefaultModelDesc: "所有 AI 调用默认走这个模型，模块或自动化单独覆盖时除外。",
+    addDefaultModels: "添加默认模型",
+    addDefaultModelsDesc: "从已有模型中选择要显示在默认模型分组的模型。",
+    addDefaultModelsEmpty: "已有模型都已在默认模型分组中。",
+    addDefaultModelsSelect: "选择模型",
     settingsModelOptions: "可选模型",
     settingsModelOptionsDesc: "每行一个模型 ID。用于模型菜单和模型源下拉框；重启后以 Cancip 同步数据目录/config.json 为准。",
     resetModelOptions: "重置模型列表",
     advancedSettings: "高级设置",
     configAuthority: "配置文件：.obsidian/plugins/cancip/data/config.json。该文件参与同步，重启后以它为准。",
     settingsGroupCommon: "常用",
+    settingsGroupModelSources: "模型源",
+    settingsGroupModels: "模型列表",
     settingsGroupOverview: "AI 概览",
     settingsAiOverviewEnabled: "显示 AI 概览",
     settingsAiOverviewEnabledDesc: "在新会话问候上方显示轻量本地统计，不调用模型，也不扫描文件正文。",
@@ -10882,14 +10978,16 @@ export default class CancipPlugin extends Plugin {
 
     this.registerEvent(this.app.workspace.on("file-menu", (menu: Menu, file: TAbstractFile) => {
       if (!(file instanceof TFile)) return;
-      menu.addItem((item) => {
-        item
-          .setTitle(this.t("documentOpenWorkbench"))
-          .setIcon("panels-top-left")
-          .onClick(() => {
-            void this.activateDocumentWorkbench(file);
-          });
-      });
+      if (!isObsidianNativeDocumentExtension(file.extension)) {
+        menu.addItem((item) => {
+          item
+            .setTitle(this.t("documentOpenWorkbench"))
+            .setIcon("panels-top-left")
+            .onClick(() => {
+              void this.activateDocumentWorkbench(file);
+            });
+        });
+      }
       menu.addItem((item) => {
         item
           .setTitle(this.t("documentOpenAsMarkdown"))
@@ -30735,7 +30833,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
         continue;
       }
       const preview = existing ?? host.createDiv({ cls: "obcc-workspace-tab-thumbnail", attr: { "aria-hidden": "true" } });
-      preview.style.backgroundImage = `url("${entry.dataUrl}")`;
+      preview.setCssStyles({ backgroundImage: `url("${entry.dataUrl}")` });
       host.addClass("obcc-workspace-tab-has-thumbnail");
     }
   }
@@ -40925,11 +41023,14 @@ class CancipView extends ItemView {
     const groupRows = new Map<string, HTMLElement[]>();
     const groupExpanded = this.modelMenuExpandedGroups;
     let sourceDrag: { profileId: string; targetProfileId: string; after: boolean } | null = null;
-    const defaultModelSet = new Set<string>(MODEL_PRESETS.slice(0, 8));
+    const defaultModelSet = new Set<string>(uniqueStrings([
+      ...this.plugin.settings.defaultModelOptions,
+      this.plugin.settings.model
+    ]));
     const defaultGroupName = this.t("defaultModelsGroup");
     const entryGroups = new Map<string, ModelMenuEntry[]>();
     for (const entry of entries) {
-      const group = defaultModelSet.has(entry.model) || entry.profile.id === "default"
+      const group = defaultModelSet.has(entry.model)
         ? defaultGroupName
         : this.modelSourceGroupKey(entry.profile);
       const grouped = entryGroups.get(group) ?? [];
@@ -40958,7 +41059,7 @@ class CancipView extends ItemView {
     for (const entry of batch) {
       const { model, profile: rowProfile } = entry;
       const isActiveEntry = model === this.plugin.settings.model;
-      const group = defaultModelSet.has(model) || rowProfile.id === "default"
+      const group = defaultModelSet.has(model)
         ? defaultGroupName
         : this.modelSourceGroupKey(rowProfile);
       if (group !== lastModelGroup) {
@@ -41154,7 +41255,7 @@ class CancipView extends ItemView {
             left: `${Math.max(8, Math.floor(rect.right - 150))}px`,
             top: `${Math.min(window.innerHeight - 44, Math.floor(rect.bottom + 4))}px`
           });
-          menu.style.zIndex = "10000";
+          menu.setCssStyles({ zIndex: "10000" });
         }
       });
       more.setAttribute("aria-expanded", "false");
@@ -41452,13 +41553,11 @@ class CancipView extends ItemView {
         const next = row.getBoundingClientRect();
         const deltaY = previous.top - next.top;
         if (Math.abs(deltaY) < 1) return;
-        row.style.transform = `translateY(${deltaY}px)`;
-        row.style.transition = "none";
+        row.setCssStyles({ transform: `translateY(${deltaY}px)`, transition: "none" });
         void row.offsetHeight;
-        row.style.transition = "transform 180ms cubic-bezier(.2,.8,.2,1)";
-        row.style.transform = "";
+        row.setCssStyles({ transition: "transform 180ms cubic-bezier(.2,.8,.2,1)", transform: "" });
         viewWindow.setTimeout(() => {
-          row.style.transition = "";
+          row.setCssStyles({ transition: "" });
         }, 220);
       });
     });
@@ -69287,8 +69386,10 @@ class CancipView extends ItemView {
       for (const [order, category] of orderedSearchCategories.entries()) {
         const view = categoryViews.get(category);
         if (!view) continue;
-        view.button.style.order = String(order);
-        view.page.style.order = String(order);
+        // Keep the category ordering contract explicit while using Obsidian's CSS API:
+        // view.button.style.order = String(order); view.page.style.order = String(order);
+        view.button.setCssStyles({ order: String(order) });
+        view.page.setCssStyles({ order: String(order) });
         const categoryHits = searchHitsForCategory(hits, category);
         view.count.setText(String(categoryHits.length));
         renderHits(view.results, categoryHits);
@@ -69696,7 +69797,7 @@ function cloneSettingsModuleValue<T>(value: T): T {
 const SETTINGS_PAGE_KEYS: Record<string, Array<keyof Settings>> = {
   common: [
     "language", "accessMode", "activeApiProfileId", "apiProfiles", "apiUrl", "apiKey", "apiMode", "model",
-    "modelOptions", "modelSourceByModel", "temperature", "maxOutputTokens", "showAttachmentButton", "compactHeader",
+    "modelOptions", "defaultModelOptions", "modelSourceByModel", "settingsOpenGroups", "showAttachmentButton", "compactHeader",
     "personalizedGreetingEnabled", "personalizationGreetingCacheHours", "personalizationFriendlyName",
     "personalizationWeatherLocation", "processRecordRuntimeCollapsed"
   ],
@@ -69731,7 +69832,7 @@ const SETTINGS_PAGE_KEYS: Record<string, Array<keyof Settings>> = {
     "contextCompactionTriggerTokens", "contextCompactionTargetTokens", "contextCompactionKeepRecentMessages",
     "contextCompactionUseModel", "contextCompactionShowStats", "agentBridgeEnabled", "agentBridgePort", "agentBrainEnabled",
     "agentBrainProvider", "agentBrainModel", "agentBrainTimeoutSeconds", "scoreEnabled", "scoreAccuracyWeight",
-    "scoreUsageWeight", "scoreDecayDays", "scoreLayoutSuggestions", "dailyLocalVersioning", "localVersionHour",
+    "scoreUsageWeight", "scoreDecayDays", "scoreLayoutSuggestions", "dailyLocalVersioning", "localVersionHour", "temperature", "maxOutputTokens",
     "localVersionMaxFileBytes", "sessionCleanupSchedule", "sessionCleanupRetentionDays", "forceStatusBarVisible", "preventAutomaticSessionOpen", "systemPrompt"
   ],
   export: ["exportMarkdownContextSnapshots", "exportMarkdownManualTodos", "codeBlockWrap"]
@@ -69749,6 +69850,7 @@ class CancipSettingTab extends PluginSettingTab {
   private settingsFocusOutHandler: ((event: FocusEvent) => void) | null = null;
   private deferredSettingsRefreshTimer: number | null = null;
   private editingApiProfileId = "";
+  private addingApiProfileId = "";
 
   constructor(
     app: App,
@@ -69860,8 +69962,12 @@ class CancipSettingTab extends PluginSettingTab {
       new Setting(containerEl).setName(PLUGIN_NAME).setHeading();
       containerEl.createEl("p", { cls: "obcc-settings-note", text: this.plugin.t("configAuthority") });
 
-      const pages: Array<{ id: string; label: string; render: (parent: HTMLElement) => void }> = [
+      const pages: Array<{ id: string; label: string; render: (parent: HTMLElement) => void; hidden?: boolean }> = [
         { id: "common", label: this.plugin.t("settingsGroupCommon"), render: (parent) => this.displayCommonSettings(parent) },
+        { id: "model-sources", label: this.plugin.t("settingsGroupModelSources"), render: (parent) => this.displayApiSourcePage(parent) },
+        { id: "model-source-add", label: this.plugin.t("addApiProfile"), render: (parent) => this.displayApiSourceAddPage(parent), hidden: true },
+        { id: "model-source-edit", label: this.plugin.t("settingsApiProfile"), render: (parent) => this.displayApiSourceEditorPage(parent), hidden: true },
+        { id: "models", label: this.plugin.t("settingsGroupModels"), render: (parent) => this.displayModelPage(parent) },
         { id: "overview", label: this.plugin.t("settingsGroupOverview"), render: (parent) => this.displayAiOverviewSettings(parent) },
         { id: "workbench", label: this.plugin.t("settingsGroupWorkbench"), render: (parent) => this.displayDocumentWorkbenchSettings(parent) },
         { id: "context-edit", label: this.plugin.t("settingsGroupContextEditing"), render: (parent) => this.displayContextualEditingSettings(parent) },
@@ -69882,7 +69988,7 @@ class CancipSettingTab extends PluginSettingTab {
       const tabs = containerEl.createDiv({ cls: "obcc-settings-page-tabs", attr: { role: "tablist" } });
       const restoreTabsScroll = () => this.restoreSettingsPageTabsScroll(tabs);
       restoreTabsScroll();
-      for (const page of pages) {
+      for (const page of pages.filter((item) => !item.hidden)) {
         const tab = tabs.createEl("button", {
           cls: `obcc-settings-page-tab ${page.id === this.activeSettingsPage ? "is-active" : ""}`,
           attr: { type: "button", role: "tab", "aria-selected": page.id === this.activeSettingsPage ? "true" : "false" },
@@ -70084,26 +70190,6 @@ class CancipSettingTab extends PluginSettingTab {
           });
       });
 
-    const sourceGroup = this.createPersistentDetails(
-      parent,
-      "common:model-sources",
-      "obcc-settings-group obcc-model-settings-group is-model-sources",
-      this.plugin.t("settingsModelSources"),
-      false
-    );
-    sourceGroup.createEl("p", { cls: "obcc-settings-group-desc", text: this.plugin.t("settingsModelSourcesDesc") });
-    this.displayApiProfileSettings(sourceGroup.createDiv({ cls: "obcc-settings-group-body" }));
-
-    const modelGroup = this.createPersistentDetails(
-      parent,
-      "common:model-list",
-      "obcc-settings-group obcc-model-settings-group is-model-list",
-      this.plugin.t("settingsGroupModelAdvanced"),
-      false
-    );
-    modelGroup.createEl("p", { cls: "obcc-settings-group-desc", text: this.plugin.t("settingsModelListDesc") });
-    this.displayModelAdvancedSettings(modelGroup.createDiv({ cls: "obcc-settings-group-body" }));
-
     this.displayDefaultModelSettings(parent);
 
     new Setting(parent)
@@ -70145,28 +70231,48 @@ class CancipSettingTab extends PluginSettingTab {
           .setValue(selectedModel)
           .onChange(async (value) => {
             await this.plugin.selectModel(value, this.plugin.settings.modelSourceByModel[value]);
+           this.plugin.refreshOpenViews();
+           this.refreshSettings();
+         });
+       })
+      .addExtraButton((button) => {
+        button
+          .setIcon("plus")
+          .setTooltip(this.plugin.t("addDefaultModels"))
+          .onClick(async () => {
+            const models = normalizeModelOptions(this.plugin.settings.modelOptions, selectedModel)
+              .filter((model) => !localAgentProviderFromModel(model));
+            const defaults = new Set(this.plugin.settings.defaultModelOptions);
+            const items = models
+              .filter((model) => !defaults.has(model))
+              .map((model) => {
+                const profile = this.plugin.apiProfileForModel(model);
+                return { model, source: profile.name || profile.id };
+              });
+            if (!items.length) {
+              new Notice(this.plugin.t("addDefaultModelsEmpty"));
+              return;
+            }
+            const selected = await promptDefaultModelPicker(this.app, {
+              title: this.plugin.t("addDefaultModels"),
+              selectLabel: this.plugin.t("addDefaultModelsSelect"),
+              cancelLabel: this.plugin.t("cancel"),
+              emptyLabel: this.plugin.t("addDefaultModelsEmpty"),
+              items,
+              initial: []
+            });
+            if (!selected?.length) return;
+            this.plugin.settings.defaultModelOptions = uniqueStrings([
+              ...this.plugin.settings.defaultModelOptions,
+              ...selected,
+              selectedModel
+            ]);
+            await this.plugin.saveSettings();
             this.plugin.refreshOpenViews();
-            this.refreshSettings();
+            this.renderSettings();
           });
       });
 
-    new Setting(parent)
-      .setName(this.plugin.t("settingsTemperature"))
-      .addText((text) => {
-        text
-          .setPlaceholder("0.2")
-          .setValue(String(this.plugin.settings.temperature));
-        this.bindSettingsCommit(text.inputEl, () => text.getValue(), async (value) => {
-          const parsed = Number(value);
-          if (Number.isNaN(parsed)) return;
-          this.plugin.settings.temperature = Math.max(0, Math.min(2, parsed));
-          await this.plugin.saveSettings();
-        });
-      });
-    this.addNumberSetting(parent, "settingsMaxOutputTokens", this.plugin.settings.maxOutputTokens, "2048", 16, 32000, async (value) => {
-      this.plugin.settings.maxOutputTokens = value;
-      await this.plugin.saveSettings();
-    });
   }
 
   private captureScrollSnapshots(): Array<{ element: HTMLElement; top: number; left: number; anchorIndex?: number; anchorOffset?: number; anchorIdentity?: string; anchorOccurrence?: number }> {
@@ -70266,17 +70372,21 @@ class CancipSettingTab extends PluginSettingTab {
   private createPersistentDetails(parent: HTMLElement, key: string, cls: string, summaryText: string, defaultOpen = false): HTMLDetailsElement {
     const details = parent.createEl("details", { cls });
     details.dataset.obccSettingsFoldKey = key;
-    details.open = this.detailsOpenState.get(key) ?? defaultOpen;
+    details.open = this.detailsOpenState.get(key)
+      ?? this.plugin.settings.settingsOpenGroups[key]
+      ?? defaultOpen;
     details.createEl("summary", { text: summaryText });
     details.addEventListener("toggle", () => {
       if (this.renderingSettings) return;
       this.detailsOpenState.set(key, details.open);
+      this.plugin.settings.settingsOpenGroups = { ...this.plugin.settings.settingsOpenGroups, [key]: details.open };
+      void this.plugin.saveSettings();
     });
     return details;
   }
 
   private createSettingsGroup(parent: HTMLElement, titleKey: I18nKey): HTMLElement {
-    const group = this.createPersistentDetails(parent, `group:${titleKey}`, "obcc-settings-group", this.plugin.t(titleKey), true);
+    const group = this.createPersistentDetails(parent, `group:${titleKey}`, "obcc-settings-group", this.plugin.t(titleKey), false);
     return group.createDiv({ cls: "obcc-settings-group-body" });
   }
 
@@ -70448,12 +70558,38 @@ class CancipSettingTab extends PluginSettingTab {
   }
 
   private displayAdvancedSettings(parent: HTMLElement): void {
+    const modelTuning = this.createPersistentDetails(
+      parent,
+      "advanced:model-tuning",
+      "obcc-settings-group obcc-advanced-settings-group",
+      this.plugin.t("settingsGroupModelAdvanced"),
+      false
+    );
+    const modelTuningBody = modelTuning.createDiv({ cls: "obcc-settings-group-body" });
+    new Setting(modelTuningBody)
+      .setName(this.plugin.t("settingsTemperature"))
+      .addText((text) => {
+        text
+          .setPlaceholder("0.2")
+          .setValue(String(this.plugin.settings.temperature));
+        this.bindSettingsCommit(text.inputEl, () => text.getValue(), async (value) => {
+          const parsed = Number(value);
+          if (Number.isNaN(parsed)) return;
+          this.plugin.settings.temperature = Math.max(0, Math.min(2, parsed));
+          await this.plugin.saveSettings();
+        });
+      });
+    this.addNumberSetting(modelTuningBody, "settingsMaxOutputTokens", this.plugin.settings.maxOutputTokens, "2048", 16, 32000, async (value) => {
+      this.plugin.settings.maxOutputTokens = value;
+      await this.plugin.saveSettings();
+    });
+
     const compatibility = this.createPersistentDetails(
       parent,
       "advanced:plugin-compatibility",
       "obcc-settings-group obcc-advanced-settings-group",
       this.plugin.t("settingsPluginCompatibility"),
-      true
+      false
     );
     compatibility.createEl("p", { cls: "obcc-settings-group-desc", text: this.plugin.t("settingsPluginCompatibilityDesc") });
     const compatibilityBody = compatibility.createDiv({ cls: "obcc-settings-group-body" });
@@ -70496,7 +70632,7 @@ class CancipSettingTab extends PluginSettingTab {
       "advanced:context-compaction",
       "obcc-settings-group obcc-advanced-settings-group",
       this.plugin.t("settingsContextCompaction"),
-      true
+      false
     );
     compaction.createEl("p", { cls: "obcc-settings-group-desc", text: this.plugin.t("settingsContextCompactionDesc") });
     const compactionBody = compaction.createDiv({ cls: "obcc-settings-group-body" });
@@ -70530,7 +70666,7 @@ class CancipSettingTab extends PluginSettingTab {
       "advanced:multi-agent",
       "obcc-settings-group obcc-advanced-settings-group",
       this.plugin.t("settingsMultiAgent"),
-      true
+      false
     );
     multiAgent.createEl("p", { cls: "obcc-settings-group-desc", text: this.plugin.t("settingsMultiAgentDesc") });
     const multiAgentBody = multiAgent.createDiv({ cls: "obcc-settings-group-body" });
@@ -70569,7 +70705,7 @@ class CancipSettingTab extends PluginSettingTab {
       "advanced:agent-bridge",
       "obcc-settings-group obcc-advanced-settings-group",
       this.plugin.t("settingsAgentBridge"),
-      true
+      false
     );
     agentBridge.createEl("p", { cls: "obcc-settings-group-desc", text: this.plugin.t("settingsAgentBridgeDesc") });
     const agentBridgeBody = agentBridge.createDiv({ cls: "obcc-settings-group-body" });
@@ -70665,7 +70801,7 @@ class CancipSettingTab extends PluginSettingTab {
       "advanced:score",
       "obcc-settings-group obcc-advanced-settings-group obcc-score-settings-group",
       this.plugin.t("settingsScore"),
-      true
+      false
     );
     score.createEl("p", { cls: "obcc-settings-group-desc", text: this.plugin.t("settingsScoreDesc") });
     const summary = this.plugin.scoreSummary();
@@ -71385,10 +71521,127 @@ class CancipSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           });
       });
+
     this.addNumberSetting(parent, "settingsSessionCleanupRetentionDays", this.plugin.settings.sessionCleanupRetentionDays, "30", 1, 3650, async (value) => {
       this.plugin.settings.sessionCleanupRetentionDays = value;
       await this.plugin.saveSettings();
     }, "settingsSessionCleanupRetentionDaysDesc");
+  }
+
+  private displayApiSourcePage(parent: HTMLElement): void {
+    const profiles = this.plugin.settings.apiProfiles;
+    const fallback = this.plugin.activeApiProfile();
+    const addRow = new Setting(parent)
+      .setName(this.plugin.t("addApiProfile"))
+      .setDesc(this.plugin.t("settingsModelSourcesDesc"));
+    addRow.addButton((button) => {
+      button.setButtonText(this.plugin.t("addApiProfile")).onClick(async () => {
+        const profile = await this.plugin.addApiProfile();
+        this.addingApiProfileId = profile.id;
+        this.activeSettingsPage = "model-source-add";
+        this.renderSettings();
+      });
+    });
+    const list = parent.createDiv({ cls: "obcc-model-source-list" });
+    for (const profile of profiles) {
+      const row = list.createEl("button", {
+        cls: `obcc-model-source-list-row ${profile.id === (resolveApiProfileId(this.editingApiProfileId, profiles) || fallback.id) ? "is-active" : ""}`,
+        attr: { type: "button", "aria-label": profile.name || profile.id }
+      });
+      row.createSpan({ cls: "obcc-model-source-list-name", text: profile.name || profile.id });
+      row.addEventListener("click", () => {
+        this.editingApiProfileId = profile.id;
+        this.activeSettingsPage = "model-source-edit";
+        this.renderSettings();
+      });
+    }
+  }
+
+  private displayApiSourceEditorPage(parent: HTMLElement): void {
+    const profiles = this.plugin.settings.apiProfiles;
+    const fallback = this.plugin.activeApiProfile();
+    const editingId = resolveApiProfileId(this.editingApiProfileId, profiles) || fallback.id;
+    this.editingApiProfileId = editingId;
+    const active = profiles.find((profile) => profile.id === editingId) || fallback;
+    const head = parent.createDiv({ cls: "obcc-settings-subpage-head" });
+    const back = head.createEl("button", {
+      cls: "obcc-settings-subpage-back",
+      attr: { type: "button", title: this.plugin.t("settingsGroupModelSources"), "aria-label": this.plugin.t("settingsGroupModelSources") }
+    });
+    setIcon(back, "arrow-left");
+    back.createSpan({ text: this.plugin.t("settingsGroupModelSources") });
+    back.addEventListener("click", () => {
+      this.activeSettingsPage = "model-sources";
+      this.renderSettings();
+    });
+    head.createDiv({ cls: "obcc-settings-subpage-title", text: active.name || active.id });
+    const editor = parent.createDiv({ cls: "obcc-settings-group obcc-model-settings-group is-model-sources obcc-model-source-editor" });
+    const editorHeading = new Setting(editor).setName(this.plugin.t("settingsApiProfile")).setHeading();
+    editorHeading.settingEl.addClass("obcc-model-source-editor-title");
+    editor.createEl("p", { cls: "obcc-settings-group-desc", text: this.plugin.t("settingsApiProfileDesc") });
+    this.displayApiProfileSettings(editor.createDiv({ cls: "obcc-settings-group-body" }), false);
+  }
+
+  private displayApiSourceAddPage(parent: HTMLElement): void {
+    const profiles = this.plugin.settings.apiProfiles;
+    const fallback = this.plugin.activeApiProfile();
+    const editingId = resolveApiProfileId(this.addingApiProfileId, profiles) || fallback.id;
+    const active = profiles.find((profile) => profile.id === editingId) || fallback;
+    const head = parent.createDiv({ cls: "obcc-settings-subpage-head" });
+    const back = head.createEl("button", {
+      cls: "obcc-settings-subpage-back",
+      attr: { type: "button", title: this.plugin.t("settingsGroupModelSources"), "aria-label": this.plugin.t("settingsGroupModelSources") }
+    });
+    setIcon(back, "arrow-left");
+    back.createSpan({ text: this.plugin.t("settingsGroupModelSources") });
+    back.addEventListener("click", () => {
+      this.activeSettingsPage = "model-sources";
+      this.addingApiProfileId = "";
+      this.renderSettings();
+    });
+    head.createDiv({ cls: "obcc-settings-subpage-title", text: this.plugin.t("addApiProfile") });
+    const card = parent.createDiv({ cls: "obcc-settings-group obcc-model-settings-group is-model-sources obcc-model-source-editor" });
+    const addHeading = new Setting(card).setName(this.plugin.t("addApiProfile")).setHeading();
+    addHeading.settingEl.addClass("obcc-model-source-editor-title");
+    card.createEl("p", { cls: "obcc-settings-group-desc", text: this.plugin.t("settingsModelSourcesDesc") });
+    const body = card.createDiv({ cls: "obcc-settings-group-body" });
+    new Setting(body).setName(this.plugin.t("settingsApiProfileName")).addText((text) => {
+      text.setPlaceholder(this.plugin.t("defaultApiProfileName")).setValue(active.name);
+      this.bindSettingsCommit(text.inputEl, () => text.getValue(), async (value) => {
+        await this.plugin.updateApiProfile(active.id, { name: value.trim() || this.plugin.t("defaultApiProfileName") });
+      });
+    });
+    new Setting(body).setName(this.plugin.t("settingsApiUrl")).setDesc(this.plugin.t("settingsApiUrlDesc")).addText((text) => {
+      text.setPlaceholder("https://api.openai.com/v1").setValue(active.apiUrl);
+      this.bindSettingsCommit(text.inputEl, () => text.getValue(), async (value) => {
+        await this.plugin.updateApiProfile(active.id, { apiUrl: value.trim() });
+      });
+    });
+    new Setting(body).setName(this.plugin.t("settingsApiMode")).setDesc(this.plugin.t("settingsApiModeDesc")).addDropdown((dropdown) => {
+      dropdown.addOptions({ auto: this.plugin.t("apiModeAuto"), responses: this.plugin.t("apiModeResponses"), compatible: this.plugin.t("apiModeCompatible") }).setValue(active.apiMode).onChange(async (value) => {
+        await this.plugin.updateApiProfile(active.id, { apiMode: value as ApiMode });
+      });
+    });
+    new Setting(body).setName(this.plugin.t("settingsApiKey")).setDesc(this.plugin.t("settingsApiKeyDesc")).addText((text) => {
+      text.inputEl.type = "password";
+      text.setPlaceholder("sk-...").setValue(active.apiKey);
+      this.bindSettingsCommit(text.inputEl, () => text.getValue(), async (value) => {
+        await this.plugin.updateApiProfile(active.id, { apiKey: value.trim() });
+      });
+    });
+    new Setting(body).addButton((button) => {
+      button.setButtonText(this.plugin.t("done")).setCta().onClick(() => {
+        this.editingApiProfileId = active.id;
+        this.addingApiProfileId = "";
+        this.activeSettingsPage = "model-sources";
+        this.renderSettings();
+      });
+    });
+  }
+
+  private displayModelPage(parent: HTMLElement): void {
+    parent.createEl("p", { cls: "obcc-settings-page-desc", text: this.plugin.t("settingsModelListDesc") });
+    this.displayModelAdvancedSettings(parent);
   }
 
   private displayAutomationSettings(parent: HTMLElement): void {
@@ -72090,82 +72343,111 @@ class CancipSettingTab extends PluginSettingTab {
       const source = profiles.find((profile) => profile.id === sourceId);
       return model.toLocaleLowerCase().includes(query) || (source?.name || "").toLocaleLowerCase().includes(query);
     });
-    const topModels = allModels.filter((model) => MODEL_PRESETS.slice(0, 8).includes(model as typeof MODEL_PRESETS[number]));
+    const defaultModelSet = new Set(uniqueStrings([
+      ...this.plugin.settings.defaultModelOptions,
+      this.plugin.settings.model
+    ]));
+    const topModels = allModels.filter((model) => defaultModelSet.has(model));
     const orderedModels = [
       ...topModels.filter((model) => models.includes(model)),
       ...models.filter((model) => !topModels.includes(model))
     ];
-    let lastGroup = "";
+    const groupedModels = new Map<string, { title: string; models: string[] }>();
     for (const model of orderedModels) {
       const sourceId = resolveApiProfileId(
         this.plugin.settings.modelSourceByModel[model] || this.plugin.settings.activeApiProfileId,
         profiles
       ) || active.id;
       const source = profiles.find((profile) => profile.id === sourceId);
-      const group = topModels.includes(model)
+      const groupId = topModels.includes(model) ? "defaults" : sourceId;
+      const groupTitle = topModels.includes(model)
         ? this.plugin.t("defaultModelsGroup")
         : (source?.name || source?.id || this.plugin.t("settingsApiProfile"));
-      if (group !== lastGroup) {
-        parent.createEl("h4", { cls: "obcc-model-group-title", text: group });
-        lastGroup = group;
-      }
-      const row = new Setting(parent)
-        .setName(model)
-        .setDesc(model === this.plugin.settings.model ? this.plugin.t("settingsDefaultModel") : "");
-      row.settingEl.addClass("obcc-model-list-entry");
-      row
-        .addDropdown((dropdown) => {
-          dropdown
-            .addOptions(sourceOptions)
-            .setValue(sourceId)
-            .onChange(async (value) => {
-              await this.bindModelSourceFromSettings(model, value);
-            });
-        })
-        .addExtraButton((button) => {
-          button
-            .setIcon("zap")
-            .setTooltip(this.plugin.t("testModel"))
-            .onClick(async () => {
-              button.setDisabled(true);
-              try {
-                const result = await this.plugin.testModel(model, sourceId);
-                new Notice(result.ok
-                  ? modelProbeNotice(model, result)
-                  : this.plugin.t("modelTestFailed", { reason: result.error || "unknown error" }), 12000);
-                this.renderSettings();
-              } finally {
-                button.setDisabled(false);
-              }
-            });
-        })
-        .addExtraButton((button) => {
-          button
-            .setIcon("pencil")
-            .setTooltip(this.plugin.t("editModel"))
-            .onClick(async () => {
-              const result = await promptModelEditModal(this.app, {
-                title: this.plugin.t("editModel"),
-                modelLabel: this.plugin.t("modelNamePrompt"),
-                profileLabel: this.plugin.t("settingsApiProfile"),
-                saveLabel: this.plugin.t("buttonEditSave"),
-                cancelLabel: this.plugin.t("reviewGateCancel"),
-                profiles,
-                initialModel: model,
-                initialProfileId: sourceId
+      const group = groupedModels.get(groupId) ?? { title: groupTitle, models: [] };
+      group.models.push(model);
+      groupedModels.set(groupId, group);
+    }
+    const renderModelRows = (groupBody: HTMLElement, groupModels: string[]): void => {
+      if (groupBody.dataset.modelsRendered === "1") return;
+      groupBody.dataset.modelsRendered = "1";
+      for (const model of groupModels) {
+        const sourceId = resolveApiProfileId(
+          this.plugin.settings.modelSourceByModel[model] || this.plugin.settings.activeApiProfileId,
+          profiles
+        ) || active.id;
+        const row = new Setting(groupBody)
+          .setName(model)
+          .setDesc(model === this.plugin.settings.model ? this.plugin.t("settingsDefaultModel") : "");
+        row.settingEl.addClass("obcc-model-list-entry");
+        row
+          .addDropdown((dropdown) => {
+            dropdown
+              .addOptions(sourceOptions)
+              .setValue(sourceId)
+              .onChange(async (value) => {
+                await this.bindModelSourceFromSettings(model, value);
               });
-              if (result) await this.editModelFromSettings(model, result.model, result.profileId);
-            });
-        })
-        .addExtraButton((button) => {
-          button
-            .setIcon("trash-2")
-            .setTooltip(this.plugin.t("removeModel"))
-            .setDisabled(models.length <= 1)
-            .onClick(async () => {
-              await this.removeModelFromSettings(model);
-            });
-        });
+          })
+          .addExtraButton((button) => {
+            button
+              .setIcon("zap")
+              .setTooltip(this.plugin.t("testModel"))
+              .onClick(async () => {
+                button.setDisabled(true);
+                try {
+                  const result = await this.plugin.testModel(model, sourceId);
+                  new Notice(result.ok
+                    ? modelProbeNotice(model, result)
+                    : this.plugin.t("modelTestFailed", { reason: result.error || "unknown error" }), 12000);
+                  this.renderSettings();
+                } finally {
+                  button.setDisabled(false);
+                }
+              });
+          })
+          .addExtraButton((button) => {
+            button
+              .setIcon("pencil")
+              .setTooltip(this.plugin.t("editModel"))
+              .onClick(async () => {
+                const result = await promptModelEditModal(this.app, {
+                  title: this.plugin.t("editModel"),
+                  modelLabel: this.plugin.t("modelNamePrompt"),
+                  profileLabel: this.plugin.t("settingsApiProfile"),
+                  saveLabel: this.plugin.t("buttonEditSave"),
+                  cancelLabel: this.plugin.t("reviewGateCancel"),
+                  profiles,
+                  initialModel: model,
+                  initialProfileId: sourceId
+                });
+                if (result) await this.editModelFromSettings(model, result.model, result.profileId);
+              });
+          })
+          .addExtraButton((button) => {
+            button
+              .setIcon("trash-2")
+              .setTooltip(this.plugin.t("removeModel"))
+              .setDisabled(models.length <= 1)
+              .onClick(async () => {
+                await this.removeModelFromSettings(model);
+              });
+          });
+      }
+    };
+
+    for (const [groupId, group] of groupedModels) {
+      const groupDetails = this.createPersistentDetails(
+        parent,
+        `models:source:${groupId}`,
+        "obcc-settings-group obcc-model-group",
+        `${group.title} (${group.models.length})`,
+        false
+      );
+      const groupBody = groupDetails.createDiv({ cls: "obcc-settings-group-body obcc-model-group-body" });
+      if (groupDetails.open) renderModelRows(groupBody, group.models);
+      groupDetails.addEventListener("toggle", () => {
+        if (groupDetails.open) renderModelRows(groupBody, group.models);
+      });
     }
 
   }
@@ -72208,6 +72490,7 @@ class CancipSettingTab extends PluginSettingTab {
     delete sources[model];
     sources[next] = resolvedProfileId;
     this.plugin.settings.modelSourceByModel = sources;
+    this.plugin.settings.defaultModelOptions = uniqueStrings(this.plugin.settings.defaultModelOptions.map((item) => item === model ? next : item));
     if (this.plugin.settings.model === model) await this.plugin.selectModel(next, resolvedProfileId);
     else await this.plugin.saveSettings();
     this.plugin.refreshOpenViews();
@@ -72222,6 +72505,7 @@ class CancipSettingTab extends PluginSettingTab {
     const sources = { ...this.plugin.settings.modelSourceByModel };
     delete sources[model];
     this.plugin.settings.modelSourceByModel = sources;
+    this.plugin.settings.defaultModelOptions = this.plugin.settings.defaultModelOptions.filter((item) => item !== model);
     if (this.plugin.settings.model === model) {
       await this.plugin.selectModel(fallbackModel, sources[fallbackModel]);
     } else {
@@ -72234,7 +72518,6 @@ class CancipSettingTab extends PluginSettingTab {
   private renderSupportCodes(parent: HTMLElement): void {
     const wrap = parent.createDiv({ cls: "obcc-support-codes" });
     new Setting(wrap).setName(this.plugin.t("supportCodesTitle")).setHeading();
-    wrap.createEl("p", { text: this.plugin.t("supportCodesNote") });
     const grid = wrap.createDiv({ cls: "obcc-support-code-grid" });
     this.renderSupportCodeCard(grid, DEFAULT_SUPPORT_CODE_ONE_LABEL, DEFAULT_SUPPORT_CODE_ONE_PATH);
     this.renderSupportCodeCard(grid, DEFAULT_SUPPORT_CODE_TWO_LABEL, DEFAULT_SUPPORT_CODE_TWO_PATH);
@@ -72264,44 +72547,35 @@ class CancipSettingTab extends PluginSettingTab {
     return this.app.vault.adapter.getResourcePath(normalizePath(`${pluginDir}/${path}`));
   }
 
-  private displayApiProfileSettings(parent: HTMLElement): void {
+  private displayApiProfileSettings(parent: HTMLElement, showProfileSelector = true): void {
     const fallback = this.plugin.activeApiProfile();
     const editingId = resolveApiProfileId(this.editingApiProfileId, this.plugin.settings.apiProfiles) || fallback.id;
     const active = this.plugin.settings.apiProfiles.find((profile) => profile.id === editingId) ?? fallback;
     this.editingApiProfileId = active.id;
-    const profileOptions = Object.fromEntries(this.plugin.settings.apiProfiles.map((profile) => [
-      profile.id,
-      apiProfileDisplayLabel(profile, this.plugin.language())
-    ]));
-
     const sourceProbe = this.plugin.getApiProfileTestResult(active.id);
     const sourceDescription = sourceProbe
       ? `${this.plugin.t("settingsApiProfileDesc")} · ${sourceProbe.ok
         ? this.plugin.t("apiProfileTestPassed", { count: sourceProbe.modelCount, latency: sourceProbe.latencyMs })
         : this.plugin.t("apiProfileTestFailed", { reason: sourceProbe.error || "unknown error" })}`
       : this.plugin.t("settingsApiProfileDesc");
-    new Setting(parent)
+    const profileHeader = new Setting(parent)
       .setName(this.plugin.t("settingsApiProfile"))
-      .setDesc(sourceDescription)
-      .addDropdown((dropdown) => {
+      .setDesc(sourceDescription);
+    if (showProfileSelector) {
+      profileHeader.addDropdown((dropdown) => {
         dropdown
-          .addOptions(profileOptions)
+          .addOptions(Object.fromEntries(this.plugin.settings.apiProfiles.map((profile) => [
+            profile.id,
+            apiProfileDisplayLabel(profile, this.plugin.language())
+          ])))
           .setValue(active.id)
           .onChange((value) => {
             this.editingApiProfileId = value;
             this.renderSettings();
           });
-      })
-      .addButton((button) => {
-        button
-          .setButtonText(this.plugin.t("addApiProfile"))
-          .onClick(async () => {
-            const profile = await this.plugin.addApiProfile();
-            this.editingApiProfileId = profile.id;
-            new Notice(this.plugin.t("apiProfileChanged", { profile: profile.name }));
-            this.renderSettings();
-          });
-      })
+      });
+    }
+    profileHeader
       .addButton((button) => {
         button
           .setButtonText(this.plugin.t("removeApiProfile"))
@@ -83481,6 +83755,10 @@ function normalizeSettings(input: Partial<Settings>): Settings {
     ? merged.model.trim()
     : activeProfileBase.model;
   const modelOptions = normalizeModelOptions(merged.modelOptions, selectedModel);
+  const defaultModelOptions = uniqueStrings([
+    ...(Array.isArray(merged.defaultModelOptions) ? merged.defaultModelOptions : MODEL_PRESETS.slice(0, 8)),
+    selectedModel
+  ].map((model) => String(model ?? "").trim()).filter((model) => modelOptions.includes(model)));
   let modelSourceByModel = normalizeModelSourceByModel((merged as Partial<Settings>).modelSourceByModel, modelOptions, apiProfiles, activeApiProfileId);
   const profileIds = new Set(apiProfiles.map((profile) => profile.id));
   const selectedAgentProvider = localAgentProviderFromModel(selectedModel);
@@ -83513,6 +83791,10 @@ function normalizeSettings(input: Partial<Settings>): Settings {
     model: selectedModel,
     modelOptions,
     modelSourceByModel,
+    defaultModelOptions,
+    settingsOpenGroups: isRecord(merged.settingsOpenGroups)
+      ? Object.fromEntries(Object.entries(merged.settingsOpenGroups).filter(([key, value]) => Boolean(key) && typeof value === "boolean"))
+      : {},
     temperature: Number.isFinite(temperature) ? Math.max(0, Math.min(2, temperature)) : DEFAULT_SETTINGS.temperature,
     maxOutputTokens: Number.isFinite(maxOutputTokens) ? Math.max(16, Math.min(32000, maxOutputTokens)) : DEFAULT_SETTINGS.maxOutputTokens,
     maxContextFiles: Number.isFinite(maxContextFiles) ? Math.max(1, Math.min(20, maxContextFiles)) : DEFAULT_SETTINGS.maxContextFiles,
@@ -83698,6 +83980,8 @@ function settingsToCancipConfig(settings: Settings): Record<string, unknown> {
     model: settings.model,
     modelOptions: settings.modelOptions,
     modelSourceByModel: settings.modelSourceByModel,
+    defaultModelOptions: settings.defaultModelOptions,
+    settingsOpenGroups: settings.settingsOpenGroups,
     temperature: settings.temperature,
     maxOutputTokens: settings.maxOutputTokens,
     maxContextFiles: settings.maxContextFiles,
@@ -83871,6 +84155,12 @@ function parseCancipConfig(raw: unknown): Partial<Settings> {
   if (typeof raw.model === "string") config.model = raw.model;
   if (Array.isArray(raw.modelOptions) || typeof raw.modelOptions === "string") config.modelOptions = normalizeModelOptions(raw.modelOptions, typeof raw.model === "string" ? raw.model : undefined);
   if (isRecord(raw.modelSourceByModel)) config.modelSourceByModel = raw.modelSourceByModel as Record<string, string>;
+  if (Array.isArray(raw.defaultModelOptions)) config.defaultModelOptions = raw.defaultModelOptions.filter((model): model is string => typeof model === "string");
+  if (isRecord(raw.settingsOpenGroups)) {
+    config.settingsOpenGroups = Object.fromEntries(
+      Object.entries(raw.settingsOpenGroups).filter(([key, value]) => Boolean(key) && typeof value === "boolean")
+    ) as Record<string, boolean>;
+  }
   if (typeof raw.temperature === "number" || typeof raw.temperature === "string") config.temperature = Number(raw.temperature);
   if (typeof raw.maxOutputTokens === "number" || typeof raw.maxOutputTokens === "string") config.maxOutputTokens = Number.parseInt(String(raw.maxOutputTokens), 10);
   if (typeof raw.maxContextFiles === "number" || typeof raw.maxContextFiles === "string") config.maxContextFiles = Number.parseInt(String(raw.maxContextFiles), 10);
@@ -84055,6 +84345,7 @@ const CANCIP_CONFIG_STRING_KEYS = new Set([
 
 const CANCIP_CONFIG_STRING_ARRAY_KEYS = new Set([
   "modelOptions",
+  "defaultModelOptions",
   "skillRoots",
   "documentWorkbenchExtensions",
   "pinnedTags",
@@ -84229,6 +84520,12 @@ function assertCancipConfigWriteShape(config: Record<string, unknown>): void {
     }
     if (key === "modelSourceByModel") {
       if (!isValidModelSourceByModelConfigValue(value)) issues.push("modelSourceByModel must map model IDs to profile IDs");
+      continue;
+    }
+    if (key === "settingsOpenGroups") {
+      if (!isRecord(value) || Object.entries(value).some(([entryKey, entryValue]) => !entryKey || typeof entryValue !== "boolean")) {
+        issues.push("settingsOpenGroups must map group IDs to booleans");
+      }
       continue;
     }
     if (key === "uiButtonRules") {

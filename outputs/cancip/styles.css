@@ -3915,6 +3915,52 @@ details.obcc-process-step {
   margin-top: 10px;
 }
 
+.obcc-default-model-picker-modal {
+  width: min(560px, calc(100vw - 32px));
+}
+
+.obcc-default-model-picker-list {
+  max-height: min(52vh, 420px);
+  overflow: auto;
+  margin-top: 10px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+}
+
+.obcc-default-model-picker-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  cursor: pointer;
+}
+
+.obcc-default-model-picker-row:last-child {
+  border-bottom: 0;
+}
+
+.obcc-default-model-picker-row:hover {
+  background: var(--background-modifier-hover);
+}
+
+.obcc-default-model-picker-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.obcc-default-model-picker-label small {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-muted);
+}
+
+.obcc-default-model-picker-empty {
+  padding: 16px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
 .obcc-command-popover.is-access {
   left: var(--obcc-overlay-left);
   transform-origin: left bottom;
@@ -7692,7 +7738,74 @@ details.obcc-process-step {
 
 .obcc-settings,
 .obcc-settings-page-body {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
   overflow-anchor: none;
+  overflow-x: hidden;
+}
+
+.obcc-settings > *,
+.obcc-settings-page-body > *,
+.obcc-settings-page-body .setting-item,
+.obcc-settings-page-body .setting-item-info,
+.obcc-settings-page-body .setting-item-control,
+.obcc-settings-group,
+.obcc-settings-group-body {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.obcc-settings-page-body .setting-item-info {
+  overflow: hidden;
+}
+
+.obcc-settings-page-body .setting-item-name,
+.obcc-settings-page-body .setting-item-description {
+  overflow-wrap: anywhere;
+}
+
+.obcc-settings-page-body .setting-item-control {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.obcc-settings-subpage-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  margin: 0 0 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.obcc-settings-subpage-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 5px 8px;
+  border-radius: 6px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.obcc-settings-subpage-back span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.obcc-settings-subpage-title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-normal);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .obcc-automation-card-summary {
@@ -9631,6 +9744,13 @@ input.obcc-review-correction-input {
   border: 1px solid var(--background-modifier-border);
   border-radius: 8px;
   background: var(--background-primary);
+  contain: layout paint;
+}
+
+.obcc-settings-page-body > .setting-item,
+.obcc-settings-page-body > .obcc-settings-group {
+  content-visibility: auto;
+  contain-intrinsic-size: 0 48px;
 }
 
 .obcc-settings-group > summary {
@@ -11495,6 +11615,71 @@ body.is-phone.obcc-force-statusbar-visible .view-content.obcc-document-workbench
   scrollbar-width: none;
   overscroll-behavior: contain;
   touch-action: pan-x pan-y;
+}
+
+.obcc-model-source-editor-title {
+  margin: 0;
+  padding: 12px 10px 0;
+  color: var(--text-normal);
+  font-size: var(--font-ui-medium);
+}
+
+.obcc-settings-page-desc {
+  margin: 4px 0 10px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  line-height: 1.45;
+}
+
+.obcc-model-source-list {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0 12px;
+}
+
+.obcc-model-source-list-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 42px;
+  padding: 8px 10px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 7px;
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 120ms ease, background-color 120ms ease, transform 120ms ease;
+}
+
+.obcc-model-source-list-row:hover {
+  border-color: var(--interactive-accent);
+  background: var(--background-modifier-hover);
+}
+
+.obcc-model-source-list-row:active {
+  transform: translateY(1px);
+}
+
+.obcc-model-source-list-row.is-active {
+  border-color: var(--interactive-accent);
+  box-shadow: inset 3px 0 0 var(--interactive-accent);
+}
+
+.obcc-model-source-list-name {
+  flex: 0 0 auto;
+  min-width: 110px;
+  font-weight: 600;
+}
+
+.obcc-model-source-list-meta {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Cancip owns the single document action menu in the native view header. */
