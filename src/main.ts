@@ -4255,7 +4255,11 @@ const OBSIDIAN_NATIVE_DOCUMENT_EXTENSIONS = new Set([
 ]);
 
 function isObsidianNativeDocumentExtension(extension: string): boolean {
-  return OBSIDIAN_NATIVE_DOCUMENT_EXTENSIONS.has(normalizeDocumentWorkbenchExtension(extension));
+  // 直接按原始扩展名判断（md/markdown 都在集合里）。不要先走
+  // normalizeDocumentWorkbenchExtension：它会把 md/markdown 规范化成空串，
+  // 导致普通笔记在右键菜单里仍然出现"在文档工作台打开"。
+  const normalized = extension.trim().toLowerCase().replace(/^\.+/, "");
+  return OBSIDIAN_NATIVE_DOCUMENT_EXTENSIONS.has(normalized);
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -4998,7 +5002,7 @@ const EN = {
   settingsAutocompleteCandidateCount: "Candidates per batch",
   settingsAutocompleteCandidateCountDesc: "Number shown at each level. Set 1 to show one candidate without rotation; the default is 2. With preloading enabled, every candidate prepares the same number for its next level.",
   settingsAutocompleteModel: "Autocomplete model",
-  settingsAutocompleteModelDesc: "Use the current model or a separately configured API profile for chat and note completions.",
+  settingsAutocompleteModelDesc: "Model for chat and note completions. Each option comes with its bound model source, so no separate source picker is needed.",
   settingsAutocompleteSource: "Autocomplete source",
   settingsAutocompleteSourceDesc: "Use the current source or a separately configured API profile for chat and note completions.",
   autocompleteFollowCurrentModel: "Follow current model",
@@ -6231,7 +6235,7 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     settingsAutocompleteCandidateCount: "每批候选数",
     settingsAutocompleteCandidateCountDesc: "当前层显示的候选数量；设为1时只显示一个且不轮换，默认2个。开启预加载时，每个候选也准备相同数量的下一级。",
     settingsAutocompleteModel: "自动补全模型",
-    settingsAutocompleteModelDesc: "聊天输入和笔记编辑补全使用的模型，可跟随当前模型或选择一个已配置模型。",
+    settingsAutocompleteModelDesc: "聊天输入和笔记编辑补全使用的模型；每个选项自带该模型已绑定的模型源，选中即用，不再单独选来源。",
     settingsAutocompleteSource: "自动补全来源",
     settingsAutocompleteSourceDesc: "聊天输入和笔记编辑补全使用的来源配置，可跟随当前来源或选择一个已配置 API 配置。",
     autocompleteFollowCurrentModel: "跟随当前模型",
@@ -9507,17 +9511,6 @@ function showEditorAutocompleteModelMenu(view: EditorView, position: { x: number
         .setIcon(option.value ? "bot" : "git-branch")
         .setChecked(plugin.settings.composerAutocompleteModel === option.value)
         .onClick(() => void plugin.selectAutocompleteModel(option.value));
-    });
-  }
-  menu.addSeparator();
-  menu.addItem((item) => item.setTitle(plugin.t("settingsAutocompleteSource")).setIcon("server").setIsLabel(true));
-  for (const option of plugin.autocompleteApiProfileOptions()) {
-    menu.addItem((item) => {
-      item
-        .setTitle(option.label)
-        .setIcon(option.value ? "bot" : "git-branch")
-        .setChecked(plugin.settings.composerAutocompleteApiProfileId === option.value)
-        .onClick(() => void plugin.selectAutocompleteApiProfile(option.value));
     });
   }
   menu.showAtPosition(position, view.dom.ownerDocument);
@@ -23026,8 +23019,11 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
   autocompleteModelOptions(): Array<{ value: string; label: string }> {
     const selectedModel = this.settings.composerAutocompleteModel.trim();
     return [
-      { value: "", label: `${this.t("autocompleteFollowCurrentModel")} · ${this.settings.model}` },
-      ...normalizeModelOptions(this.settings.modelOptions, selectedModel || this.settings.model).map((model) => ({ value: model, label: model }))
+      { value: "", label: `${this.t("autocompleteFollowCurrentModel")} · ${this.settings.model} · ${this.activeApiProfile().name}` },
+      ...normalizeModelOptions(this.settings.modelOptions, selectedModel || this.settings.model).map((model) => ({
+        value: model,
+        label: `${model} · ${this.apiProfileForModel(model).name}`
+      }))
     ];
   }
 
@@ -23508,6 +23504,9 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
         [this.settings.composerAutocompleteModel, ...this.settings.modelOptions],
         this.settings.composerAutocompleteModel
       );
+      // 模型与模型源合一：自动补全来源跟随所选模型已绑定的模型源，
+      // 不再单独维护一个来源下拉选择。
+      this.settings.composerAutocompleteApiProfileId = "";
     }
     this.syncAutocompleteProfileState(true);
     await this.saveSettings();
@@ -34044,6 +34043,18 @@ class CancipDocumentWorkbenchView extends FileView {
       && toolbar instanceof HTMLElement && toolbar.isConnected;
   }
 
+  // 独立预览（iframe）里的文档内容不在舞台 DOM 中，NoteDraw 的选择元素
+  // 无法直接命中；这类文件（docx/xlsx/pptx/html/pdf 等）在 select 工具下
+  // 需要挂载 Markdown 草稿层来元素化内容。图片/音视频没有文本内容可编辑，
+  // Markdown 直渲染的工作台内容本身已在舞台里，都不挂草稿层。
+  private stageUsesIsolatedDocumentPreview(stage: HTMLElement): boolean {
+    // iframe 被包在 .obcc-document-preview-host 的 shadow DOM 里，
+    // querySelector 穿不透 shadow root，所以按宿主元素判断。
+    return stage.querySelector(
+      ".obcc-document-preview-host, .obcc-document-html-preview, .obcc-document-native-preview"
+    ) !== null;
+  }
+
   private registerNoteDrawWorkbenchSurface(stage: HTMLElement): NoteDrawSurfaceHandle | null {
     const api = this.noteDrawPublicApi();
     const filePath = normalizePath(this.snapshot?.file.path ?? this.filePath);
@@ -34481,15 +34492,21 @@ class CancipDocumentWorkbenchView extends FileView {
     const syncFromController = (): void => {
       const notedraw = controller();
       const controllerActive = controllerIsActive(notedraw);
-      const editing = stage.hasClass("is-edit-md-mode") || notedraw?.toolMode === "edit-md";
+      const toolMode = typeof notedraw?.toolMode === "string" ? notedraw.toolMode : "";
+      // 选择元素在独立预览（docx/xlsx/pptx/html/pdf 等工作台文件）上把文档
+      // 内容元素化：挂载 Markdown 草稿层，点选内容元素即可编辑并安全回写；
+      // 编辑 MD 工具保持原有行为。
+      const selectContentMode = controllerActive && toolMode === "select"
+        && this.stageUsesIsolatedDocumentPreview(stage);
+      const editing = toolMode === "edit-md" || selectContentMode;
       const closedByMagicWand = controllerWasActive && !controllerActive;
       controllerWasActive = controllerActive;
-      if (closedByMagicWand && editing) {
+      if (closedByMagicWand && (editing || this.noteDrawMarkdownEditMode)) {
         leaveMarkdownEditMode();
         return;
       }
       const enabled = controllerActive && editing;
-      if (enabled === this.noteDrawMarkdownEditMode) return;
+      if (enabled === this.noteDrawMarkdownEditMode && stage.hasClass("is-edit-md-mode") === enabled) return;
       this.noteDrawMarkdownEditMode = enabled;
       stage.toggleClass("is-edit-md-mode", enabled);
       onModeChange?.(enabled);
@@ -35108,6 +35125,7 @@ class CancipDocumentWorkbenchView extends FileView {
       iframe.setAttr("data-note-draw-source-path", snapshot.file.path);
       this.htmlPreviewFrame = iframe;
       this.installHtmlPreviewBridge(stage, iframe, snapshot);
+      this.installNoteDrawDraftBridge(stage, snapshot);
       this.contextEditFrameCleanup = this.plugin.registerContextEditFrame(iframe, snapshot.file, {
         sourceText: snapshot.rawSourceAvailable ? snapshot.rawSourceText : undefined,
         isEnabled: () => this.noteDrawMarkdownEditMode
@@ -35416,6 +35434,12 @@ class CancipDocumentWorkbenchView extends FileView {
       }, true);
     };
     this.installNoteDrawMarkdownEditModeBridge(stage, (enabled) => {
+      // html/office 独立预览的 iframe 编辑态与草稿层同步切换（此视图上只有
+      // 这一个 markdown-edit bridge，避免多桥共享 mode flag 时互相抢跑）。
+      this.htmlPreviewFrame?.contentWindow?.postMessage({
+        channel: DOCUMENT_HTML_PREVIEW_CHANNEL,
+        action: enabled ? "edit-on" : "edit-off"
+      }, "*");
       if (enabled) void mountDraft();
       else clearDraft();
     });
@@ -35434,9 +35458,10 @@ class CancipDocumentWorkbenchView extends FileView {
         action: this.noteDrawMarkdownEditMode ? "edit-on" : "edit-off"
       }, "*");
     };
-    this.installNoteDrawMarkdownEditModeBridge(stage, (enabled) => {
-      iframe.contentWindow?.postMessage({ channel: DOCUMENT_HTML_PREVIEW_CHANNEL, action: enabled ? "edit-on" : "edit-off" }, "*");
-    });
+    // 注意：这里不再单独安装 markdown-edit bridge。它与 NoteDraw 草稿桥共享
+    // noteDrawMarkdownEditMode，两个桥的 sync 都会跑，先跑的把 flag 置位后
+    // 后跑的会 early-return，导致草稿层的 onModeChange 永远不触发。
+    // edit-on/off 消息统一由 installNoteDrawDraftBridge 的回调发送。
     const onMessage = (event: MessageEvent): void => {
       if (event.source !== iframe.contentWindow || !isRecord(event.data) || event.data.channel !== DOCUMENT_HTML_PREVIEW_CHANNEL) return;
       if (event.data.type === "context-edit") {
@@ -37927,6 +37952,7 @@ class CancipView extends ItemView {
   private processDetailScrollLeft = new Map<string, number>();
   private headerLiveStatusSignature = "";
   private headerLiveStatusTimer: number | null = null;
+  private headerSessionEndedAtMs: number | null = null;
   private headerLiveElapsedText = "";
   private mentionItems: MentionTarget[] = [];
   private mentionActiveIndex = 0;
@@ -40718,20 +40744,6 @@ class CancipView extends ItemView {
     modelSelect.addEventListener("change", () => {
       void this.plugin.selectAutocompleteModel(modelSelect.value).then(() => {
         modelSelect.value = this.plugin.settings.composerAutocompleteModel;
-        this.placeAutocompletePopover();
-      });
-    });
-
-    const sourceLabel = popover.createEl("label", { cls: "obcc-autocomplete-model-row" });
-    sourceLabel.createSpan({ text: this.t("settingsAutocompleteSource") });
-    const sourceSelect = sourceLabel.createEl("select");
-    for (const option of this.plugin.autocompleteApiProfileOptions()) {
-      sourceSelect.createEl("option", { text: option.label, attr: { value: option.value } });
-    }
-    sourceSelect.value = this.plugin.settings.composerAutocompleteApiProfileId;
-    sourceSelect.addEventListener("change", () => {
-      void this.plugin.selectAutocompleteApiProfile(sourceSelect.value).then(() => {
-        sourceSelect.value = this.plugin.settings.composerAutocompleteApiProfileId;
         this.placeAutocompletePopover();
       });
     });
@@ -48600,6 +48612,8 @@ class CancipView extends ItemView {
     this.clearRequest(request);
     this.syncRequestControls();
     this.currentSessionStatus = status;
+    this.stampTerminalTodoTimings();
+    this.syncHeaderSessionTimer();
     this.currentSessionCompletedNotice = completedNotice;
     this.plugin.refreshSessionRequestIndicators(requestSessionId || this.sessionId, status);
     if ((status === "completed" || status === "failed") && (!requestSessionId || requestSessionId === this.sessionId)) {
@@ -68461,7 +68475,7 @@ class CancipView extends ItemView {
   }
 
   private syncHeaderSessionTimer(): void {
-    const running = Boolean(this.activeRequest) || this.currentSessionStatus === "running" || this.hasRunningTodoTimer() || this.hasRunningSubagents();
+    const running = this.headerSessionTimerRunning();
     if (!running) {
       this.stopHeaderSessionTimer();
       if (this.headerLiveStatusEl) {
@@ -68477,6 +68491,28 @@ class CancipView extends ItemView {
     }
   }
 
+  // 会话进入终态（完成/失败/停止/空闲）后，遗留的未完成计划 todo 或子代理请求
+  // 不应再把"总时间"顶着继续走；计时以终态时刻冻结。
+  private headerSessionSettledTerminal(): boolean {
+    if (this.activeRequest || this.currentSessionStatus === "running") return false;
+    return this.currentSessionStatus === "idle"
+      || this.currentSessionStatus === "completed"
+      || this.currentSessionStatus === "failed"
+      || this.currentSessionStatus === "stopped";
+  }
+
+  private headerSessionTimerRunning(): boolean {
+    if (this.activeRequest || this.currentSessionStatus === "running") {
+      this.headerSessionEndedAtMs = null;
+      return true;
+    }
+    if (!this.headerSessionSettledTerminal()) {
+      return this.hasRunningTodoTimer() || this.hasRunningSubagents();
+    }
+    if (this.headerSessionEndedAtMs === null) this.headerSessionEndedAtMs = Date.now();
+    return false;
+  }
+
   private stopHeaderSessionTimer(): void {
     if (this.headerLiveStatusTimer !== null) window.clearInterval(this.headerLiveStatusTimer);
     this.headerLiveStatusTimer = null;
@@ -68487,8 +68523,8 @@ class CancipView extends ItemView {
     const status = this.headerLiveStatusEl;
     this.refreshTodoTimerDom();
     this.refreshProcessStepTimerDom();
-    if (!status || !(this.activeRequest || this.currentSessionStatus === "running" || this.hasRunningTodoTimer() || this.hasRunningSubagents())) return;
-    const elapsed = formatElapsedSeconds(Math.max(0, Date.now() - this.headerSessionTimerStartMs()));
+    if (!status || !this.headerSessionTimerRunning()) return;
+    const elapsed = formatElapsedSeconds(Math.max(0, (this.headerSessionEndedAtMs ?? Date.now()) - this.headerSessionTimerStartMs()));
     status.removeClass("is-hidden");
     const existingLabel = status.querySelector<HTMLElement>(".obcc-header-live-label");
     if (existingLabel && this.headerLiveElapsedText === elapsed) return;
@@ -68542,11 +68578,23 @@ class CancipView extends ItemView {
   }
 
   private hasRunningTodoTimer(): boolean {
+    if (this.headerSessionSettledTerminal()) return false;
     return this.modelPlanTodos().some((todo) => !todo.done && Boolean(todo.startedAt));
   }
 
   private hasRunningSubagents(): boolean {
+    if (this.headerSessionSettledTerminal()) return false;
     return [...this.subagentIds].some((sessionId) => this.activeRequests.has(sessionId));
+  }
+
+  private stampTerminalTodoTimings(at = new Date().toISOString()): void {
+    for (const todo of this.modelPlanTodos()) {
+      if (todo.done) {
+        if (!todo.completedAt) todo.completedAt = at;
+        continue;
+      }
+      if (todo.startedAt && !todo.completedAt) todo.completedAt = at;
+    }
   }
 
   private todoElapsedMs(todo: ManualTodo): number {
@@ -71209,17 +71257,6 @@ class CancipSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.composerAutocompleteModel)
           .onChange(async (value) => {
             await this.plugin.selectAutocompleteModel(value);
-          });
-      });
-    new Setting(parent)
-      .setName(this.plugin.t("settingsAutocompleteSource"))
-      .setDesc(this.plugin.t("settingsAutocompleteSourceDesc"))
-      .addDropdown((dropdown) => {
-        for (const option of this.plugin.autocompleteApiProfileOptions()) dropdown.addOption(option.value, option.label);
-        dropdown
-          .setValue(this.plugin.settings.composerAutocompleteApiProfileId)
-          .onChange(async (value) => {
-            await this.plugin.selectAutocompleteApiProfile(value);
           });
       });
     this.addTextSetting(parent, "autocompletePrompt", this.plugin.settings.composerAutocompletePrompt, this.plugin.t("autocompletePromptPlaceholder"), async (value) => {

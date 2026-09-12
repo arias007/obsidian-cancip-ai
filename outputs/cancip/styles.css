@@ -11835,6 +11835,15 @@ body.is-phone.obcc-force-statusbar-visible .view-content.obcc-document-workbench
   pointer-events: none !important;
 }
 
+.obcc-document-stage.is-notedraw-registered-shell.is-edit-md-mode > .notedraw-canvas,
+.obcc-document-stage.is-notedraw-registered-shell.is-edit-md-mode > .notedraw-static-canvas {
+  /* Registered surfaces (docx/html/pdf workbench) also have the 4-class
+     `.is-notedraw-registered-shell.is-drawing-active` auto rule above; an
+     equal-specificity rule placed later wins, so select-content mode still
+     routes taps to the elementized Markdown draft layer. */
+  pointer-events: none !important;
+}
+
 .obcc-document-note-draw-edit-surface [contenteditable="true"],
 .obcc-document-note-draw-edit-surface [contenteditable="plaintext-only"] {
   outline: 2px solid var(--interactive-accent);
