@@ -3786,14 +3786,56 @@ details.obcc-process-step {
   text-align: left;
 }
 
-.obcc-model-test-result {
+.obcc-model-menu-detail-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  white-space: nowrap;
+}
+
+.obcc-model-menu-source {
   min-width: 0;
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.obcc-model-test-latency {
+  flex: 0 0 auto;
+  margin-left: auto;
+  min-width: 0;
   color: var(--text-muted);
   font-size: 10px;
   line-height: 1.25;
   white-space: nowrap;
+}
+
+.notice:has(.obcc-model-probe-notice) {
+  width: min(640px, 90vw);
+  max-width: 90vw;
+}
+
+.obcc-model-probe-notice {
+  width: 100%;
+  min-width: 0;
+  text-align: left;
+}
+
+.obcc-model-probe-notice-title {
+  overflow: hidden;
+  font-weight: 600;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.obcc-model-probe-notice-reply {
+  margin-top: 6px;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .obcc-model-menu-actions {

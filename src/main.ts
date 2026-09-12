@@ -478,10 +478,23 @@ type ModelProbeResult = {
   error?: string;
 };
 
-function modelProbeSummary(result: ModelProbeResult, language = "zh"): string {
-  const okLabel = language.toLowerCase().startsWith("zh") ? "模型正常" : "Model OK";
-  const reply = result.responseText ? ` · ${trimContext(result.responseText, 120)}` : "";
-  return `${okLabel} · ${result.latencyMs} ms${reply}`;
+function modelProbeNotice(model: string, result: ModelProbeResult): DocumentFragment {
+  const fragment = document.createDocumentFragment();
+  const content = document.createElement("div");
+  content.className = "obcc-model-probe-notice";
+  const title = document.createElement("div");
+  title.className = "obcc-model-probe-notice-title";
+  title.textContent = `${model} · ${result.latencyMs} ms`;
+  content.append(title);
+  const reply = result.responseText?.trim() ?? "";
+  if (reply) {
+    const replyEl = document.createElement("div");
+    replyEl.className = "obcc-model-probe-notice-reply";
+    replyEl.textContent = reply;
+    content.append(replyEl);
+  }
+  fragment.append(content);
+  return fragment;
 }
 
 type ModelMenuEntry = {
@@ -5685,7 +5698,7 @@ const EN = {
   apiProfileTestPassed: "Source OK · {count} models · {latency} ms",
   apiProfileTestFailed: "Source test failed: {reason}",
   testModel: "Test model",
-  modelTestPassed: "Model OK · {latency} ms",
+  modelTestPassed: "{latency} ms",
   modelTestFailed: "Model test failed: {reason}",
   modelTestNoReply: "No text reply",
   modelSearch: "Search models",
@@ -6926,7 +6939,7 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     apiProfileTestPassed: "模型源正常 · {count} 个模型 · {latency} ms",
     apiProfileTestFailed: "模型源测试失败：{reason}",
     testModel: "测试模型",
-    modelTestPassed: "模型正常 · {latency} ms",
+    modelTestPassed: "{latency} ms",
     modelTestFailed: "模型测试失败：{reason}",
     modelTestNoReply: "未返回文本",
     modelSearch: "搜索模型",
@@ -13394,8 +13407,8 @@ export default class CancipPlugin extends Plugin {
       const compatibleUrl = /\/v1$/i.test(root) ? `${root}/chat/completions` : `${root}/v1/chat/completions`;
       const responsesUrl = /\/v1$/i.test(root) ? `${root}/responses` : `${root}/v1/responses`;
       const candidates: Array<{ url: string; body: unknown }> = profile.apiMode === "responses"
-        ? [{ url: responsesUrl, body: { model: modelId, input: "你好！请自然地向用户打个招呼，并用一句简短的话介绍你自己。", max_output_tokens: 32 } }, { url: compatibleUrl, body: { model: modelId, messages: [{ role: "user", content: "你好！请自然地向用户打个招呼，并用一句简短的话介绍你自己。" }], max_tokens: 32, stream: false } }]
-        : [{ url: compatibleUrl, body: { model: modelId, messages: [{ role: "user", content: "你好！请自然地向用户打个招呼，并用一句简短的话介绍你自己。" }], max_tokens: 32, stream: false } }, { url: responsesUrl, body: { model: modelId, input: "你好！请自然地向用户打个招呼，并用一句简短的话介绍你自己。", max_output_tokens: 32 } }];
+        ? [{ url: responsesUrl, body: { model: modelId, input: "你好！请自然地向用户打个招呼，并用一句简短的话介绍你自己。", max_output_tokens: 96 } }, { url: compatibleUrl, body: { model: modelId, messages: [{ role: "user", content: "你好！请自然地向用户打个招呼，并用一句简短的话介绍你自己。" }], max_tokens: 96, stream: false } }]
+        : [{ url: compatibleUrl, body: { model: modelId, messages: [{ role: "user", content: "你好！请自然地向用户打个招呼，并用一句简短的话介绍你自己。" }], max_tokens: 96, stream: false } }, { url: responsesUrl, body: { model: modelId, input: "你好！请自然地向用户打个招呼，并用一句简短的话介绍你自己。", max_output_tokens: 96 } }];
       const started = Date.now();
       let lastError = "";
       for (const candidate of candidates) {
@@ -41113,10 +41126,11 @@ class CancipView extends ItemView {
       modelTitle.dataset.fullText = fullModelLabel;
       modelTitle.setAttr("title", fullModelLabel);
       modelTitle.setAttr("aria-label", fullModelLabel);
-      text.createDiv({ cls: "obcc-command-detail", text: this.modelSourceName(rowProfile) });
-      const testResultEl = text.createDiv({ cls: "obcc-model-test-result" });
+      const detailLine = text.createDiv({ cls: "obcc-command-detail obcc-model-menu-detail-line" });
+      detailLine.createSpan({ cls: "obcc-model-menu-source", text: this.modelSourceName(rowProfile) });
+      const testLatencyEl = detailLine.createSpan({ cls: "obcc-model-test-latency" });
       const previousProbe = this.plugin.getModelTestResult(model, rowProfile.id);
-      if (previousProbe?.ok) testResultEl.setText(modelProbeSummary(previousProbe, this.plugin.language()));
+      if (previousProbe?.ok) testLatencyEl.setText(`${previousProbe.latencyMs} ms`);
       if (isActiveEntry) setIcon(body.createSpan({ cls: "obcc-command-check" }), "check");
       body.addEventListener("click", (event) => {
         if (Date.now() < suppressModelSelectUntil) {
@@ -41147,12 +41161,10 @@ class CancipView extends ItemView {
       const testDirect = this.createModelMenuIconButton(actions, "zap", this.t("testModel"), () => {
         testDirect.disabled = true;
         void this.plugin.testModel(model, rowProfile.id).then((result) => {
-          testResultEl.setText(result.ok
-            ? modelProbeSummary(result, this.plugin.language())
-            : `↳ ${result.error || this.t("modelTestFailed", { reason: "unknown error" })}`);
+          testLatencyEl.setText(result.ok ? `${result.latencyMs} ms` : "");
           new Notice(result.ok
-            ? modelProbeSummary(result, this.plugin.language())
-            : this.t("modelTestFailed", { reason: result.error || "unknown error" }));
+            ? modelProbeNotice(fullModelLabel, result)
+            : this.t("modelTestFailed", { reason: result.error || "unknown error" }), 12000);
         }).finally(() => { testDirect.disabled = false; });
       });
       testDirect.classList.add("obcc-model-menu-test-action");
@@ -72097,14 +72109,9 @@ class CancipSettingTab extends PluginSettingTab {
         parent.createEl("h4", { cls: "obcc-model-group-title", text: group });
         lastGroup = group;
       }
-      const probe = this.plugin.getModelTestResult(model, sourceId);
       const row = new Setting(parent)
         .setName(model)
-        .setDesc(probe
-            ? (probe.ok
-              ? modelProbeSummary(probe, this.plugin.language())
-            : this.plugin.t("modelTestFailed", { reason: probe.error || "unknown error" }))
-          : (model === this.plugin.settings.model ? this.plugin.t("settingsDefaultModel") : ""));
+        .setDesc(model === this.plugin.settings.model ? this.plugin.t("settingsDefaultModel") : "");
       row.settingEl.addClass("obcc-model-list-entry");
       row
         .addDropdown((dropdown) => {
@@ -72124,8 +72131,8 @@ class CancipSettingTab extends PluginSettingTab {
               try {
                 const result = await this.plugin.testModel(model, sourceId);
                 new Notice(result.ok
-                  ? modelProbeSummary(result, this.plugin.language())
-                  : this.plugin.t("modelTestFailed", { reason: result.error || "unknown error" }));
+                  ? modelProbeNotice(model, result)
+                  : this.plugin.t("modelTestFailed", { reason: result.error || "unknown error" }), 12000);
                 this.renderSettings();
               } finally {
                 button.setDisabled(false);
