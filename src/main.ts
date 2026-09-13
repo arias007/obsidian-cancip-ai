@@ -3309,6 +3309,7 @@ type Settings = {
   modelOptions: string[];
   modelSourceByModel: Record<string, string>;
   defaultModelOptions: string[];
+  modelNameOverrides: Record<string, string>;
   settingsOpenGroups: Record<string, boolean>;
   temperature: number;
   maxOutputTokens: number;
@@ -4275,6 +4276,7 @@ const DEFAULT_SETTINGS: Settings = {
   modelOptions: [...MODEL_PRESETS],
   modelSourceByModel: defaultModelSourceByModel(MODEL_PRESETS),
   defaultModelOptions: MODEL_PRESETS.slice(0, 8),
+  modelNameOverrides: {},
   settingsOpenGroups: {},
   temperature: 0.2,
   maxOutputTokens: 2048,
@@ -5807,6 +5809,15 @@ const EN = {
   modelSearchDesc: "Filter by model ID or source name.",
   modelSearchPlaceholder: "Search model IDs...",
   defaultModelsGroup: "Default models",
+  copyModelId: "Copy model ID",
+  copyModelIdDone: "Model ID copied",
+  renameModel: "Rename model",
+  renameModelPrompt: "New display name for this model (empty resets to ID)",
+  renameModelDone: "Model display name updated",
+  addToDefaultModels: "Add to default models",
+  removeFromDefaultModels: "Remove from default models",
+  addedToDefaultModels: "Added to default models",
+  removedFromDefaultModels: "Removed from default models",
   settingsAgentConnected: "connected",
   settingsAgentUnavailable: "unavailable",
   settingsScore: "Cancip Score",
@@ -7054,6 +7065,15 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     modelSearchDesc: "按模型 ID 或模型源名称筛选。",
     modelSearchPlaceholder: "搜索模型 ID…",
     defaultModelsGroup: "默认模型",
+    copyModelId: "复制模型 ID",
+    copyModelIdDone: "模型 ID 已复制",
+    renameModel: "改模型名称",
+    renameModelPrompt: "输入该模型的显示名称（留空恢复为模型 ID）",
+    renameModelDone: "模型显示名称已更新",
+    addToDefaultModels: "加入默认模型列表",
+    removeFromDefaultModels: "移出默认模型列表",
+    addedToDefaultModels: "已加入默认模型列表",
+    removedFromDefaultModels: "已移出默认模型列表",
     settingsAgentConnected: "已连接",
     settingsAgentUnavailable: "不可用",
     settingsScore: "Cancip Score",
@@ -41230,7 +41250,7 @@ class CancipView extends ItemView {
     });
     modelHead.createSpan({ text: this.t("modelList") });
     this.createModelMenuIconButton(modelHead, "plus", this.t("addModel"), () => void this.addModelOptionFromMenu());
-    let pointerDrag: { model: string; pointerId: number; startY: number; targetModel: string; after: boolean } | null = null;
+    let pointerDrag: { model: string; pointerId: number; startY: number; targetModel: string; after: boolean; visualModel: string; visualAfter: boolean } | null = null;
     let suppressModelSelectUntil = 0;
     const clearDragState = () => {
       this.menuEl?.querySelectorAll<HTMLElement>(".obcc-model-menu-row").forEach((item) => {
@@ -41260,6 +41280,16 @@ class CancipView extends ItemView {
       pointerDrag.after = event.clientY > rect.top + rect.height / 2;
       targetRow.addClass("is-drag-over");
       targetRow.toggleClass("is-drop-after", pointerDrag.after);
+      const dragRow = sourceRow;
+      if (dragRow && dragRow.dataset.group === targetRow.dataset.group) {
+        if (pointerDrag.visualModel !== targetModel || pointerDrag.visualAfter !== pointerDrag.after) {
+          pointerDrag.visualModel = targetModel;
+          pointerDrag.visualAfter = pointerDrag.after;
+          if (pointerDrag.after) targetRow.insertAdjacentElement("afterend", dragRow);
+          else targetRow.insertAdjacentElement("beforebegin", dragRow);
+          dragRow.addClass("is-dragging");
+        }
+      }
     };
     let lastModelGroup = "";
     let currentModelGroupFrame: HTMLElement | null = null;
@@ -41430,7 +41460,10 @@ class CancipView extends ItemView {
         } catch {
           // Ignore capture release differences across WebViews.
         }
-        if (drag.targetModel && drag.targetModel !== drag.model) {
+        const movedVisually = Boolean(drag.visualModel) && drag.visualModel !== drag.model;
+        if (movedVisually) {
+          void this.reorderModelOptionFromMenu(drag.model, drag.visualModel, drag.visualAfter);
+        } else if (drag.targetModel && drag.targetModel !== drag.model) {
           void this.reorderModelOptionFromMenu(drag.model, drag.targetModel, drag.after);
         }
       };
@@ -41440,7 +41473,7 @@ class CancipView extends ItemView {
         event.stopPropagation();
         detachPointerDragListeners?.();
         suppressModelSelectUntil = Date.now() + 1200;
-        pointerDrag = { model, pointerId: event.pointerId, startY: event.clientY, targetModel: "", after: false };
+        pointerDrag = { model, pointerId: event.pointerId, startY: event.clientY, targetModel: "", after: false, visualModel: "", visualAfter: false };
         row.addClass("is-dragging");
         const doc = this.containerEl.ownerDocument;
         doc.addEventListener("pointermove", movePointerDrag, { capture: true });
@@ -41498,6 +41531,10 @@ class CancipView extends ItemView {
             left: `${Math.max(8, Math.floor(rect.right - 150))}px`,
             top: `${Math.min(window.innerHeight - 44, Math.floor(rect.bottom + 4))}px`
           });
+          const menuHeight = menu.offsetHeight;
+          if (menuHeight > 0 && rect.bottom + menuHeight > window.innerHeight - 8) {
+            menu.setCssProps({ top: `${Math.max(8, Math.floor(window.innerHeight - menuHeight - 8))}px` });
+          }
           menu.setCssStyles({ zIndex: "10000" });
         }
       });
@@ -41518,6 +41555,30 @@ class CancipView extends ItemView {
           void this.copyModelInfo(model, rowProfile);
         });
         copy.classList.add("obcc-model-menu-more-item");
+        const copyId = this.createModelMenuIconButton(moreMenu, "clipboard", this.t("copyModelId"), () => {
+          moreMenu.addClass("is-hidden");
+          void this.copyTextDirect(model, this.t("copyModelIdDone"));
+        });
+        copyId.classList.add("obcc-model-menu-more-item");
+        const rename = this.createModelMenuIconButton(moreMenu, "tag", this.t("renameModel"), () => {
+          moreMenu.addClass("is-hidden");
+          more.setAttribute("aria-expanded", "false");
+          void this.renameModelDisplayFromMenu(model);
+        });
+        rename.classList.add("obcc-model-menu-more-item");
+        const inDefaultModels = this.plugin.settings.defaultModelOptions.includes(model);
+        const defaultsAction = inDefaultModels
+          ? this.createModelMenuIconButton(moreMenu, "list-minus", this.t("removeFromDefaultModels"), () => {
+              moreMenu.addClass("is-hidden");
+              more.setAttribute("aria-expanded", "false");
+              void this.toggleModelDefaultMembershipFromMenu(model, false);
+            })
+          : this.createModelMenuIconButton(moreMenu, "list-plus", this.t("addToDefaultModels"), () => {
+              moreMenu.addClass("is-hidden");
+              more.setAttribute("aria-expanded", "false");
+              void this.toggleModelDefaultMembershipFromMenu(model, true);
+            });
+        defaultsAction.classList.add("obcc-model-menu-more-item");
         if (!localAgentProviderFromModel(model)) {
           const edit = this.createModelMenuIconButton(moreMenu, "pencil", this.t("editModel"), () => {
             moreMenu.addClass("is-hidden");
@@ -41756,6 +41817,34 @@ class CancipView extends ItemView {
     this.plugin.settings.modelSourceByModel = nextSourceByModel;
     if (this.plugin.activeApiProfile().model === model) await this.plugin.updateActiveApiProfile({ model: this.plugin.settings.modelOptions[0] });
     else await this.plugin.saveSettings();
+    this.openModelMenu();
+  }
+
+  private async renameModelDisplayFromMenu(model: string): Promise<void> {
+    const overrides = { ...(this.plugin.settings.modelNameOverrides ?? {}) };
+    const initial = (overrides[model] || "").trim();
+    const next = await promptTextModal(this.app, this.t("renameModelPrompt"), initial);
+    if (next === null) return;
+    const trimmed = next.trim();
+    if (trimmed) overrides[model] = trimmed;
+    else delete overrides[model];
+    this.plugin.settings.modelNameOverrides = overrides;
+    await this.plugin.saveSettings();
+    new Notice(this.t("renameModelDone"));
+    this.openModelMenu();
+  }
+
+  private async toggleModelDefaultMembershipFromMenu(model: string, add: boolean): Promise<void> {
+    const current = this.plugin.settings.defaultModelOptions;
+    if (add) {
+      if (current.includes(model)) return;
+      this.plugin.settings.defaultModelOptions = uniqueStrings([...current, model]);
+    } else {
+      if (!current.includes(model)) return;
+      this.plugin.settings.defaultModelOptions = current.filter((item) => item !== model);
+    }
+    await this.plugin.saveSettings();
+    new Notice(this.t(add ? "addedToDefaultModels" : "removedFromDefaultModels"));
     this.openModelMenu();
   }
 
@@ -44972,6 +45061,8 @@ class CancipView extends ItemView {
     const agentProvider = localAgentProviderFromModel(trimmed);
     if (agentProvider === "codex") return "Codex Agent";
     if (agentProvider === "claude") return "Claude Code";
+    const override = this.plugin.settings.modelNameOverrides?.[trimmed]?.trim();
+    if (override) return override;
     const compact = trimmed.replace(/^openai\//i, "");
     return compact;
   }
@@ -52194,9 +52285,10 @@ class CancipView extends ItemView {
         body.tools = [nativeTool];
         body.tool_choice = "auto";
       }
-    } else if (shouldDisableOptionalReasoning(profile.apiUrl, maxOutputTokens)) {
+    } else if (shouldDisableOptionalReasoning(profile.apiUrl, maxOutputTokens) && !reasoningMandatoryActive(`compatible:${url}|${profile.model}`)) {
       body.reasoning = { effort: "none", exclude: true };
     }
+    const hadUsReasoningDisable = body.reasoning !== undefined || body.reasoning_effort !== undefined;
     this.lastModelCallAudit = { mode: "compatible", url, requestBody: body };
     let streamAudit: ModelCallAudit | null = null;
     const streamingKey = `compatible:${url}`;
@@ -52238,6 +52330,11 @@ class CancipView extends ItemView {
           STREAMING_UNAVAILABLE_UNTIL.set(streamingKey, unavailableUntil);
           try { window.localStorage.setItem(streamingStorageKey, String(unavailableUntil)); } catch { /* Ignore unavailable device storage. */ }
         }
+        if (hadUsReasoningDisable && isMandatoryReasoningError(reason)) {
+          markReasoningMandatoryEndpoint(`compatible:${url}|${profile.model}`);
+          delete body.reasoning;
+          delete body.reasoning_effort;
+        }
         this.lastModelCallAudit = { mode: "compatible", url, requestBody: body };
       }
     }
@@ -52246,9 +52343,23 @@ class CancipView extends ItemView {
     try {
       response = await this.postJson(url, body, profile.apiKey);
     } catch (error) {
-      if (streamAudit) this.prependModelCallAudits([streamAudit]);
-      onStream?.({ text: "", done: true });
-      throw error;
+      const reason = error instanceof Error ? error.message : String(error);
+      if (hadUsReasoningDisable && isMandatoryReasoningError(reason)) {
+        markReasoningMandatoryEndpoint(`compatible:${url}|${profile.model}`);
+        delete body.reasoning;
+        delete body.reasoning_effort;
+        try {
+          response = await this.postJson(url, body, profile.apiKey);
+        } catch (retryError) {
+          if (streamAudit) this.prependModelCallAudits([streamAudit]);
+          onStream?.({ text: "", done: true });
+          throw retryError;
+        }
+      } else {
+        if (streamAudit) this.prependModelCallAudits([streamAudit]);
+        onStream?.({ text: "", done: true });
+        throw error;
+      }
     }
     const text = sanitizeModelVisibleAnswer(extractModelResponseText(response.json) || extractNonJsonText(response.text));
     const usage = extractTokenUsage(response.json, estimateRequestTokens(system, inputText), text);
@@ -52297,9 +52408,10 @@ class CancipView extends ItemView {
         body.tools = [nativeTool];
         body.tool_choice = "auto";
       }
-    } else if (shouldDisableOptionalReasoning(profile.apiUrl, maxOutputTokens)) {
+    } else if (shouldDisableOptionalReasoning(profile.apiUrl, maxOutputTokens) && !reasoningMandatoryActive(`responses:${url}|${profile.model}`)) {
       body.reasoning = { effort: "none", exclude: true };
     }
+    const hadUsReasoningDisable = body.reasoning !== undefined || body.reasoning_effort !== undefined;
     const previousResponseId = this.previousResponseIdFor(profile);
     if (previousResponseId) body.previous_response_id = previousResponseId;
     this.lastModelCallAudit = { mode: "responses", url, requestBody: body };
@@ -52347,6 +52459,11 @@ class CancipView extends ItemView {
           STREAMING_UNAVAILABLE_UNTIL.set(streamingKey, unavailableUntil);
           try { window.localStorage.setItem(streamingStorageKey, String(unavailableUntil)); } catch { /* Ignore unavailable device storage. */ }
         }
+        if (hadUsReasoningDisable && isMandatoryReasoningError(reason)) {
+          markReasoningMandatoryEndpoint(`responses:${url}|${profile.model}`);
+          delete body.reasoning;
+          delete body.reasoning_effort;
+        }
         this.lastModelCallAudit = { mode: "responses", url, requestBody: body };
       }
     }
@@ -52355,9 +52472,23 @@ class CancipView extends ItemView {
     try {
       response = await this.postJson(url, body, profile.apiKey);
     } catch (error) {
-      if (streamAudit) this.prependModelCallAudits([streamAudit]);
-      onStream?.({ text: "", done: true });
-      throw error;
+      const reason = error instanceof Error ? error.message : String(error);
+      if (hadUsReasoningDisable && isMandatoryReasoningError(reason)) {
+        markReasoningMandatoryEndpoint(`responses:${url}|${profile.model}`);
+        delete body.reasoning;
+        delete body.reasoning_effort;
+        try {
+          response = await this.postJson(url, body, profile.apiKey);
+        } catch (retryError) {
+          if (streamAudit) this.prependModelCallAudits([streamAudit]);
+          onStream?.({ text: "", done: true });
+          throw retryError;
+        }
+      } else {
+        if (streamAudit) this.prependModelCallAudits([streamAudit]);
+        onStream?.({ text: "", done: true });
+        throw error;
+      }
     }
     const text = sanitizeModelVisibleAnswer(extractModelResponseText(response.json) || extractNonJsonText(response.text));
     const usage = extractTokenUsage(response.json, estimateRequestTokens(instructions, inputText), text);
@@ -70080,7 +70211,7 @@ const SETTINGS_PAGE_KEYS: Record<string, Array<keyof Settings>> = {
     "personalizedGreetingEnabled", "personalizationGreetingCacheHours", "personalizationFriendlyName",
     "personalizationWeatherLocation", "processRecordRuntimeCollapsed"
   ],
-  models: ["modelOptions", "defaultModelOptions", "modelSourceByModel"],
+  models: ["modelOptions", "defaultModelOptions", "modelSourceByModel", "modelNameOverrides"],
   overview: ["aiOverviewEnabled", "aiOverviewCards", "aiOverviewLayout", "aiOverviewAccent", "aiOverviewCardLimit", "aiOverviewAiManagementEnabled"],
   workbench: [
     "documentWorkbenchDefaultMode", "documentWorkbenchCompactHeader", "documentWorkbenchShowMetadata",
@@ -82565,6 +82696,17 @@ function normalizeModelOptions(raw: unknown, activeModel?: string): string[] {
   return unique;
 }
 
+function sanitizeModelNameOverrides(value: unknown): Record<string, string> {
+  if (!isRecord(value)) return {};
+  const result: Record<string, string> = {};
+  for (const [model, name] of Object.entries(value)) {
+    const key = String(model ?? "").trim();
+    const label = String(name ?? "").trim();
+    if (key && label) result[key] = label;
+  }
+  return result;
+}
+
 function defaultModelSourceByModel(models: readonly string[]): Record<string, string> {
   const result: Record<string, string> = {};
   for (const model of models) {
@@ -84076,6 +84218,7 @@ function normalizeSettings(input: Partial<Settings>): Settings {
     modelOptions,
     modelSourceByModel,
     defaultModelOptions,
+    modelNameOverrides: sanitizeModelNameOverrides(merged.modelNameOverrides),
     settingsOpenGroups: isRecord(merged.settingsOpenGroups)
       ? Object.fromEntries(Object.entries(merged.settingsOpenGroups).filter(([key, value]) => Boolean(key) && typeof value === "boolean"))
       : {},
@@ -97100,6 +97243,39 @@ function shouldDisableOptionalReasoning(rawUrl: string, maxOutputTokens: number)
   } catch {
     return false;
   }
+}
+
+const REASONING_MANDATORY_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const REASONING_MANDATORY_UNTIL = new Map<string, number>();
+
+function isMandatoryReasoningError(reason: string): boolean {
+  return /reasoning\s+is\s+mandatory|cannot\s+be\s+disabled/i.test(reason || "");
+}
+
+function reasoningMandatoryStorageKey(key: string): string {
+  return `cancip-reasoning-mandatory:${stableTextHash(key).slice(0, 20)}`;
+}
+
+function reasoningMandatoryActive(key: string): boolean {
+  let persistedUntil = 0;
+  try {
+    persistedUntil = Number(window.localStorage.getItem(reasoningMandatoryStorageKey(key)) ?? 0) || 0;
+  } catch {
+    persistedUntil = 0;
+  }
+  const until = Math.max(REASONING_MANDATORY_UNTIL.get(key) ?? 0, persistedUntil);
+  if (until > 0 && until <= Date.now()) {
+    REASONING_MANDATORY_UNTIL.delete(key);
+    try { window.localStorage.removeItem(reasoningMandatoryStorageKey(key)); } catch { /* Ignore unavailable device storage. */ }
+    return false;
+  }
+  return until > 0;
+}
+
+function markReasoningMandatoryEndpoint(key: string): void {
+  const until = Date.now() + REASONING_MANDATORY_TTL_MS;
+  REASONING_MANDATORY_UNTIL.set(key, until);
+  try { window.localStorage.setItem(reasoningMandatoryStorageKey(key), String(until)); } catch { /* Ignore unavailable device storage. */ }
 }
 
 function isStreamingUnavailableError(reason: string): boolean {

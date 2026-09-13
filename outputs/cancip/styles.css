@@ -3817,6 +3817,11 @@ details.obcc-process-step {
   max-width: 90vw;
 }
 
+/* Cancip overlay layers use z-index 2147483000; keep Obsidian notices readable above them. */
+body > .notice-container {
+  z-index: 2147483002;
+}
+
 .obcc-model-probe-notice {
   width: 100%;
   min-width: 0;
