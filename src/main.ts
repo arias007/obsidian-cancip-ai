@@ -41614,31 +41614,31 @@ class CancipView extends ItemView {
           moreMenu.addClass("is-hidden");
           void this.copyModelInfo(model, rowProfile);
         });
-        this.createModelMenuPopoverItem(moreMenu, "clipboard", this.t("copyModelId"), () => {
+        this.createModelMenuPopoverItem(moreMenu, "hash", this.t("copyModelId"), () => {
           moreMenu.addClass("is-hidden");
           void this.copyTextDirect(model, this.t("copyModelIdDone"));
         });
-        this.createModelMenuPopoverItem(moreMenu, "tag", this.t("renameModel"), () => {
+        this.createModelMenuPopoverItem(moreMenu, "pencil", this.t("renameModel"), () => {
           moreMenu.addClass("is-hidden");
           more.setAttribute("aria-expanded", "false");
           void this.renameModelDisplayFromMenu(model);
         });
         const inDefaultModels = this.plugin.settings.defaultModelOptions.includes(model);
         if (inDefaultModels) {
-          this.createModelMenuPopoverItem(moreMenu, "list-minus", this.t("removeFromDefaultModels"), () => {
+          this.createModelMenuPopoverItem(moreMenu, "star-off", this.t("removeFromDefaultModels"), () => {
             moreMenu.addClass("is-hidden");
             more.setAttribute("aria-expanded", "false");
             void this.toggleModelDefaultMembershipFromMenu(model, false);
           });
         } else {
-          this.createModelMenuPopoverItem(moreMenu, "list-plus", this.t("addToDefaultModels"), () => {
+          this.createModelMenuPopoverItem(moreMenu, "star", this.t("addToDefaultModels"), () => {
             moreMenu.addClass("is-hidden");
             more.setAttribute("aria-expanded", "false");
             void this.toggleModelDefaultMembershipFromMenu(model, true);
           });
         }
         if (!localAgentProviderFromModel(model)) {
-          this.createModelMenuPopoverItem(moreMenu, "pencil", this.t("editModel"), () => {
+          this.createModelMenuPopoverItem(moreMenu, "settings-2", this.t("editModel"), () => {
             moreMenu.addClass("is-hidden");
             more.setAttribute("aria-expanded", "false");
             void this.editModelOptionFromMenu(model, rowProfile.id);
@@ -42057,7 +42057,14 @@ class CancipView extends ItemView {
     const availableHeight = Math.max(72, Math.floor(footerTop - viewportTop - 10));
     const maxHeight = Math.min(this.activeMenu === "model" ? 560 : 160, availableHeight);
     const measuredHeight = Math.max(56, Math.min(maxHeight, this.menuEl.scrollHeight || 56));
-    const top = Math.max(viewportTop + 4, Math.floor(footerTop - measuredHeight - 6));
+    let top = Math.max(viewportTop + 4, Math.floor(footerTop - measuredHeight - 6));
+    // With the soft keyboard open the footer rect can lag the shrinking
+    // viewport on Android, which dragged the menu (and its search box) down
+    // behind the keyboard. Pin the menu to the top of the visual viewport
+    // instead; the height cap above already fits it above the keyboard.
+    if (this.activeMenu === "model" && this.contentEl.hasClass("has-visual-keyboard")) {
+      top = Math.floor(viewportTop + 4);
+    }
     this.menuEl.setCssStyles({
       left: `${Math.floor(rootLeft)}px`,
       right: "auto",
