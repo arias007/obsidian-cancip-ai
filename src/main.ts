@@ -41536,13 +41536,20 @@ class CancipView extends ItemView {
             bottom: "",
             right: "6px",
             width: "max-content",
-            maxWidth: "min(420px, 88vw)",
+            maxWidth: "min(320px, 88vw)",
             zIndex: "10000"
           });
           const popoverRect = menu.getBoundingClientRect();
           const menuRect = this.menuEl?.getBoundingClientRect();
-          if (menuRect && popoverRect.left < menuRect.left + 4) {
-            menu.setCssStyles({ right: `${Math.max(0, Math.floor(menuRect.right - popoverRect.right))}px` });
+          if (menuRect) {
+            if (popoverRect.left < menuRect.left + 4) {
+              menu.setCssStyles({ right: `${Math.max(0, Math.floor(menuRect.right - popoverRect.right))}px` });
+            }
+            const spaceBelow = menuRect.bottom - popoverRect.top;
+            const spaceAbove = popoverRect.bottom - menuRect.top;
+            if (popoverRect.height > spaceBelow && spaceAbove > spaceBelow) {
+              menu.setCssStyles({ top: "auto", bottom: "calc(100% + 4px)" });
+            }
           }
         }
       });
@@ -41558,48 +41565,44 @@ class CancipView extends ItemView {
       });
       testDirect.classList.add("obcc-model-menu-test-action");
       const moreMenu = row.createDiv({ cls: "obcc-model-menu-more-popover is-hidden" });
-        const copy = this.createModelMenuIconButton(moreMenu, "copy", this.t("copyModelInfo"), () => {
+        this.createModelMenuPopoverItem(moreMenu, "copy", this.t("copyModelInfo"), () => {
           moreMenu.addClass("is-hidden");
           void this.copyModelInfo(model, rowProfile);
         });
-        copy.classList.add("obcc-model-menu-more-item");
-        const copyId = this.createModelMenuIconButton(moreMenu, "clipboard", this.t("copyModelId"), () => {
+        this.createModelMenuPopoverItem(moreMenu, "clipboard", this.t("copyModelId"), () => {
           moreMenu.addClass("is-hidden");
           void this.copyTextDirect(model, this.t("copyModelIdDone"));
         });
-        copyId.classList.add("obcc-model-menu-more-item");
-        const rename = this.createModelMenuIconButton(moreMenu, "tag", this.t("renameModel"), () => {
+        this.createModelMenuPopoverItem(moreMenu, "tag", this.t("renameModel"), () => {
           moreMenu.addClass("is-hidden");
           more.setAttribute("aria-expanded", "false");
           void this.renameModelDisplayFromMenu(model);
         });
-        rename.classList.add("obcc-model-menu-more-item");
         const inDefaultModels = this.plugin.settings.defaultModelOptions.includes(model);
-        const defaultsAction = inDefaultModels
-          ? this.createModelMenuIconButton(moreMenu, "list-minus", this.t("removeFromDefaultModels"), () => {
-              moreMenu.addClass("is-hidden");
-              more.setAttribute("aria-expanded", "false");
-              void this.toggleModelDefaultMembershipFromMenu(model, false);
-            })
-          : this.createModelMenuIconButton(moreMenu, "list-plus", this.t("addToDefaultModels"), () => {
-              moreMenu.addClass("is-hidden");
-              more.setAttribute("aria-expanded", "false");
-              void this.toggleModelDefaultMembershipFromMenu(model, true);
-            });
-        defaultsAction.classList.add("obcc-model-menu-more-item");
+        if (inDefaultModels) {
+          this.createModelMenuPopoverItem(moreMenu, "list-minus", this.t("removeFromDefaultModels"), () => {
+            moreMenu.addClass("is-hidden");
+            more.setAttribute("aria-expanded", "false");
+            void this.toggleModelDefaultMembershipFromMenu(model, false);
+          });
+        } else {
+          this.createModelMenuPopoverItem(moreMenu, "list-plus", this.t("addToDefaultModels"), () => {
+            moreMenu.addClass("is-hidden");
+            more.setAttribute("aria-expanded", "false");
+            void this.toggleModelDefaultMembershipFromMenu(model, true);
+          });
+        }
         if (!localAgentProviderFromModel(model)) {
-          const edit = this.createModelMenuIconButton(moreMenu, "pencil", this.t("editModel"), () => {
+          this.createModelMenuPopoverItem(moreMenu, "pencil", this.t("editModel"), () => {
             moreMenu.addClass("is-hidden");
             more.setAttribute("aria-expanded", "false");
             void this.editModelOptionFromMenu(model, rowProfile.id);
           });
-          edit.classList.add("obcc-model-menu-more-item");
-          const remove = this.createModelMenuIconButton(moreMenu, "trash-2", this.t("removeModel"), () => {
+          this.createModelMenuPopoverItem(moreMenu, "trash-2", this.t("removeModel"), () => {
             moreMenu.addClass("is-hidden");
             more.setAttribute("aria-expanded", "false");
             void this.removeModelOptionFromMenu(model);
           }, presets.length <= 1);
-          remove.classList.add("obcc-model-menu-more-item");
         }
     }
     };
@@ -41652,6 +41655,42 @@ class CancipView extends ItemView {
       }
     }, 180);
     this.scheduleModelMenuPlacement();
+  }
+
+  private createModelMenuPopoverItem(parent: HTMLElement, icon: string, label: string, onClick: () => void, disabled = false): HTMLButtonElement {
+    const button = parent.createEl("button", {
+      cls: "obcc-model-menu-more-item",
+      attr: { type: "button", title: label, "aria-label": label }
+    });
+    button.disabled = disabled;
+    setIcon(button, icon);
+    button.createSpan({ cls: "obcc-model-menu-more-item-label", text: label });
+    let pointerActivatedAt = 0;
+    button.addEventListener("pointerdown", (event) => {
+      if (event.pointerType === "mouse" && event.button !== 0) return;
+      if (event.isPrimary === false) return;
+      event.preventDefault();
+      event.stopPropagation();
+    });
+    button.addEventListener("pointerup", (event) => {
+      if (event.pointerType === "mouse" || event.isPrimary === false) return;
+      event.preventDefault();
+      event.stopPropagation();
+      pointerActivatedAt = Date.now();
+      if (!button.disabled) onClick();
+    });
+    button.addEventListener("click", (event) => {
+      if (pointerActivatedAt && Date.now() - pointerActivatedAt <= 900) {
+        event.preventDefault();
+        event.stopPropagation();
+        pointerActivatedAt = 0;
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      if (!button.disabled) onClick();
+    });
+    return button;
   }
 
   private createModelMenuIconButton(parent: HTMLElement, icon: string, label: string, onClick: () => void, disabled = false): HTMLButtonElement {
