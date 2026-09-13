@@ -41204,7 +41204,14 @@ class CancipView extends ItemView {
       selectedModel: this.plugin.settings.model,
       search: this.modelMenuSearchQuery,
       models: presets,
-      sources: this.plugin.settings.modelSourceByModel
+      sources: this.plugin.settings.modelSourceByModel,
+      // State below is read during render but was missing from the signature,
+      // so edits (add/remove from default group, rename display label, drag
+      // reorder of source groups) kept hitting the cached DOM and only took
+      // effect after the menu was fully rebuilt elsewhere.
+      defaults: this.plugin.settings.defaultModelOptions,
+      overrides: this.plugin.settings.modelNameOverrides ?? {},
+      profileOrder: this.plugin.settings.apiProfiles.map((profile) => ({ id: profile.id, name: profile.name, model: profile.model }))
     }));
     if (this.modelMenuSignature === menuSignature
       && this.menuEl.querySelector<HTMLElement>(".obcc-model-menu-section")) {
