@@ -4251,7 +4251,8 @@ const DEFAULT_DOCUMENT_WORKBENCH_EXTENSIONS = [
 
 const OBSIDIAN_NATIVE_DOCUMENT_EXTENSIONS = new Set([
   "md", "markdown", "pdf", "png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif", "heic", "heif",
-  "mp3", "wav", "m4a", "ogg", "flac", "aac", "mp4", "webm", "mov", "mkv", "avi", "canvas"
+  "mp3", "wav", "m4a", "ogg", "flac", "aac", "3gp", "mp4", "webm", "ogv", "mov", "mkv", "avi",
+  "canvas", "base"
 ]);
 
 function isObsidianNativeDocumentExtension(extension: string): boolean {
