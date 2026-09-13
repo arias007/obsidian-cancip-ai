@@ -41251,6 +41251,26 @@ class CancipView extends ItemView {
     modelHead.createSpan({ text: this.t("modelList") });
     this.createModelMenuIconButton(modelHead, "plus", this.t("addModel"), () => void this.addModelOptionFromMenu());
     let pointerDrag: { model: string; pointerId: number; startY: number; targetModel: string; after: boolean; visualModel: string; visualAfter: boolean } | null = null;
+    let morePopoverSeq = 0;
+    const popoverByMore = new Map<string, { popover: HTMLElement; row: HTMLElement }>();
+    const closeOpenMorePopover = (): void => {
+      const menuRoot = this.menuEl;
+      if (!menuRoot) return;
+      menuRoot.querySelectorAll<HTMLElement>(".obcc-model-menu-more-popover:not(.is-hidden)").forEach((popover) => {
+        popover.addClass("is-hidden");
+        const moreId = popover.dataset.moreId || "";
+        if (moreId) menuRoot.querySelector<HTMLElement>(`[data-more-id="${moreId}"]`)?.setAttribute("aria-expanded", "false");
+      });
+      menuRoot.querySelectorAll<HTMLElement>(".obcc-model-menu-row[data-model]").forEach((item) => {
+        if (item.style.zIndex) item.setCssStyles({ zIndex: "" });
+      });
+    };
+    if (this.menuEl && this.menuEl.dataset.morePopoverScrollBound !== "1") {
+      this.menuEl.dataset.morePopoverScrollBound = "1";
+      // Scroll does not bubble, but capture on the menu root still catches
+      // scrolls from the inner model list container.
+      this.menuEl.addEventListener("scroll", () => closeOpenMorePopover(), { passive: true, capture: true });
+    }
     let suppressModelSelectUntil = 0;
     const clearDragState = () => {
       this.menuEl?.querySelectorAll<HTMLElement>(".obcc-model-menu-row").forEach((item) => {
@@ -41518,41 +41538,66 @@ class CancipView extends ItemView {
         void this.setModelFromMenu(model, rowProfile.id);
       });
       const actions = row.createDiv({ cls: "obcc-model-menu-actions" });
+      const moreId = `more-${++morePopoverSeq}`;
       const more = this.createModelMenuIconButton(actions, "more-horizontal", this.t("moreMenu"), () => {
-        const menu = row.querySelector<HTMLElement>(".obcc-model-menu-more-popover");
+        // Drop map entries orphaned by a menu rebuild (detached popovers/rows).
+        popoverByMore.forEach((record, key) => {
+          if (!record.popover.isConnected || !record.row.isConnected) popoverByMore.delete(key);
+        });
+        let menu = popoverByMore.get(moreId)?.popover ?? row.querySelector<HTMLElement>(".obcc-model-menu-more-popover");
         if (!menu) return;
         const open = menu.hasClass("is-hidden");
-        menu.toggleClass("is-hidden", !open);
-        more.setAttribute("aria-expanded", String(open));
+        closeOpenMorePopover();
         if (open) {
-          // Keep the popover in normal absolute flow anchored to its row.
-          // Forcing position:fixed is unreliable here: transformed ancestors
-          // demote fixed to a local containing block, where the leftover CSS
-          // right offset clamps the width and pushes the popover away.
-          menu.setCssStyles({
-            position: "absolute",
-            left: "",
-            top: "",
-            bottom: "",
-            right: "6px",
-            width: "max-content",
-            maxWidth: "min(320px, 88vw)",
-            zIndex: "10000"
-          });
-          const popoverRect = menu.getBoundingClientRect();
+          // Hoist the popover onto the menu root: keeping it inside the row
+          // leaves it clipped by the scrolling list and stacked below sibling
+          // rows. Forcing position:fixed is unreliable too (transformed
+          // ancestors demote it), so anchor it absolutely to the menu itself.
+          if (menu.parentElement !== this.menuEl) {
+            menu.dataset.moreId = moreId;
+            this.menuEl?.appendChild(menu);
+            popoverByMore.set(moreId, { popover: menu, row });
+          }
+          menu.removeClass("is-hidden");
+          more.setAttribute("aria-expanded", "true");
+          const rowRect = row.getBoundingClientRect();
           const menuRect = this.menuEl?.getBoundingClientRect();
           if (menuRect) {
-            if (popoverRect.left < menuRect.left + 4) {
-              menu.setCssStyles({ right: `${Math.max(0, Math.floor(menuRect.right - popoverRect.right))}px` });
+            menu.setCssStyles({
+              position: "absolute",
+              left: "0px",
+              top: "0px",
+              bottom: "",
+              right: "",
+              width: "max-content",
+              maxWidth: "min(320px, 88vw)",
+              zIndex: "10000"
+            });
+            const popoverWidth = menu.offsetWidth;
+            const popoverHeight = menu.offsetHeight;
+            const scrollLeft = this.menuEl?.scrollLeft ?? 0;
+            const scrollTop = this.menuEl?.scrollTop ?? 0;
+            // Anchor in content coordinates: absolutely positioned children of
+            // the scrolling menu root move with the list, so the popover stays
+            // glued to its row even while the user scrolls.
+            let left = rowRect.right - popoverWidth - menuRect.left + scrollLeft;
+            left = Math.max(6, Math.min(left, menuRect.width - popoverWidth - 6));
+            let top = rowRect.bottom + 4 - menuRect.top + scrollTop;
+            if (rowRect.bottom - menuRect.top + popoverHeight > menuRect.height - 4) {
+              top = rowRect.top - menuRect.top - popoverHeight - 4 + scrollTop;
             }
-            const spaceBelow = menuRect.bottom - popoverRect.top;
-            const spaceAbove = popoverRect.bottom - menuRect.top;
-            if (popoverRect.height > spaceBelow && spaceAbove > spaceBelow) {
-              menu.setCssStyles({ top: "auto", bottom: "calc(100% + 4px)" });
-            }
+            top = Math.max(4, Math.min(top, Math.max(4, (this.menuEl?.scrollHeight ?? 0) - popoverHeight - 4)));
+            menu.setCssStyles({
+              left: `${Math.round(Math.max(6, left))}px`,
+              top: `${Math.round(top)}px`
+            });
+            row.setCssStyles({ zIndex: "10000" });
           }
+        } else {
+          more.setAttribute("aria-expanded", "false");
         }
       });
+      more.setAttribute("data-more-id", moreId);
       more.setAttribute("aria-expanded", "false");
       const testDirect = this.createModelMenuIconButton(actions, "zap", this.t("testModel"), () => {
         testDirect.disabled = true;
