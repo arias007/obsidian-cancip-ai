@@ -41525,17 +41525,25 @@ class CancipView extends ItemView {
         menu.toggleClass("is-hidden", !open);
         more.setAttribute("aria-expanded", String(open));
         if (open) {
-          const rect = more.getBoundingClientRect();
-          menu.setCssProps({
-            position: "fixed",
-            left: `${Math.max(8, Math.floor(rect.right - 150))}px`,
-            top: `${Math.min(window.innerHeight - 44, Math.floor(rect.bottom + 4))}px`
+          // Keep the popover in normal absolute flow anchored to its row.
+          // Forcing position:fixed is unreliable here: transformed ancestors
+          // demote fixed to a local containing block, where the leftover CSS
+          // right offset clamps the width and pushes the popover away.
+          menu.setCssStyles({
+            position: "absolute",
+            left: "",
+            top: "",
+            bottom: "",
+            right: "6px",
+            width: "max-content",
+            maxWidth: "min(420px, 88vw)",
+            zIndex: "10000"
           });
-          const menuHeight = menu.offsetHeight;
-          if (menuHeight > 0 && rect.bottom + menuHeight > window.innerHeight - 8) {
-            menu.setCssProps({ top: `${Math.max(8, Math.floor(window.innerHeight - menuHeight - 8))}px` });
+          const popoverRect = menu.getBoundingClientRect();
+          const menuRect = this.menuEl?.getBoundingClientRect();
+          if (menuRect && popoverRect.left < menuRect.left + 4) {
+            menu.setCssStyles({ right: `${Math.max(0, Math.floor(menuRect.right - popoverRect.right))}px` });
           }
-          menu.setCssStyles({ zIndex: "10000" });
         }
       });
       more.setAttribute("aria-expanded", "false");
