@@ -4,19 +4,50 @@
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
 import esbuild from "esbuild";
-import { assertSourceCoverage, loadMainBundle, requireSpan } from "./lib/source-bundle.mjs";
+import { assertSourceCoverage, createSourceFile, declarationSourceText, loadMainBundle, statementName } from "./lib/source-bundle.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const bundle = assertSourceCoverage(loadMainBundle());
 
-// One contiguous region: the endpoint helpers plus runWithApiEndpointFallback,
-// both declared between normalizeApiUrl's neighbours and supportsPreviousResponseId.
-// requireSpan additionally asserts the two anchors still live in the same file, so
-// extracting these helpers into their own module fails loudly here instead of
-// silently slicing across a file boundary.
-const pureTypeScript = requireSpan(bundle, "function apiUrlNormalizedRoot(", "function supportsPreviousResponseId(", {
-  label: "api endpoint helpers"
-});
+// The helpers are collected by name, not as one contiguous region. They no longer
+// sit next to each other: main.ts keeps the ones that touch the module-level
+// preference map, while the pure ones were extracted into
+// src/main-parts/model-api.ts. A positional span across them would either fail or
+// - worse - quietly slice the wrong text, so the list is explicit instead, and a
+// rename now shows up as a named failure rather than as a silently weaker check.
+const REQUIRED = [
+  "API_ENDPOINT_ROOT_PREFERENCE",
+  "apiEndpointRoots",
+  "rememberApiEndpointRoot",
+  "normalizeApiUrl",
+  "runWithApiEndpointFallback",
+  "apiUrlNormalizedRoot",
+  "apiUrlForRoot",
+  "apiUrlPathname",
+  "isEndpointRoutingError",
+  "describeApiEndpointTarget"
+];
+
+const sourceFile = createSourceFile(bundle);
+const declared = new Map();
+for (const statement of sourceFile.statements) {
+  const name = statementName(statement, sourceFile);
+  if (name) declared.set(name, statement);
+}
+const missing = REQUIRED.filter((name) => !declared.has(name));
+if (missing.length) {
+  console.error(`api endpoint helpers missing from the source bundle: ${missing.join(", ")}`);
+  process.exit(1);
+}
+
+const pureTypeScript = REQUIRED.map((name) => declarationSourceText(declared.get(name), sourceFile)).join("\n\n");
+// The assembled snippet runs through `new Function`, which has no module system.
+// A leaked `export` modifier would make this gate die with "exports is not
+// defined" instead of testing behaviour, so refuse it explicitly.
+if (/(^|\n)\s*(?:export|declare)\b/.test(pureTypeScript)) {
+  console.error("assembled endpoint helpers still carry a module modifier");
+  process.exit(1);
+}
 const pureJavaScript = esbuild.transformSync(pureTypeScript, { loader: "ts", format: "cjs", target: "es2020" }).code;
 
 const factory = new Function(`${pureJavaScript}\nreturn { apiEndpointRoots, apiUrlForRoot, normalizeApiUrl, isEndpointRoutingError, runWithApiEndpointFallback };`);

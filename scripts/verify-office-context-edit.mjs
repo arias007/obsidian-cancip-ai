@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import vm from "node:vm";
 import ts from "typescript";
-import { assertSourceCoverage, loadMainBundle } from "./lib/source-bundle.mjs";
+import { assertSourceCoverage, declarationSourceText, loadMainBundle } from "./lib/source-bundle.mjs";
 
 const sourceText = assertSourceCoverage(loadMainBundle()).text;
 const sourceFile = ts.createSourceFile("main.ts", sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
@@ -16,10 +16,10 @@ const snippets = [];
 
 for (const node of sourceFile.statements) {
   if (ts.isTypeAliasDeclaration(node) && node.name.text === "OfficeContextualTextAnchor") {
-    snippets.push(node.getFullText(sourceFile));
+    snippets.push(declarationSourceText(node, sourceFile));
   }
   if (ts.isFunctionDeclaration(node) && node.name && requiredFunctions.has(node.name.text)) {
-    snippets.push(node.getFullText(sourceFile));
+    snippets.push(declarationSourceText(node, sourceFile));
     requiredFunctions.delete(node.name.text);
   }
 }

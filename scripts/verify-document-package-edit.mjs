@@ -3,7 +3,7 @@ import fs from "node:fs";
 import vm from "node:vm";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import ts from "typescript";
-import { assertSourceCoverage, loadMainBundle } from "./lib/source-bundle.mjs";
+import { assertSourceCoverage, declarationSourceText, loadMainBundle } from "./lib/source-bundle.mjs";
 
 const sourceText = assertSourceCoverage(loadMainBundle()).text;
 const sourceFile = ts.createSourceFile("main.ts", sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
@@ -28,14 +28,14 @@ const snippets = [];
 
 for (const node of sourceFile.statements) {
   if (ts.isVariableStatement(node) && node.declarationList.declarations.some((declaration) => declaration.name.getText(sourceFile) === "DOCUMENT_HTML_PREVIEW_CHANNEL")) {
-    snippets.push(node.getFullText(sourceFile));
+    snippets.push(declarationSourceText(node, sourceFile));
   }
   if (ts.isTypeAliasDeclaration(node) && requiredTypes.has(node.name.text)) {
-    snippets.push(node.getFullText(sourceFile));
+    snippets.push(declarationSourceText(node, sourceFile));
     requiredTypes.delete(node.name.text);
   }
   if (ts.isFunctionDeclaration(node) && node.name && requiredFunctions.has(node.name.text)) {
-    snippets.push(node.getFullText(sourceFile));
+    snippets.push(declarationSourceText(node, sourceFile));
     requiredFunctions.delete(node.name.text);
   }
 }

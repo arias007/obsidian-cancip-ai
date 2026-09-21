@@ -4,7 +4,7 @@ import { gunzipSync } from "node:zlib";
 import vm from "node:vm";
 import { build } from "esbuild";
 import ts from "typescript";
-import { assertSourceCoverage, loadMainBundle, memberSpan } from "./lib/source-bundle.mjs";
+import { assertSourceCoverage, declarationSourceText, loadMainBundle, memberSpan } from "./lib/source-bundle.mjs";
 
 const bundle = assertSourceCoverage(loadMainBundle());
 const source = bundle.text;
@@ -76,7 +76,7 @@ for (const root of roots) assert.ok(declarations.has(root), `Missing TTS test ro
 
 const runtimeSource = [...selected]
   .sort((a, b) => a.getStart(sourceFile) - b.getStart(sourceFile))
-  .map((statement) => statement.getText(sourceFile))
+  .map((statement) => declarationSourceText(statement, sourceFile))
   .join("\n\n");
 const expose = `\nglobalThis.__cancipTtsTest = { ${roots.join(", ")} };`;
 const transpiled = ts.transpileModule(runtimeSource + expose, {

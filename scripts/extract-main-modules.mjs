@@ -78,12 +78,23 @@ for (const st of sf.statements) {
 const byName = new Map([...declarations.entries()].filter(([, d]) => d.name).map(([st, d]) => [d.name, st]));
 const topLevelNames = new Set(byName.keys());
 
+// Collects every identifier the node references, regardless of where it is
+// declared. Two consumers need different subsets, so the filter lives with them
+// rather than here:
+//   - the closure check only cares about names declared at the top level of
+//     main.ts (a reference to anything else cannot create a circular import);
+//   - module emission needs *all* names, because a moved declaration that calls
+//     normalizePath() or mentions the type DataAdapter has to receive the same
+//     `obsidian` import main.ts had, and one that mentions LocalAgentProvider
+//     has to receive the same `type LocalAgentProvider` import from ./reviewGate.
+//   Filtering here instead would silently drop every external import, which is
+//   exactly the bug this function used to have.
 function referencesOf(node, selfName) {
   const found = new Set();
   const visit = (n) => {
     if (ts.isIdentifier(n)) {
       const name = n.text;
-      if (name !== selfName && topLevelNames.has(name)) {
+      if (name !== selfName) {
         const parent = n.parent;
         const isPropertyName =
           (ts.isPropertyAccessExpression(parent) && parent.name === n) ||
@@ -116,7 +127,9 @@ let closed = new Set(
 for (;;) {
   let removed = 0;
   for (const name of [...closed]) {
-    const outside = [...refs.get(byName.get(name))].filter((target) => !closed.has(target));
+    // Only a reference to another top-level main.ts declaration can force this
+    // one to stay behind; a reference to an imported or ambient name cannot.
+    const outside = [...refs.get(byName.get(name))].filter((target) => topLevelNames.has(target) && !closed.has(target));
     if (outside.length) {
       closed.delete(name);
       removed += 1;
@@ -127,24 +140,30 @@ for (;;) {
 
 // ------------------------------------------------------------------- imports
 // localName -> how main.ts obtains it (default / named / namespace).
+// typeOnly matters: `type LocalAgentProvider` must stay a type import, because a
+// value import would ask the bundler for a runtime export that does not exist,
+// and dropping the modifier entirely is what turns a `value is T` predicate into
+// an unresolved name, silently disabling narrowing in every caller.
 const importOrigins = new Map();
 for (const st of sf.statements) {
   if (!ts.isImportDeclaration(st)) continue;
   const source = st.moduleSpecifier.text;
   const clause = st.importClause;
   if (!clause) continue;
-  if (clause.name) importOrigins.set(clause.name.text, { source, kind: "default" });
+  const clauseTypeOnly = Boolean(clause.isTypeOnly);
+  if (clause.name) importOrigins.set(clause.name.text, { source, kind: "default", typeOnly: clauseTypeOnly });
   const bindings = clause.namedBindings;
   if (bindings && ts.isNamedImports(bindings)) {
     for (const element of bindings.elements) {
       importOrigins.set(element.name.text, {
         source,
         kind: "named",
-        imported: element.propertyName ? element.propertyName.text : element.name.text
+        imported: element.propertyName ? element.propertyName.text : element.name.text,
+        typeOnly: clauseTypeOnly || Boolean(element.isTypeOnly)
       });
     }
   } else if (bindings && ts.isNamespaceImport(bindings)) {
-    importOrigins.set(bindings.name.text, { source, kind: "namespace" });
+    importOrigins.set(bindings.name.text, { source, kind: "namespace", typeOnly: clauseTypeOnly });
   }
 }
 
@@ -220,14 +239,30 @@ for (const module of modules) for (const member of module.members) moduleOf.set(
 
 const failures = [];
 const emitted = new Map();
+
+// A moved module lives one directory deeper than main.ts, so a specifier that was
+// "./reviewGate" in main.ts has to become "../reviewGate" - otherwise every
+// relative dependency of every extracted declaration dangles.
+function rewriteSpecifier(source) {
+  return source.startsWith(".") ? source.replace(/^\.\//, "../") : source;
+}
+
 for (const module of modules) {
   const own = new Set(module.members);
-  const used = new Set();
-  for (const member of module.members) for (const name of refs.get(byName.get(member))) used.add(name);
+  // name -> the members that reference it, so a failure can name the culprit.
+  const usedBy = new Map();
+  for (const member of module.members) {
+    for (const name of refs.get(byName.get(member))) {
+      if (name === member) continue;
+      if (!usedBy.has(name)) usedBy.set(name, new Set());
+      usedBy.get(name).add(member);
+    }
+  }
 
-  const externalImports = new Map(); // source -> {default:Set, named:Map, namespace:Set}
+  const externalImports = new Map(); // source -> {default:Map, named:Map, namespace:Map}
   const siblingImports = new Map(); // slug -> Set<name>
-  for (const name of used) {
+  const unknown = []; // names still declared in main.ts: a closure breach
+  for (const [name, owners] of usedBy) {
     if (own.has(name)) continue;
     if (closed.has(name)) {
       const target = moduleOf.get(name);
@@ -236,15 +271,23 @@ for (const module of modules) {
       continue;
     }
     const origin = importOrigins.get(name);
-    if (!origin) {
-      failures.push(`${module.slug}: ${member} references ${name}, which is neither moved nor imported`);
+    if (origin) {
+      if (!externalImports.has(origin.source)) externalImports.set(origin.source, { default: new Map(), named: new Map(), namespace: new Map() });
+      const bucket = externalImports.get(origin.source);
+      if (origin.kind === "default") bucket.default.set(name, origin);
+      else if (origin.kind === "namespace") bucket.namespace.set(name, origin);
+      else bucket.named.set(name, origin);
       continue;
     }
-    if (!externalImports.has(origin.source)) externalImports.set(origin.source, { default: new Set(), named: new Map(), namespace: new Set() });
-    const bucket = externalImports.get(origin.source);
-    if (origin.kind === "default") bucket.default.add(name);
-    else if (origin.kind === "namespace") bucket.namespace.add(name);
-    else bucket.named.set(name, origin.imported);
+    // Not moved, not imported. If it is a top-level main.ts declaration the
+    // closure proof was wrong for this declaration and the run must stop; if it
+    // is not, it is a local, a parameter, or an ambient/lib global (window,
+    // document, activeWindow, moment, ...) and needs no import at all.
+    if (topLevelNames.has(name)) unknown.push(`${[...owners].slice(0, 3).join(", ")} -> ${name}`);
+  }
+  if (unknown.length) {
+    failures.push(`${module.slug}: references names that stay in main.ts: ${unknown.slice(0, 5).join("; ")}`);
+    continue;
   }
 
   const lines = [];
@@ -253,21 +296,36 @@ for (const module of modules) {
   lines.push(` * Declarations here were proven to reference nothing left behind in main.ts, so this`);
   lines.push(` * module never imports back from it. Regenerate the plan with scripts/plan-main-split.mjs.`);
   lines.push(` */`);
-  for (const [source, bucket] of [...externalImports.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
-    if (bucket.default.size) for (const name of [...bucket.default].sort()) lines.push(`import ${name} from ${JSON.stringify(source)};`);
-    if (bucket.namespace.size) for (const name of [...bucket.namespace].sort()) lines.push(`import * as ${name} from ${JSON.stringify(source)};`);
+  const byLocalName = (a, b) => a[0].localeCompare(b[0]);
+  for (const [source, bucket] of [...externalImports.entries()].sort(byLocalName)) {
+    const specifier = JSON.stringify(rewriteSpecifier(source));
+    for (const [name, info] of [...bucket.default.entries()].sort(byLocalName)) {
+      lines.push(`import ${info.typeOnly ? "type " : ""}${name} from ${specifier};`);
+    }
+    for (const [name, info] of [...bucket.namespace.entries()].sort(byLocalName)) {
+      lines.push(`import ${info.typeOnly ? "type " : ""}* as ${name} from ${specifier};`);
+    }
     if (bucket.named.size) {
-      const specifiers = [...bucket.named.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([local, imported]) => (local === imported ? local : `${imported} as ${local}`));
-      lines.push(`import { ${specifiers.join(", ")} } from ${JSON.stringify(source)};`);
+      const specifiers = [...bucket.named.entries()].sort(byLocalName).map(([local, info]) => {
+        const core = local === info.imported ? local : `${info.imported} as ${local}`;
+        return info.typeOnly ? `type ${core}` : core;
+      });
+      lines.push(`import { ${specifiers.join(", ")} } from ${specifier};`);
     }
   }
-  for (const [slug, names] of [...siblingImports.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+  for (const [slug, names] of [...siblingImports.entries()].sort(byLocalName)) {
     lines.push(`import { ${[...names].sort().join(", ")} } from "./${slug}";`);
   }
   lines.push("");
   for (const member of module.members) {
     const { start, end } = ranges.get(member);
-    lines.push(`export ${raw.slice(start, end).trimEnd()}`);
+    const body = raw.slice(start, end).trimEnd();
+    // The `export` modifier has to sit immediately before the declaration, after
+    // any doc comment attached to it. Prefixing the whole slice produced
+    // `export // note` and `export /** ... */`, which still parse but detach the
+    // comment from the declaration it documents (and break IDE tooltips).
+    const declarationStart = byName.get(member).getStart(sf) - start;
+    lines.push(`${body.slice(0, declarationStart)}export ${body.slice(declarationStart)}`);
     lines.push("");
   }
   emitted.set(module.slug, `${lines.join(EOL)}${EOL}`);

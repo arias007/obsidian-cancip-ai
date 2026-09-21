@@ -1,4 +1,5 @@
 import process from "node:process";
+import ts from "typescript";
 import {
   loadMainBundle,
   loadAllSource,
@@ -6,6 +7,8 @@ import {
   requireSpan,
   requireIncludes,
   declarationText,
+  declarationSourceText,
+  createSourceFile,
   reachableFiles
 } from "./lib/source-bundle.mjs";
 
@@ -117,6 +120,55 @@ check("declarationText returns an exact class body", () => {
   const decl = declarationText(main, "CancipSettingTab");
   if (!decl.startsWith("class CancipSettingTab")) throw new Error(`unexpected start: ${decl.slice(0, 40)}`);
   if (decl.length < 10000) throw new Error(`suspiciously short (${decl.length} chars)`);
+});
+
+// ------------------------------------------------- declarationSourceText
+// These guards matter because the vm-sandbox verify scripts transpile extracted
+// declarations with no module system. If the `export` modifier survives, the
+// transpiled text grows an `Object.defineProperty(exports, ...)` prologue and the
+// sandbox dies with "exports is not defined" - a failure that only appears after
+// a declaration has moved out of main.ts.
+function declarationNodeFor(name) {
+  const sf = createSourceFile(main);
+  for (const st of sf.statements) {
+    const named = st.name && typeof st.name.getText === "function" ? st.name.getText(sf) : "";
+    if (named === name) return { node: st, sf };
+  }
+  throw new Error(`no top-level declaration named ${name}`);
+}
+
+check("declarationSourceText strips the export modifier an extracted declaration carries", () => {
+  // Verify the premise first: this declaration really is exported, so a no-op
+  // implementation cannot pass this check by accident.
+  const { node, sf } = declarationNodeFor("extractResponsesStreamDelta");
+  if (!node.getText(sf).startsWith("export ")) throw new Error("expected an extracted (exported) declaration; premise not met");
+  const text = declarationSourceText(node, sf);
+  if (/^\s*(export|declare)\b/.test(text)) throw new Error(`modifier survived: ${text.slice(0, 40)}`);
+  if (!/^\s*function\s+extractResponsesStreamDelta\b/.test(text)) throw new Error(`unexpected body start: ${text.slice(0, 60)}`);
+});
+
+check("transpiling a stripped extracted declaration emits no CommonJS prologue", () => {
+  const { node, sf } = declarationNodeFor("extractResponsesStreamDelta");
+  const emit = (text) => ts.transpileModule(text, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText;
+  if (!emit(node.getText(sf)).includes("__esModule")) throw new Error("premise not met: the raw declaration did not produce a prologue");
+  if (emit(declarationSourceText(node, sf)).includes("__esModule")) throw new Error("stripped declaration still emits the CommonJS prologue");
+});
+
+check("declarationSourceText leaves a non-exported declaration untouched", () => {
+  const { node, sf } = declarationNodeFor("CancipSettingTab");
+  if (declarationSourceText(node, sf) !== node.getFullText(sf)) throw new Error("non-exported declaration was modified");
+});
+
+check("declarationSourceText keeps leading comments and blank lines attached", () => {
+  // Synthetic fixture: in the real bundle a declaration's leading trivia is
+  // usually just blank lines, which cannot prove comments survive.
+  const text = "/* keep me */\n\n/** doc for f */\nexport function f(): number {\n  return 1;\n}\n";
+  const sf = ts.createSourceFile("fixture.ts", text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const node = sf.statements[0];
+  const stripped = declarationSourceText(node, sf);
+  if (!stripped.startsWith("/* keep me */\n\n/** doc for f */\n")) throw new Error(`leading comments lost: ${JSON.stringify(stripped.slice(0, 60))}`);
+  if (!stripped.includes("function f(): number")) throw new Error(`body not preserved: ${JSON.stringify(stripped)}`);
+  if (/\bexport\b/.test(stripped)) throw new Error(`export survived: ${JSON.stringify(stripped)}`);
 });
 
 for (const [status, name] of results) {

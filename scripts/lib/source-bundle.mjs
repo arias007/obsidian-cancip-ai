@@ -290,6 +290,27 @@ export function statementName(st, sf) {
 }
 
 /**
+ * A declaration's own source, with any leading `export` / `declare` modifiers
+ * removed, keeping everything before it (leading comments and blank lines).
+ *
+ * Scripts that transpile a declaration and run it in a vm sandbox need this.
+ * Those sandboxes have no module system, and TypeScript emits an
+ * `Object.defineProperty(exports, "__esModule", ...)` prologue as soon as the
+ * text it is given contains an `export` - so the same declaration would run fine
+ * while it lived in main.ts and then throw "exports is not defined" the moment
+ * it was extracted, where every declaration carries an `export` prefix. Stripping
+ * the modifier makes the snippet behave the same in both places, instead of
+ * making the result depend on which file a declaration happens to live in.
+ */
+export function declarationSourceText(node, sourceFile) {
+  const fullText = node.getFullText(sourceFile);
+  const startOffset = node.getStart(sourceFile) - node.getFullStart();
+  const head = fullText.slice(0, startOffset);
+  const body = fullText.slice(startOffset);
+  return head + body.replace(/^(?:\s*(?:export\s+default|export|declare)\b)+\s*/, "");
+}
+
+/**
  * Exact text of a top-level declaration by name, resolved through the AST rather
  * than string offsets. Works no matter which module the declaration lives in.
  */
