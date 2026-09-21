@@ -1,10 +1,18 @@
 import { readFile } from "node:fs/promises";
 import process from "node:process";
 import ts from "typescript";
+import { assertSourceCoverage, loadMainBundle } from "./lib/source-bundle.mjs";
 
-const sourceText = await readFile(new URL("../src/main.ts", import.meta.url), "utf8");
-const bridgeSourceText = await readFile(new URL("../src/agentBridge.ts", import.meta.url), "utf8");
+// Covers every source file reachable from src/main.ts, so extracting a class into
+// its own module keeps it inside the protected inventory instead of looking
+// "missing from source".
+const bundle = assertSourceCoverage(loadMainBundle());
+const sourceText = bundle.text;
 const runtimeText = await readFile(new URL("../outputs/cancip/main.js", import.meta.url), "utf8");
+
+// Floor guard: an unparsable or empty build artifact would otherwise report zero
+// missing methods and let the build through while checking nothing.
+const RUNTIME_METHOD_FLOOR = 2000;
 
 function namedMethods(text, kind, label) {
   const ast = ts.createSourceFile(label, text, ts.ScriptTarget.Latest, true, kind);
@@ -20,11 +28,13 @@ function namedMethods(text, kind, label) {
   return methods;
 }
 
-const sourceMethods = new Set([
-  ...namedMethods(sourceText, ts.ScriptKind.TS, "src/main.ts"),
-  ...namedMethods(bridgeSourceText, ts.ScriptKind.TS, "src/agentBridge.ts")
-]);
+const sourceMethods = namedMethods(sourceText, ts.ScriptKind.TS, "main-bundle sources");
 const runtimeMethods = namedMethods(runtimeText, ts.ScriptKind.JS, "outputs/cancip/main.js");
+
+if (runtimeMethods.size < RUNTIME_METHOD_FLOOR) {
+  console.error(`Build blocked: runtime method inventory is only ${runtimeMethods.size}, below the ${RUNTIME_METHOD_FLOOR} floor — the build artifact is empty or unparsable.`);
+  process.exit(1);
+}
 
 const intentionallyRemovedRuntimeMethods = new Set([
   "applyPersonalizedDiaryButtons",

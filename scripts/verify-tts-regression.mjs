@@ -4,8 +4,10 @@ import { gunzipSync } from "node:zlib";
 import vm from "node:vm";
 import { build } from "esbuild";
 import ts from "typescript";
+import { assertSourceCoverage, loadMainBundle, memberSpan } from "./lib/source-bundle.mjs";
 
-const source = await readFile(new URL("../src/main.ts", import.meta.url), "utf8");
+const bundle = assertSourceCoverage(loadMainBundle());
+const source = bundle.text;
 const manifest = JSON.parse(await readFile(new URL("../manifest.json", import.meta.url), "utf8"));
 const generatedWorker = await readFile(new URL("../src/generated/primeTtsWorkerSource.ts", import.meta.url), "utf8");
 const workerVersionMatch = generatedWorker.match(/PRIME_TTS_WORKER_VERSION = ("(?:[^"\\]|\\.)*")/);
@@ -96,7 +98,7 @@ assert.match(
 );
 assert.ok(
   ["highlightActiveRenderedTtsPart", "highlightTextStreamElementsFromRoots", "highlightRenderedPart", "readActivePdfLayerText"]
-    .every((name) => source.slice(source.indexOf(`private ${name}`), source.indexOf("\n  private ", source.indexOf(`private ${name}`) + 12)).includes("isOwnDocumentHTMLElement")),
+    .every((name) => memberSpan(bundle, `private ${name}`, { label: `TTS highlight: ${name}` }).includes("isOwnDocumentHTMLElement")),
   "Markdown and PDF TTS nodes must be checked against their own document realm"
 );
 

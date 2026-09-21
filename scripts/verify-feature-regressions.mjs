@@ -2,49 +2,30 @@ import { readFile } from "node:fs/promises";
 import process from "node:process";
 import ts from "typescript";
 import { gunzipSync, gzipSync, strFromU8, strToU8, unzipSync, zipSync } from "fflate";
+import { assertSourceCoverage, isOrdered, loadMainBundle, requireSpan } from "./lib/source-bundle.mjs";
 
-const source = (await readFile(new URL("../src/main.ts", import.meta.url), "utf8")).replace(/\r\n?/g, "\n");
+const bundle = assertSourceCoverage(loadMainBundle());
+const source = bundle.text;
 const styles = (await readFile(new URL("../outputs/cancip/styles.css", import.meta.url), "utf8")).replace(/\r\n?/g, "\n");
-const localGreetingSource = source.slice(
-  source.indexOf("function localPersonalizationCache("),
-  source.indexOf("function normalizePersonalizationCache(")
-);
-const workbenchSource = source.slice(
-  source.indexOf("class CancipDocumentWorkbenchView"),
-  source.indexOf("class CancipReviewLeafView")
-);
-const inlineEmbedSource = source.slice(
-  source.indexOf("private processMarkdownWorkbenchEmbeds"),
-  source.indexOf("private async reviewGateVaultStateFingerprint")
-);
-const workbenchShareSource = workbenchSource.slice(
-  workbenchSource.indexOf("private async shareOriginalDocument"),
-  workbenchSource.indexOf("private async openOriginalWithObsidian")
-);
-const documentMoreMenuSource = workbenchSource.slice(
-  workbenchSource.indexOf("private openDocumentMoreMenu"),
-  workbenchSource.indexOf("private async shareOriginalDocument")
-);
-const renderWorkbenchPreviewSource = workbenchSource.slice(
-  workbenchSource.indexOf("private async renderPreview"),
-  workbenchSource.indexOf("private createDocumentWorkbenchStage")
-);
-const documentZoomSurfaceSource = workbenchSource.slice(
-  workbenchSource.indexOf("private documentZoomSurfaceSelector"),
-  workbenchSource.indexOf("private syncDocumentZoomSurfaces")
-);
-const htmlVaultBridgeSource = workbenchSource.slice(
-  workbenchSource.indexOf("private async handleHtmlVaultRequest"),
-  workbenchSource.indexOf("private async executeHtmlPreviewCommand")
-);
-const aiOverviewSource = source.slice(
-  source.indexOf("private renderAiOverview"),
-  source.indexOf("private renderMessages(", source.indexOf("private renderAiOverview"))
-);
-const settingsModuleSource = source.slice(
-  source.indexOf("const SETTINGS_PAGE_KEYS"),
-  source.indexOf("private displayCommonSettings", source.indexOf("const SETTINGS_PAGE_KEYS"))
-);
+
+// Every span below used to be `source.slice(source.indexOf(A), source.indexOf(B))`.
+// That idiom returns "" (or an unrelated span) the moment an anchor moves, which
+// turns the `!span.includes(...)` assertions in this file into silent passes.
+// requireSpan asserts both anchors exist, are ordered, and still share one file.
+const span = (from, to, label) => requireSpan(bundle, from, to, { label });
+
+const localGreetingSource = span("function localPersonalizationCache(", "function normalizePersonalizationCache(", "local greeting cache");
+const workbenchSource = span("class CancipDocumentWorkbenchView", "class CancipReviewLeafView", "document workbench view");
+const inlineEmbedSource = span("private processMarkdownWorkbenchEmbeds", "private async reviewGateVaultStateFingerprint", "inline workbench embeds");
+const workbenchShareSource = span("private async shareOriginalDocument", "private async openOriginalWithObsidian", "workbench share");
+const documentMoreMenuSource = span("private openDocumentMoreMenu", "private async shareOriginalDocument", "document more menu");
+const renderWorkbenchPreviewSource = span("private async renderPreview", "private createDocumentWorkbenchStage", "workbench preview");
+const documentZoomSurfaceSource = span("private documentZoomSurfaceSelector", "private syncDocumentZoomSurfaces", "document zoom surface");
+const htmlVaultBridgeSource = span("private async handleHtmlVaultRequest", "private async executeHtmlPreviewCommand", "html vault bridge");
+const aiOverviewSource = span("private renderAiOverview", "private renderMessages(", "ai overview");
+const settingsModuleSource = span("const SETTINGS_PAGE_KEYS", "private displayCommonSettings", "settings module");
+const tabThumbnailInstallSource = span("private installWorkspaceTabThumbnailSupport", "private scheduleWorkspaceTabThumbnailRefresh", "workspace tab thumbnail install");
+const tabThumbnailCaptureSource = span("private async captureActiveWorkspaceTabThumbnail", "private workspaceTabThumbnailKey", "workspace tab thumbnail capture");
 
 const parsedSource = ts.createSourceFile("main.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
 const settingsModuleCoveragePassed = (() => {
@@ -452,7 +433,7 @@ const encodedDesktopMarkdownEmbedCandidates = markdownEmbedApi.markdownEmbedReso
 );
 
 const checks = [
-  ["session notifications prefer the Ntfy hub and keep direct ntfy as unavailable-plugin fallback", source.includes("type NotificationHubApi") && source.includes("notificationHubApi(): NotificationHubApi | null") && source.includes('runtime.api.send !== "function"') && source.includes('source: "cancip"') && source.includes('event: `session-${input.status}`') && source.indexOf("const hub = this.notificationHubApi()") < source.indexOf('const topic = settings.ntfyTopic.trim()') && source.includes('if (!result || result.ok !== true)')],
+  ["session notifications prefer the Ntfy hub and keep direct ntfy as unavailable-plugin fallback", source.includes("type NotificationHubApi") && source.includes("notificationHubApi(): NotificationHubApi | null") && source.includes('runtime.api.send !== "function"') && source.includes('source: "cancip"') && source.includes('event: `session-${input.status}`') && isOrdered(bundle, "const hub = this.notificationHubApi()", 'const topic = settings.ntfyTopic.trim()') && source.includes('if (!result || result.ok !== true)')],
   ["LAN synchronization is owned by Ntfy and absent from Cancip", !source.includes("lanSync") && !source.includes("CancipLanSync") && !source.includes("settingsLanSync") && !styles.includes("obcc-lan")],
   ["OCR command", source.includes('id: "recognize-active-file-ocr"')],
   ["OCR file-menu action", source.includes('setIcon("scan-text")') && source.includes("void this.openOcrResult(file)")],
@@ -465,7 +446,7 @@ const checks = [
   ["legacy OCR caches gain semantic tags without repeating recognition", migratedIdentityCache.schemaVersion === 3 && migratedIdentityCache.semanticTags.includes("身份证") && source.includes("entry.schemaVersion !== OCR_CACHE_SCHEMA_VERSION - 1") && source.includes("await adapter.write(path")],
   ["described image queries preserve explicit image intent", imageIntent.requestedKinds.includes("image") && imageIntent.subjectQuery === "身份证" && source.includes("parseSearchQueryIntent")],
   ["strict search contains only actual original-keyword matches", strictSearchGroups.precise.length === 1 && strictSearchGroups.precise[0].path === "日记/爸爸.md" && strictSearchGroups.more.some((hit) => hit.path === "日记/爸妈.md") && strictSearchGroups.more.some((hit) => hit.path === "人物/父亲.md") && source.includes("partitionSearchHitsByOriginalQuery(input.value, hits, strictHitKeys)")],
-  ["search categories preserve all-results first and classify media by extension", source.includes('{ id: "all", icon: "library-big" }') && source.indexOf('{ id: "image", icon: "image" }') < source.indexOf('{ id: "video", icon: "video" }') && searchIntentApi.searchHitsForCategory(categorizedSearchHits, "all").length === categorizedSearchHits.length && searchIntentApi.searchHitsForCategory(categorizedSearchHits, "image").length === 2 && searchIntentApi.searchHitsForCategory(categorizedSearchHits, "video")[0]?.path.endsWith(".mp4") && searchIntentApi.searchHitsForCategory(categorizedSearchHits, "audio")[0]?.path.endsWith(".flac")],
+  ["search categories preserve all-results first and classify media by extension", source.includes('{ id: "all", icon: "library-big" }') && isOrdered(bundle, '{ id: "image", icon: "image" }', '{ id: "video", icon: "video" }') && searchIntentApi.searchHitsForCategory(categorizedSearchHits, "all").length === categorizedSearchHits.length && searchIntentApi.searchHitsForCategory(categorizedSearchHits, "image").length === 2 && searchIntentApi.searchHitsForCategory(categorizedSearchHits, "video")[0]?.path.endsWith(".mp4") && searchIntentApi.searchHitsForCategory(categorizedSearchHits, "audio")[0]?.path.endsWith(".flac")],
   ["empty search catalogs the Vault by category and keeps config filters explicit", source.includes("async allVaultSearchHits(options") && source.includes("includeConfigs: configs.checked") && source.includes("setSearchStatus(\"complete\", searchStatusWithCount(this.t(\"searchCatalogReady\")") && source.includes("!input.value.trim()")],
   ["search results use bounded thumbnails for images and file-type fallback markers", source.includes('cls: "obcc-search-result-thumb"') && source.includes('cls: "obcc-search-result-thumbnail"') && source.includes('image.loading = "lazy"') || (source.includes('cls: "obcc-search-result-thumbnail"') && styles.includes(".obcc-search-result-thumb") && styles.includes("object-fit: cover"))],
   ["native Markdown PDF image audio and video embeds stay native while unsupported files use the workbench", source.includes("registerMarkdownPostProcessor") && source.includes('kind !== "markdown"') && source.includes('kind !== "pdf"') && source.includes('kind !== "image"') && source.includes('kind !== "audio"') && source.includes('kind !== "video"') && inlineEmbedSource.includes("!this.isUnsupportedMarkdownWorkbenchFile(file, sourcePath)") && !source.includes('"a.internal-link"') && inlineEmbedSource.includes("renderMarkdownWorkbenchEmbed")],
@@ -517,7 +498,7 @@ const checks = [
   ["ZIP TAR and GZIP text entries rebuild safely without losing sibling ZIP files", zipFixturePassed && tarFixturePassed && gzipFixturePassed && source.includes("DOCUMENT_ARCHIVE_EDIT_MAX_EXPANDED_BYTES") && source.includes("Encrypted ZIP archives cannot be safely rebuilt") && source.includes("Archive entry save verification failed") && source.includes("await this.app.vault.modifyBinary(file, rollback)")],
   ["archive entries preview text Markdown HTML images PDF audio and video", source.includes('type DocumentArchiveEntryPreviewKind = "markdown" | "html" | "text" | "pdf" | "image" | "audio" | "video" | "binary"') && source.includes('content.previewKind === "markdown"') && source.includes('content.previewKind === "html"') && source.includes('["image", "pdf", "audio", "video"].includes(content.previewKind)') && source.includes("URL.createObjectURL") && styles.includes(".obcc-archive-entry-surface")],
   ["special ZIP containers plus RAR and 7Z stay explicit read-only formats", source.includes('if (format === "zip") return file.extension.toLowerCase() === "zip"') && source.includes('if (extension === "rar") return "rar"') && source.includes('if (extension === "7z") return "7z"') && source.includes("content preview requires a compatible decompressor") && source.includes("containers are preview-only to preserve their package structure") && source.includes("archives are read-only in this runtime")],
-  ["total timer starts synchronously and cannot trail a running step", source.includes("this.ensureCurrentSessionTimelineStatus(status, now)") && source.indexOf("this.ensureCurrentSessionTimelineStatus(status, now)") < source.indexOf("const index = await this.readSessionHistoryIndex({ mergeFiles: false })") && source.includes("private headerSessionTimerStartMs")],
+  ["total timer starts synchronously and cannot trail a running step", source.includes("this.ensureCurrentSessionTimelineStatus(status, now)") && isOrdered(bundle, "this.ensureCurrentSessionTimelineStatus(status, now)", "const index = await this.readSessionHistoryIndex({ mergeFiles: false })") && source.includes("private headerSessionTimerStartMs")],
   ["timers use milliseconds below one second, tenths below one minute, and whole seconds after one minute", source.includes('if (safe < 1000) return `${safe}ms`') && source.includes("(safe / 1000).toFixed(1)") && source.includes('String(Math.floor((safe % 60000) / 1000)).padStart(2, "0")')],
   ["numbered process steps have right-aligned bordered timers", source.includes('cls: "obcc-process-step-timer"') && styles.includes(".obcc-process-step-timer") && styles.includes("min-width: 46px") && styles.includes("justify-self: end") && styles.includes("grid-template-columns: 14px 0 16px minmax(0, 1fr) max-content max-content")],
   ["live progress avoids unconditional Markdown rerender", source.includes("signature !== renderedSignature && now >= nextRenderAt")],
@@ -533,7 +514,7 @@ const checks = [
   ["failed subagent models fall back automatically", source.includes("private subagentFallbackProfiles") && source.includes("Retrying with fallback model") && source.includes("completedProfile")],
   ["parallel subagents infer a missing top-level goal", source.includes("const inferredAgentGoal = uniqueStrings(requestedRows") && source.includes('this.resolveTaskGoal("").trim()')],
   ["successful parallel subagents complete their linked Plan step", source.includes("private async completeSuccessfulSubagentPlanStep") && source.includes('terminal.some((entry) => entry.status !== "completed")') && source.includes("todo.completedAt = completedAt")],
-  ["subagent consensus falls back without erasing completed child work", source.indexOf("await this.completeSuccessfulSubagentPlanStep(") < source.indexOf("const consensusRequested = args.consensus") && source.includes("for (const candidateProfile of [profile, ...this.subagentFallbackProfiles(profile)])") && source.includes('status: "subagent-consensus-model-unavailable"')],
+  ["subagent consensus falls back without erasing completed child work", isOrdered(bundle, "await this.completeSuccessfulSubagentPlanStep(", "const consensusRequested = args.consensus") && source.includes("for (const candidateProfile of [profile, ...this.subagentFallbackProfiles(profile)])") && source.includes('status: "subagent-consensus-model-unavailable"')],
   ["non-terminal continuation text is not flashed as a final answer", source.includes("A continuation reply without a terminal marker") && source.includes("const terminalAnswer = visibleAnswer && terminalStatus")],
   ["accepted final messages retain terminal metadata", source.includes("const finalAnswerContent = acceptedVisibleAnswer && reviewStatus") && source.includes("JSON.stringify({ status: reviewStatus })")],
   ["explicit recommendation counts are part of terminal validation", source.includes("private finalChoiceRequirementFailure") && source.includes("function requestedFinalChoiceCount") && source.includes("const requirementFailure = nonChoiceFailure || choiceFailure") && source.includes("Count the array items before returning") && source.includes("const required = requestedFinalChoiceCount(originalPrompt) || 3")],
@@ -615,11 +596,11 @@ const checks = [
   ["default model add action stays in Common while the default model list stays in Models", (() => {
     const common = settingsModuleSource.match(/common:\s*\[([\s\S]*?)\],\s*models:/)?.[1] ?? "";
     const models = settingsModuleSource.match(/models:\s*\[([\s\S]*?)\],\s*overview:/)?.[1] ?? "";
-    const commonUi = source.slice(source.indexOf("private displayCommonSettings"), source.indexOf("private displayDefaultModelSettings"));
-    const defaultUi = source.slice(source.indexOf("private displayDefaultModelSettings"), source.indexOf("private async addDefaultModelsFromSettings"));
-    const addDefaultUi = source.slice(source.indexOf("private async addDefaultModelsFromSettings"), source.indexOf("private captureScrollSnapshots"));
-    const modelUi = source.slice(source.indexOf("private displayModelPage"), source.indexOf("private displayAutomationSettings"));
-    const modelAdvancedUi = source.slice(source.indexOf("private displayModelAdvancedSettings"), source.indexOf("private async addModelFromSettings"));
+    const commonUi = span("private displayCommonSettings", "private displayDefaultModelSettings", "settings common UI");
+    const defaultUi = span("private displayDefaultModelSettings", "private async addDefaultModelsFromSettings", "settings default model UI");
+    const addDefaultUi = span("private async addDefaultModelsFromSettings", "private captureScrollSnapshots", "settings add-default-model UI");
+    const modelUi = span("private displayModelPage", "private displayAutomationSettings", "settings model page UI");
+    const modelAdvancedUi = span("private displayModelAdvancedSettings", "private async addModelFromSettings", "settings model advanced UI");
     return !common.includes('"defaultModelOptions"')
       && models.includes('"defaultModelOptions"')
       && commonUi.includes("this.displayDefaultModelSettings(parent);")
@@ -689,7 +670,7 @@ const checks = [
   ["Obsidian open URIs are intercepted before mobile navigation and stay in the current Vault", source.includes("installObsidianOpenUriInterceptor") && source.includes("this.registerDomEvent(activeWindow, \"click\", handler, true)") && source.includes("event.stopImmediatePropagation?.()") && source.includes("obsidianOpenUriFilePath(href)") && source.includes("obsidianOpenUriVaultName(href)") && source.includes("openObsidianOpenUriPath")],
   ["workbench Obsidian links reuse the safe URI opener", source.includes("await this.plugin.openObsidianOpenUriPath(internalPath)") && source.includes("obsidian://open link is missing file/path")],
   ["workspace tab previews render lightweight active-view summaries and apply cached thumbnails to native tab-list hosts", source.includes("installWorkspaceTabThumbnailSupport") && source.includes("captureActiveWorkspaceTabThumbnail") && source.includes('canvas.getContext("2d")') && source.includes("workspaceTabThumbnailPreviewLines") && source.includes("workspaceTabInfoForThumbnailHost") && source.includes("obcc-workspace-tab-thumbnail") && styles.includes(".obcc-workspace-tab-has-thumbnail") && styles.includes(".obcc-workspace-tab-thumbnail")],
-  ["workspace tab thumbnail support is visible-only, bounded, and low-frequency", source.includes("visibleWorkspaceTabThumbnailHosts") && source.includes("workspaceTabThumbnailCache.size > 12") && source.includes("previous.capturedAt < 30000") && source.includes("workspaceTabThumbnailLastCaptureAt < 2000") && source.includes("visited < 160") && source.includes("const inTabList = !host.matches") && !source.slice(source.indexOf("private installWorkspaceTabThumbnailSupport"), source.indexOf("private scheduleWorkspaceTabThumbnailRefresh")).includes('on("active-leaf-change", scheduleCapture)') && !source.slice(source.indexOf("private installWorkspaceTabThumbnailSupport"), source.indexOf("private scheduleWorkspaceTabThumbnailRefresh")).includes("MutationObserver") && !source.slice(source.indexOf("private installWorkspaceTabThumbnailSupport"), source.indexOf("private scheduleWorkspaceTabThumbnailRefresh")).includes("registerInterval") && !source.slice(source.indexOf("private async captureActiveWorkspaceTabThumbnail"), source.indexOf("private workspaceTabThumbnailKey")).includes("html2canvas") && source.includes("clearWorkspaceTabThumbnailDom")]
+  ["workspace tab thumbnail support is visible-only, bounded, and low-frequency", source.includes("visibleWorkspaceTabThumbnailHosts") && source.includes("workspaceTabThumbnailCache.size > 12") && source.includes("previous.capturedAt < 30000") && source.includes("workspaceTabThumbnailLastCaptureAt < 2000") && source.includes("visited < 160") && source.includes("const inTabList = !host.matches") && !tabThumbnailInstallSource.includes('on("active-leaf-change", scheduleCapture)') && !tabThumbnailInstallSource.includes("MutationObserver") && !tabThumbnailInstallSource.includes("registerInterval") && !tabThumbnailCaptureSource.includes("html2canvas") && source.includes("clearWorkspaceTabThumbnailDom")]
 ];
 
 const failed = checks.filter(([, passed]) => !passed).map(([name]) => name);

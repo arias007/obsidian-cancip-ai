@@ -1,24 +1,22 @@
 // Verifies the unified API endpoint resolution introduced in Cancip 3.4.50.
-// Extracts the pure helpers straight out of src/main.ts so the check cannot drift
-// from the shipped implementation.
-import { readFileSync } from "node:fs";
+// Extracts the pure helpers straight out of the source tree so the check cannot
+// drift from the shipped implementation.
 import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import esbuild from "esbuild";
+import { assertSourceCoverage, loadMainBundle, requireSpan } from "./lib/source-bundle.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const source = readFileSync(join(here, "..", "src", "main.ts"), "utf8");
-
-function sliceBetween(startMarker, endMarker) {
-  const start = source.indexOf(startMarker);
-  const end = source.indexOf(endMarker, start);
-  if (start < 0 || end < 0) throw new Error(`cannot extract ${startMarker}`);
-  return source.slice(start, end);
-}
+const bundle = assertSourceCoverage(loadMainBundle());
 
 // One contiguous region: the endpoint helpers plus runWithApiEndpointFallback,
 // both declared between normalizeApiUrl's neighbours and supportsPreviousResponseId.
-const pureTypeScript = sliceBetween("function apiUrlNormalizedRoot(", "function supportsPreviousResponseId(");
+// requireSpan additionally asserts the two anchors still live in the same file, so
+// extracting these helpers into their own module fails loudly here instead of
+// silently slicing across a file boundary.
+const pureTypeScript = requireSpan(bundle, "function apiUrlNormalizedRoot(", "function supportsPreviousResponseId(", {
+  label: "api endpoint helpers"
+});
 const pureJavaScript = esbuild.transformSync(pureTypeScript, { loader: "ts", format: "cjs", target: "es2020" }).code;
 
 const factory = new Function(`${pureJavaScript}\nreturn { apiEndpointRoots, apiUrlForRoot, normalizeApiUrl, isEndpointRoutingError, runWithApiEndpointFallback };`);

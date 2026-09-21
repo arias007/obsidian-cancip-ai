@@ -2,13 +2,14 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { assertSourceCoverage, loadMainBundle } from "./lib/source-bundle.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 const versions = JSON.parse(fs.readFileSync(path.join(root, "versions.json"), "utf8"));
 const releaseWorkflow = fs.readFileSync(path.join(root, ".github", "workflows", "release.yml"), "utf8");
-const source = fs.readFileSync(path.join(root, "src", "main.ts"), "utf8");
+const source = assertSourceCoverage(loadMainBundle(root)).text;
 const semver = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const staticStyleAssignmentPattern = /\.style\.(?:cssText|position|touchAction|color|cursor|textDecoration|zoom|transform|transformOrigin)\s*=/;
 const checks = [

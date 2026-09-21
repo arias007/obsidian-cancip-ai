@@ -1,9 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { assertSourceCoverage, loadMainBundle } from "./lib/source-bundle.mjs";
 
 const root = process.cwd();
-const source = fs.readFileSync(path.join(root, "src", "main.ts"), "utf8");
+const bundle = assertSourceCoverage(loadMainBundle(root));
+const source = bundle.text;
 const guide = fs.readFileSync(path.join(root, "docs", "CANCIP_PLUGIN_COMPATIBILITY.md"), "utf8");
 const schema = JSON.parse(fs.readFileSync(path.join(root, "docs", "cancip-plugin.schema.json"), "utf8"));
 

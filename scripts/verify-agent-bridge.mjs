@@ -6,16 +6,18 @@ import { join, resolve } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import esbuild from "esbuild";
+import { assertSourceCoverage, declarationText, loadMainBundle, requireOrder, requireSpan, topLevelDeclarations } from "./lib/source-bundle.mjs";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
-const source = await readFile(join(root, "src", "main.ts"), "utf8");
-const bridgeSource = await readFile(join(root, "src", "agentBridge.ts"), "utf8");
+const bundle = assertSourceCoverage(loadMainBundle(root));
+const source = bundle.text;
+const bridgeSource = bundle.fileTextFor("const BRIDGE_HOST =").text;
 const cliPath = join(root, "cli", "cancip-cli.mjs");
 const cliSource = await readFile(cliPath, "utf8");
 const manifest = JSON.parse(await readFile(join(root, "manifest.json"), "utf8"));
 
 assert.match(bridgeSource, /const BRIDGE_HOST = "127\.0\.0\.1"/);
-assert.ok(bridgeSource.indexOf("tokenMatches(this.getSettings().token") < bridgeSource.indexOf('path === "/v1/status"'));
+requireOrder(bundle, "tokenMatches(this.getSettings().token", 'path === "/v1/status"', { label: "agent bridge: token is checked before the status route is served" });
 assert.doesNotMatch(bridgeSource, /shell:\s*true/);
 assert.match(bridgeSource, /"--sandbox",\s*\n\s*"read-only"/);
 assert.match(bridgeSource, /"mcp_servers=\{\}"/);
@@ -24,7 +26,10 @@ assert.match(bridgeSource, /\^\[A-Za-z0-9_-\]\+\$/);
 assert.match(bridgeSource, /mcp_servers\.\$\{name\}=\$\{config\}/);
 assert.match(bridgeSource, /type === "stdio" && command/);
 assert.match(bridgeSource, /type === "streamable_http" \|\| type === "sse"/);
-assert.doesNotMatch(bridgeSource.slice(bridgeSource.indexOf("function codexMcpDisableArgs"), bridgeSource.indexOf("function extractCodexText")), /http_headers|env_http_headers|bearer_token_env_var/);
+assert.doesNotMatch(
+  requireSpan(bundle, "function codexMcpDisableArgs", "function extractCodexText", { label: "agent bridge: MCP disable args" }),
+  /http_headers|env_http_headers|bearer_token_env_var/
+);
 for (const feature of ["shell_tool", "apps", "browser_use", "computer_use", "plugins", "skill_search", "workspace_dependencies", "multi_agent"]) {
   assert.match(bridgeSource, new RegExp(`"${feature}"`));
 }
@@ -34,12 +39,28 @@ assert.match(bridgeSource, /"--tools",\s*\n\s*""/);
 assert.match(bridgeSource, /never copy path into query/);
 assert.match(source, /const markdownTitle = field === "title"/);
 assert.match(source, /if \(!Platform\.isMobileApp\)[\s\S]*?this\.startAgentBridge/);
-const configWriter = source.slice(source.indexOf("function settingsToCancipConfig"), source.indexOf("function parseCancipConfig"));
+// Resolved by declaration identity rather than by "everything up to the next
+// function", so the check keeps measuring the same things after the surrounding
+// helpers move to their own module.
+const configWriter = declarationText(bundle, "settingsToCancipConfig");
 assert.doesNotMatch(configWriter, /agentBridgeToken/);
 assert.match(source, /nextSettings = normalizeSettings\(\{[\s\S]*?agentBridgeToken: this\.plugin\.settings\.agentBridgeToken[\s\S]*?\}\);/);
-const configSchema = source.slice(source.indexOf("const CANCIP_CONFIG_STRING_KEYS"), source.indexOf("function isFiniteConfigNumber"));
+
+// The set of config keys the write-guard accepts has two sources: the typed key
+// buckets and dedicated `key === "…"` branches (language, accessMode, apiMode, …).
+// Both must be read, or an exported key handled by a dedicated branch looks
+// unsupported. Discover the buckets by name so a new one is covered automatically.
+const configKeyConstNames = topLevelDeclarations(bundle)
+  .map((declaration) => declaration.name)
+  .filter((name) => /^CANCIP_CONFIG_[A-Z0-9_]*KEYS$/.test(name));
+assert.ok(configKeyConstNames.length >= 4, `expected the Cancip config key buckets, found ${configKeyConstNames.length}`);
+const configKeyBuckets = configKeyConstNames.map((name) => declarationText(bundle, name)).join("\n");
+const configWriteGuard = declarationText(bundle, "assertCancipConfigWriteShape");
+const acceptedConfigKeys = new Set([
+  ...[...configKeyBuckets.matchAll(/"([A-Za-z][A-Za-z0-9]*)"/g)].map((match) => match[1]),
+  ...[...configWriteGuard.matchAll(/\bkey\s*===\s*"([A-Za-z][A-Za-z0-9]*)"/g)].map((match) => match[1])
+]);
 const exportedConfigKeys = [...configWriter.matchAll(/^\s{4}([A-Za-z][A-Za-z0-9]*):\s*settings\./gm)].map((match) => match[1]);
-const acceptedConfigKeys = new Set([...configSchema.matchAll(/"([A-Za-z][A-Za-z0-9]*)"/g)].map((match) => match[1]));
 for (const key of exportedConfigKeys) {
   assert.ok(acceptedConfigKeys.has(key), `Exported Cancip config key is rejected by its own schema: ${key}`);
 }

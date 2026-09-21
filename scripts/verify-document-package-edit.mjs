@@ -3,8 +3,9 @@ import fs from "node:fs";
 import vm from "node:vm";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import ts from "typescript";
+import { assertSourceCoverage, loadMainBundle } from "./lib/source-bundle.mjs";
 
-const sourceText = fs.readFileSync(new URL("../src/main.ts", import.meta.url), "utf8");
+const sourceText = assertSourceCoverage(loadMainBundle()).text;
 const sourceFile = ts.createSourceFile("main.ts", sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
 const requiredTypes = new Set(["OfficeContextualTextAnchor", "DocumentPreviewSourceLocator"]);
 const requiredFunctions = new Set([
