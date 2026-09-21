@@ -50878,16 +50878,6 @@ class CancipView extends ItemView {
     const implementationContext = policy.intent === "implementation";
     const shouldSearchCodexMemory = !policy.compactStateChange && settings.codexMemoryAutoSearch && shouldAutoSearchForPrompt(prompt);
     const diaryWriting = this.diaryWritingTurn(prompt);
-    // The toggle governs automatic body attachment. When the prompt explicitly
-    // targets the open file, or the user is in edit mode, attach the body anyway:
-    // that is precisely what "analyse the current file" asks for.
-    const currentFileExplicitRequest = diaryWriting || this.mode === "edit" || promptNeedsCurrentFileContext(prompt);
-    const currentFileAutoInclude = settings.includeCurrentFile && this.includeCurrentFileForSession;
-    const currentFileContextNeed = currentFileExplicitRequest || (currentFileAutoInclude && policy.includeCurrentFile);
-    // Always tell the model which file is open, even when the automatic body
-    // attachment toggle is off. / 当前文件路径每轮都发，与开关无关。
-    const activeViewContext = this.describeActiveViewContext(currentFileContextNeed);
-    if (activeViewContext) parts.push(`## ${isChineseLanguage(this.plugin.language()) ? "当前文件（实时状态）" : "Current file (live state)"}\n${activeViewContext}`);
     if (!this.taskControl && prompt.trim()) {
       this.ensureTaskControl(rawPrompt, prompt);
     }
@@ -50929,8 +50919,8 @@ class CancipView extends ItemView {
           CONTEXT_STEP_TIMEOUT_MS
         )
       : Promise.resolve({ text: "", hits: [] as SearchHit[] });
-    const currentFilePromise = currentFileContextNeed
-      ? this.safeContextStep(this.t("currentFile"), () => this.getCurrentFileContext(currentFileExplicitRequest), null, CONTEXT_STEP_TIMEOUT_MS)
+    const currentFilePromise = (diaryWriting || settings.includeCurrentFile) && this.includeCurrentFileForSession && (diaryWriting || policy.includeCurrentFile)
+      ? this.safeContextStep(this.t("currentFile"), () => this.getCurrentFileContext(diaryWriting), null, CONTEXT_STEP_TIMEOUT_MS)
       : Promise.resolve(null as string | null);
     const diaryActivityPromise = diaryWriting
       ? this.safeContextStep("today diary activity", () => this.buildTodayDiaryActivityContext(), "", CONTEXT_STEP_TIMEOUT_MS)
@@ -50980,7 +50970,7 @@ class CancipView extends ItemView {
       }
     }
 
-    if (currentFileContextNeed) {
+    if ((diaryWriting || settings.includeCurrentFile) && this.includeCurrentFileForSession && (diaryWriting || policy.includeCurrentFile)) {
       const current = await currentFilePromise;
       if (current) parts.push(`## ${this.t("currentFile")}\n${current}`);
     }
@@ -52814,51 +52804,11 @@ class CancipView extends ItemView {
     return this.t("localHits", { reason, prompt, list });
   }
 
-  // Always-on, cheap workspace awareness: which file the user actually has open.
-  // Sent every turn regardless of the includeCurrentFile toggle, so "analyse the
-  // current file" never degenerates into asking the user for a file name.
-  private describeActiveViewContext(willAttachContent = false): string {
-    const workspace = this.app.workspace;
-    const file = workspace.getActiveFile();
-    const activeLeaf = (workspace as unknown as { activeLeaf?: unknown }).activeLeaf;
-    // Report the view that actually hosts the open file. The focused leaf is
-    // often the Cancip panel itself, and reporting its view type would tell the
-    // model "a Cancip panel is open" instead of naming the note the user sees.
-    let fileViewType = "";
-    let inFocusedLeaf = false;
-    if (file) {
-      try {
-        (workspace as unknown as { iterateAllLeaves?: (callback: (leaf: unknown) => void) => void }).iterateAllLeaves?.((leaf) => {
-          const view = (leaf as { view?: { file?: { path?: string }; getViewType?: () => string } } | null | undefined)?.view;
-          if (!view || view.file?.path !== file.path) return;
-          if (!fileViewType && typeof view.getViewType === "function") fileViewType = view.getViewType();
-          if (leaf === activeLeaf) inFocusedLeaf = true;
-        });
-      } catch {
-        // Workspace iteration is best-effort awareness only.
-      }
-    }
-    const contentAttached = Boolean(file) && willAttachContent;
-    const lines = [`activeFile: ${file ? file.path : "(none)"}`];
-    if (file) {
-      lines.push(`activeFileExtension: ${file.extension || "(none)"}`);
-      if (fileViewType) lines.push(`activeFileViewType: ${fileViewType}`);
-      lines.push(`activeFileInFocusedLeaf: ${inFocusedLeaf ? "yes" : "no"}`);
-    }
-    lines.push(`activeFileContentAttached: ${contentAttached ? "yes" : "no"}`);
-    lines.push(isChineseLanguage(this.plugin.language())
-      ? "这是用户此刻在 Obsidian 中打开的文件（Cancip 面板获得焦点时 activeFile 仍然是这篇笔记，activeFileInFocusedLeaf 会是 no，属正常）。回答“当前文件／这个文件／这个笔记”时以它为准。如果 activeFileContentAttached 为 no，就用 read 动作读取该路径后再回答；不要反问用户文件名，也不要声称看不到当前文件。"
-      : "This is the file the user has open in Obsidian right now (when the Cancip panel holds focus, activeFile is still that note and activeFileInFocusedLeaf is \"no\", which is normal). Treat it as authoritative for any \"current file / this file / this note\" question. If activeFileContentAttached is no, read that path with a read action instead of asking the user for the file name or claiming you cannot see the open file.");
-    return lines.join("\n");
-  }
-
   private async getCurrentFileContext(force = false): Promise<string | null> {
+    if (!force && (!this.plugin.settings.includeCurrentFile || !this.includeCurrentFileForSession)) return null;
     const file = this.app.workspace.getActiveFile();
     if (!file) return null;
-    if (!force) {
-      if (!this.plugin.settings.includeCurrentFile || !this.includeCurrentFileForSession) return null;
-      if (this.hiddenContextKeys.has(contextChipKey("current", file.path))) return null;
-    }
+    if (!force && this.hiddenContextKeys.has(contextChipKey("current", file.path))) return null;
     const content = await this.app.vault.cachedRead(file);
     return `${file.path}\n${trimContext(content, Math.min(this.plugin.settings.maxFileContextChars, 6000))}`;
   }

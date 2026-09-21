@@ -1,6 +1,6 @@
 {
   "name": "cancip",
-  "version": "3.4.50",
+  "version": "3.4.51",
   "private": true,
   "main": "main.js",
   "scripts": {
@@ -13,9 +13,10 @@
     "test:document-package-edit": "node scripts/verify-document-package-edit.mjs",
     "test:tts": "node scripts/verify-tts-regression.mjs",
     "build:ocr-package": "node scripts/prepare-ocr-package.mjs",
-    "build": "npm run verify:source-parity && npm run verify:feature-regressions && npm run verify:agent-bridge && npm run verify:plugin-compatibility && npm run verify:obsidian-community && npm run test:office-context-edit && npm run test:document-package-edit && tsc --noEmit --skipLibCheck && node scripts/prepare-release-output.mjs && node esbuild.config.mjs production",
+    "build": "npm run verify:source-parity && npm run verify:feature-regressions && npm run verify:agent-bridge && npm run verify:plugin-compatibility && npm run verify:obsidian-community && npm run test:office-context-edit && npm run test:document-package-edit && npm run verify:api-endpoint && tsc --noEmit --skipLibCheck && node scripts/prepare-release-output.mjs && node esbuild.config.mjs production",
     "check": "tsc --noEmit --skipLibCheck",
-    "verify": "npm run check && npm run build"
+    "verify": "npm run check && npm run build",
+    "verify:api-endpoint": "node scripts/verify-api-endpoint-resolution.mjs"
   },
   "devDependencies": {
     "@types/node": "^20.14.10",
