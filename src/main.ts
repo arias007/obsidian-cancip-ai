@@ -13458,10 +13458,12 @@ export default class CancipPlugin extends Plugin {
     if (existing) return existing;
     const profile = this.settings.apiProfiles.find((item) => item.id === resolvedId) ?? this.activeApiProfile();
     const run = (async (): Promise<ApiProbeResult> => {
-      const root = profile.apiUrl.trim().replace(/\/+$/, "");
+      const root = apiUrlNormalizedRoot(profile.apiUrl);
       const configuredRoot = root.replace(/\/v1$/i, "");
+      // Probe exactly the same URL candidates the live call will use, so a green
+      // test can never disagree with an actual chat request.
       const endpoints = uniqueStrings([
-        /\/v1$/i.test(root) ? `${root}/models` : `${root}/v1/models`,
+        ...apiEndpointRoots(profile.apiUrl).map((candidate) => apiUrlForRoot(candidate, "models")),
         `${configuredRoot}/api/tags`
       ]);
       const headers: Record<string, string> = { Accept: "application/json" };
@@ -13487,6 +13489,9 @@ export default class CancipPlugin extends Plugin {
             modelCount,
             checkedAt: new Date().toISOString()
           };
+          // Remember which root variant answered so the live chat call reuses it
+          // first instead of re-walking the candidates on every message.
+          if (/\/models$/i.test(endpoint)) rememberApiEndpointRoot(profile.apiUrl, endpoint.replace(/\/models$/i, ""));
           this.apiProfileTestResults.set(resolvedId, result);
           return result;
         } catch (error) {
@@ -13521,13 +13526,23 @@ export default class CancipPlugin extends Plugin {
     if (existing) return existing;
     const profile = this.settings.apiProfiles.find((item) => item.id === resolvedProfileId) ?? this.activeApiProfile();
     const run = (async (): Promise<ModelProbeResult> => {
-      const root = profile.apiUrl.trim().replace(/\/+$/, "");
-      const base = root.replace(/\/v1$/i, "");
-      const compatibleUrl = /\/v1$/i.test(root) ? `${root}/chat/completions` : `${root}/v1/chat/completions`;
-      const responsesUrl = /\/v1$/i.test(root) ? `${root}/responses` : `${root}/v1/responses`;
-      const candidates: Array<{ url: string; body: unknown }> = profile.apiMode === "responses"
-        ? [{ url: responsesUrl, body: { model: modelId, input: "你好！请自然地向用户打个招呼，并用一句简短的话介绍你自己。", max_output_tokens: 96 } }, { url: compatibleUrl, body: { model: modelId, messages: [{ role: "user", content: "你好！请自然地向用户打个招呼，并用一句简短的话介绍你自己。" }], max_tokens: 96, stream: false } }]
-        : [{ url: compatibleUrl, body: { model: modelId, messages: [{ role: "user", content: "你好！请自然地向用户打个招呼，并用一句简短的话介绍你自己。" }], max_tokens: 96, stream: false } }, { url: responsesUrl, body: { model: modelId, input: "你好！请自然地向用户打个招呼，并用一句简短的话介绍你自己。", max_output_tokens: 96 } }];
+      const root = apiUrlNormalizedRoot(profile.apiUrl);
+      const probeText = "你好！请自然地向用户打个招呼，并用一句简短的话介绍你自己。";
+      // Same candidate list and same order as the live chat call.
+      const roots = apiEndpointRoots(profile.apiUrl);
+      const compatibleCandidates = roots.map((candidateRoot) => ({
+        root: candidateRoot,
+        url: apiUrlForRoot(candidateRoot, "compatible"),
+        body: { model: modelId, messages: [{ role: "user", content: probeText }], max_tokens: 96, stream: false }
+      }));
+      const responsesCandidates = roots.map((candidateRoot) => ({
+        root: candidateRoot,
+        url: apiUrlForRoot(candidateRoot, "responses"),
+        body: { model: modelId, input: probeText, max_output_tokens: 96 }
+      }));
+      const candidates: Array<{ root: string; url: string; body: unknown }> = profile.apiMode === "responses"
+        ? [...responsesCandidates, ...compatibleCandidates]
+        : [...compatibleCandidates, ...responsesCandidates];
       const started = Date.now();
       let lastError = "";
       for (const candidate of candidates) {
@@ -13546,6 +13561,7 @@ export default class CancipPlugin extends Plugin {
               ? json.output_text.trim()
               : "";
           const result: ModelProbeResult = { ok: true, model: modelId, profileId: resolvedProfileId, endpoint: candidate.url, latencyMs: Math.max(0, Date.now() - started), checkedAt: new Date().toISOString(), responseText: responseText || undefined };
+          rememberApiEndpointRoot(profile.apiUrl, candidate.root);
           this.modelTestResults.set(key, result);
           return result;
         } catch (error) {
@@ -23136,7 +23152,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       }
       return sanitizeModelVisibleAnswer(extractResponseText(json) || extractNonJsonText(response.text));
     };
-    const compatible = async (): Promise<string> => await post(endpoint.chatUrl, {
+    const compatible = async (): Promise<string> => await runWithApiEndpointFallback(profile, "compatible", (url) => post(url, {
       model: profile.model,
       temperature: Math.min(this.settings.temperature, 0.35),
       max_tokens: Math.max(32, Math.min(1800, maxTokens)),
@@ -23144,14 +23160,14 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
         { role: "system", content: system },
         { role: "user", content: inputText }
       ]
-    });
-    const responses = async (): Promise<string> => await post(endpoint.responsesUrl, {
+    }));
+    const responses = async (): Promise<string> => await runWithApiEndpointFallback(profile, "responses", (url) => post(url, {
       model: profile.model,
       instructions: system,
       input: inputText,
       temperature: Math.min(this.settings.temperature, 0.35),
       max_output_tokens: Math.max(32, Math.min(1800, maxTokens))
-    });
+    }));
     const mode = resolveApiMode(profile.apiMode, endpoint);
     if (mode === "responses") return await responses();
     if (mode === "compatible") return await compatible();
@@ -46182,16 +46198,16 @@ class CancipView extends ItemView {
   }
 
   private async probeBasicChat(profile: ApiProfile): Promise<{ mode: ApiMode; text: string }> {
-    const endpoint = normalizeApiUrl(profile.apiUrl);
     const system = "You are Cancip's repair probe. Reply with OK only.";
     const inputText = "Reply with OK only.";
-    const order: ApiMode[] = profile.apiMode === "responses" ? ["responses", "compatible"] : ["compatible", "responses"];
+    const order: Array<Exclude<ApiMode, "auto">> = profile.apiMode === "responses" ? ["responses", "compatible"] : ["compatible", "responses"];
     const errors: string[] = [];
     for (const mode of order) {
       try {
-        const text = mode === "responses"
-          ? await this.callResponsesApi(profile, endpoint.responsesUrl, system, inputText)
-          : await this.callCompatibleApi(profile, endpoint.chatUrl, system, inputText);
+        const text = await runWithApiEndpointFallback(profile, mode, (url) =>
+          mode === "responses"
+            ? this.callResponsesApi(profile, url, system, inputText)
+            : this.callCompatibleApi(profile, url, system, inputText));
         return { mode, text };
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
@@ -50862,6 +50878,16 @@ class CancipView extends ItemView {
     const implementationContext = policy.intent === "implementation";
     const shouldSearchCodexMemory = !policy.compactStateChange && settings.codexMemoryAutoSearch && shouldAutoSearchForPrompt(prompt);
     const diaryWriting = this.diaryWritingTurn(prompt);
+    // The toggle governs automatic body attachment. When the prompt explicitly
+    // targets the open file, or the user is in edit mode, attach the body anyway:
+    // that is precisely what "analyse the current file" asks for.
+    const currentFileExplicitRequest = diaryWriting || this.mode === "edit" || promptNeedsCurrentFileContext(prompt);
+    const currentFileAutoInclude = settings.includeCurrentFile && this.includeCurrentFileForSession;
+    const currentFileContextNeed = currentFileExplicitRequest || (currentFileAutoInclude && policy.includeCurrentFile);
+    // Always tell the model which file is open, even when the automatic body
+    // attachment toggle is off. / 当前文件路径每轮都发，与开关无关。
+    const activeViewContext = this.describeActiveViewContext(currentFileContextNeed);
+    if (activeViewContext) parts.push(`## ${isChineseLanguage(this.plugin.language()) ? "当前文件（实时状态）" : "Current file (live state)"}\n${activeViewContext}`);
     if (!this.taskControl && prompt.trim()) {
       this.ensureTaskControl(rawPrompt, prompt);
     }
@@ -50903,8 +50929,8 @@ class CancipView extends ItemView {
           CONTEXT_STEP_TIMEOUT_MS
         )
       : Promise.resolve({ text: "", hits: [] as SearchHit[] });
-    const currentFilePromise = (diaryWriting || settings.includeCurrentFile) && this.includeCurrentFileForSession && (diaryWriting || policy.includeCurrentFile)
-      ? this.safeContextStep(this.t("currentFile"), () => this.getCurrentFileContext(diaryWriting), null, CONTEXT_STEP_TIMEOUT_MS)
+    const currentFilePromise = currentFileContextNeed
+      ? this.safeContextStep(this.t("currentFile"), () => this.getCurrentFileContext(currentFileExplicitRequest), null, CONTEXT_STEP_TIMEOUT_MS)
       : Promise.resolve(null as string | null);
     const diaryActivityPromise = diaryWriting
       ? this.safeContextStep("today diary activity", () => this.buildTodayDiaryActivityContext(), "", CONTEXT_STEP_TIMEOUT_MS)
@@ -50954,7 +50980,7 @@ class CancipView extends ItemView {
       }
     }
 
-    if ((diaryWriting || settings.includeCurrentFile) && this.includeCurrentFileForSession && (diaryWriting || policy.includeCurrentFile)) {
+    if (currentFileContextNeed) {
       const current = await currentFilePromise;
       if (current) parts.push(`## ${this.t("currentFile")}\n${current}`);
     }
@@ -52309,24 +52335,30 @@ class CancipView extends ItemView {
 
       const endpoint = normalizeApiUrl(profile.apiUrl);
       const mode = resolveApiMode(profile.apiMode, endpoint);
+      // A configured base URL can accept several OpenAI-compatible shapes
+      // (`/chat/completions` versus `/v1/chat/completions`). withEndpointFallback
+      // walks the candidates so one wrong shape no longer fails the whole turn,
+      // and remembers the root that answered so later turns go straight to it.
+      const callByMode = async (candidate: Exclude<ApiMode, "auto">): Promise<string> => {
+        if (candidate === "responses") {
+          return await runWithApiEndpointFallback(profile, "responses", (url) =>
+            this.callResponsesApi(profile, url, context.system, inputText, context.images ?? [], onStream, maxOutputTokens, allowNativeTools));
+        }
+        this.lastResponsesState = null;
+        return await runWithApiEndpointFallback(profile, "compatible", (url) =>
+          this.callCompatibleApi(profile, url, context.system, inputText, context.images ?? [], onStream, maxOutputTokens, allowNativeTools));
+      };
       if (mode === "responses") {
-        return finish(await this.callResponsesApi(profile, endpoint.responsesUrl, context.system, inputText, context.images ?? [], onStream, maxOutputTokens, allowNativeTools));
+        return finish(await callByMode("responses"));
       }
 
       if (mode === "compatible") {
         this.lastResponsesState = null;
-        return finish(await this.callCompatibleApi(profile, endpoint.chatUrl, context.system, inputText, context.images ?? [], onStream, maxOutputTokens, allowNativeTools));
+        return finish(await callByMode("compatible"));
       }
 
       const preferredMode = preferredAutomaticApiMode(profile.apiUrl);
       const fallbackMode: Exclude<ApiMode, "auto"> = preferredMode === "responses" ? "compatible" : "responses";
-      const callByMode = async (candidate: Exclude<ApiMode, "auto">): Promise<string> => {
-        if (candidate === "responses") {
-          return await this.callResponsesApi(profile, endpoint.responsesUrl, context.system, inputText, context.images ?? [], onStream, maxOutputTokens, allowNativeTools);
-        }
-        this.lastResponsesState = null;
-        return await this.callCompatibleApi(profile, endpoint.chatUrl, context.system, inputText, context.images ?? [], onStream, maxOutputTokens, allowNativeTools);
-      };
       try {
         return finish(await callByMode(preferredMode));
       } catch (error) {
@@ -52351,7 +52383,7 @@ class CancipView extends ItemView {
               previousAttempts: firstAudit ? [...(currentAudit.previousAttempts ?? []), firstAudit] : currentAudit.previousAttempts
             };
           }
-          throw new Error(`${preferredMode} failed: ${firstError}; ${fallbackMode} failed: ${second}`);
+          throw new Error(`${preferredMode} failed: ${firstError}; ${fallbackMode} failed: ${second} [source: ${describeApiEndpointTarget(profile, endpoint.chatUrl)}]`);
         }
       }
     } catch (error) {
@@ -52782,11 +52814,51 @@ class CancipView extends ItemView {
     return this.t("localHits", { reason, prompt, list });
   }
 
+  // Always-on, cheap workspace awareness: which file the user actually has open.
+  // Sent every turn regardless of the includeCurrentFile toggle, so "analyse the
+  // current file" never degenerates into asking the user for a file name.
+  private describeActiveViewContext(willAttachContent = false): string {
+    const workspace = this.app.workspace;
+    const file = workspace.getActiveFile();
+    const activeLeaf = (workspace as unknown as { activeLeaf?: unknown }).activeLeaf;
+    // Report the view that actually hosts the open file. The focused leaf is
+    // often the Cancip panel itself, and reporting its view type would tell the
+    // model "a Cancip panel is open" instead of naming the note the user sees.
+    let fileViewType = "";
+    let inFocusedLeaf = false;
+    if (file) {
+      try {
+        (workspace as unknown as { iterateAllLeaves?: (callback: (leaf: unknown) => void) => void }).iterateAllLeaves?.((leaf) => {
+          const view = (leaf as { view?: { file?: { path?: string }; getViewType?: () => string } } | null | undefined)?.view;
+          if (!view || view.file?.path !== file.path) return;
+          if (!fileViewType && typeof view.getViewType === "function") fileViewType = view.getViewType();
+          if (leaf === activeLeaf) inFocusedLeaf = true;
+        });
+      } catch {
+        // Workspace iteration is best-effort awareness only.
+      }
+    }
+    const contentAttached = Boolean(file) && willAttachContent;
+    const lines = [`activeFile: ${file ? file.path : "(none)"}`];
+    if (file) {
+      lines.push(`activeFileExtension: ${file.extension || "(none)"}`);
+      if (fileViewType) lines.push(`activeFileViewType: ${fileViewType}`);
+      lines.push(`activeFileInFocusedLeaf: ${inFocusedLeaf ? "yes" : "no"}`);
+    }
+    lines.push(`activeFileContentAttached: ${contentAttached ? "yes" : "no"}`);
+    lines.push(isChineseLanguage(this.plugin.language())
+      ? "这是用户此刻在 Obsidian 中打开的文件（Cancip 面板获得焦点时 activeFile 仍然是这篇笔记，activeFileInFocusedLeaf 会是 no，属正常）。回答“当前文件／这个文件／这个笔记”时以它为准。如果 activeFileContentAttached 为 no，就用 read 动作读取该路径后再回答；不要反问用户文件名，也不要声称看不到当前文件。"
+      : "This is the file the user has open in Obsidian right now (when the Cancip panel holds focus, activeFile is still that note and activeFileInFocusedLeaf is \"no\", which is normal). Treat it as authoritative for any \"current file / this file / this note\" question. If activeFileContentAttached is no, read that path with a read action instead of asking the user for the file name or claiming you cannot see the open file.");
+    return lines.join("\n");
+  }
+
   private async getCurrentFileContext(force = false): Promise<string | null> {
-    if (!force && (!this.plugin.settings.includeCurrentFile || !this.includeCurrentFileForSession)) return null;
     const file = this.app.workspace.getActiveFile();
     if (!file) return null;
-    if (!force && this.hiddenContextKeys.has(contextChipKey("current", file.path))) return null;
+    if (!force) {
+      if (!this.plugin.settings.includeCurrentFile || !this.includeCurrentFileForSession) return null;
+      if (this.hiddenContextKeys.has(contextChipKey("current", file.path))) return null;
+    }
     const content = await this.app.vault.cachedRead(file);
     return `${file.path}\n${trimContext(content, Math.min(this.plugin.settings.maxFileContextChars, 6000))}`;
   }
@@ -68519,12 +68591,12 @@ class CancipView extends ItemView {
     if (!this.plugin.modelTransportConfigured(profile)) return "";
     const endpoint = normalizeApiUrl(profile.apiUrl);
     const mode = resolveApiMode(profile.apiMode, endpoint);
-    if (mode === "responses") return await this.callLightweightResponsesApi(profile, endpoint.responsesUrl, system, inputText, maxTokens);
-    if (mode === "compatible") return await this.callLightweightCompatibleApi(profile, endpoint.chatUrl, system, inputText, maxTokens);
+    if (mode === "responses") return await runWithApiEndpointFallback(profile, "responses", (url) => this.callLightweightResponsesApi(profile, url, system, inputText, maxTokens));
+    if (mode === "compatible") return await runWithApiEndpointFallback(profile, "compatible", (url) => this.callLightweightCompatibleApi(profile, url, system, inputText, maxTokens));
     try {
-      return await this.callLightweightResponsesApi(profile, endpoint.responsesUrl, system, inputText, maxTokens);
+      return await runWithApiEndpointFallback(profile, "responses", (url) => this.callLightweightResponsesApi(profile, url, system, inputText, maxTokens));
     } catch {
-      return await this.callLightweightCompatibleApi(profile, endpoint.chatUrl, system, inputText, maxTokens);
+      return await runWithApiEndpointFallback(profile, "compatible", (url) => this.callLightweightCompatibleApi(profile, url, system, inputText, maxTokens));
     }
   }
 
@@ -96843,27 +96915,142 @@ function decodeBase64Text(input: string): string {
   return "";
 }
 
-function normalizeApiUrl(rawUrl: string): { chatUrl: string; responsesUrl: string; explicit: ApiMode | null } {
-  const trimmed = rawUrl.trim().replace(/\/+$/, "");
-  if (trimmed.endsWith("/chat/completions")) {
-    return {
-      chatUrl: trimmed,
-      responsesUrl: trimmed.replace(/\/chat\/completions$/, "/responses"),
-      explicit: "compatible"
-    };
+function apiUrlNormalizedRoot(rawUrl: string): string {
+  return String(rawUrl ?? "").trim().replace(/\/+$/, "");
+}
+
+function apiUrlPathname(rawUrl: string): string {
+  try {
+    return new URL(rawUrl).pathname.replace(/\/+$/, "");
+  } catch {
+    return "";
   }
-  if (trimmed.endsWith("/responses")) {
+}
+
+// Ordering hint cache: once a root variant is proven to work for a configured
+// base URL, try it first so the fallback probe is only paid once per source.
+const API_ENDPOINT_ROOT_PREFERENCE = new Map<string, string>();
+
+function apiEndpointRoots(rawUrl: string): string[] {
+  const trimmed = apiUrlNormalizedRoot(rawUrl);
+  if (!trimmed) return [];
+  if (/\/(?:chat\/completions|responses|models)$/i.test(trimmed)) return [trimmed];
+  const roots: string[] = [];
+  const seen = new Set<string>();
+  const add = (value: string): void => {
+    const next = value.replace(/\/+$/, "");
+    if (!next || seen.has(next)) return;
+    seen.add(next);
+    roots.push(next);
+  };
+  const preferred = API_ENDPOINT_ROOT_PREFERENCE.get(trimmed);
+  if (preferred) add(preferred);
+  const pathname = apiUrlPathname(trimmed);
+  // A bare host (no path) keeps the historical `/chat/completions` shape.
+  // A self-hosted gateway that adds its own prefix (e.g. `http://host/dseeker`)
+  // usually still speaks OpenAI under `/v1`, so probe that form first — unless
+  // the path is already versioned (e.g. Google's `/v1beta/openai`).
+  const hasPathPrefix = pathname.length > 0;
+  const alreadyVersioned = /\/v\d+[a-z0-9]*(?:\/|$)/i.test(pathname);
+  if (hasPathPrefix && !alreadyVersioned && !/\/v1$/i.test(trimmed)) {
+    add(`${trimmed}/v1`);
+    add(trimmed);
+  } else {
+    add(trimmed);
+    // A path that already carries a version segment (Google's `/v1beta/openai`)
+    // must not be given a second one.
+    if (!alreadyVersioned && !/\/v1$/i.test(trimmed)) add(`${trimmed}/v1`);
+  }
+  return roots;
+}
+
+function rememberApiEndpointRoot(rawUrl: string, workingRoot: string): void {
+  const trimmed = apiUrlNormalizedRoot(rawUrl);
+  const root = apiUrlNormalizedRoot(workingRoot);
+  if (!trimmed || !root) return;
+  if (API_ENDPOINT_ROOT_PREFERENCE.get(trimmed) === root) return;
+  API_ENDPOINT_ROOT_PREFERENCE.set(trimmed, root);
+}
+
+function apiUrlForRoot(root: string, mode: Exclude<ApiMode, "auto"> | "models"): string {
+  const normalized = apiUrlNormalizedRoot(root);
+  if (/\/chat\/completions$/i.test(normalized)) {
+    if (mode === "models") return normalized;
+    return mode === "responses" ? normalized.replace(/\/chat\/completions$/, "/responses") : normalized;
+  }
+  if (/\/responses$/i.test(normalized)) {
+    if (mode === "models") return normalized;
+    return mode === "responses" ? normalized : normalized.replace(/\/responses$/, "/chat/completions");
+  }
+  if (/\/models$/i.test(normalized)) return normalized;
+  if (mode === "models") return `${normalized}/models`;
+  return `${normalized}${mode === "responses" ? "/responses" : "/chat/completions"}`;
+}
+
+function normalizeApiUrl(rawUrl: string): { chatUrl: string; responsesUrl: string; explicit: ApiMode | null; roots: string[] } {
+  const trimmed = apiUrlNormalizedRoot(rawUrl);
+  const explicit: ApiMode | null = /\/chat\/completions$/i.test(trimmed)
+    ? "compatible"
+    : /\/responses$/i.test(trimmed)
+      ? "responses"
+      : null;
+  const roots = apiEndpointRoots(rawUrl);
+  if (!roots.length) {
     return {
-      chatUrl: trimmed.replace(/\/responses$/, "/chat/completions"),
-      responsesUrl: trimmed,
-      explicit: "responses"
+      chatUrl: `${trimmed}/chat/completions`,
+      responsesUrl: `${trimmed}/responses`,
+      explicit,
+      roots: [trimmed]
     };
   }
   return {
-    chatUrl: `${trimmed}/chat/completions`,
-    responsesUrl: `${trimmed}/responses`,
-    explicit: null
+    chatUrl: apiUrlForRoot(roots[0], "compatible"),
+    responsesUrl: apiUrlForRoot(roots[0], "responses"),
+    explicit,
+    roots
   };
+}
+
+// A wrong endpoint shape shows up as a missing route, not as a model error.
+// Only these failures are worth retrying against the next URL candidate.
+function isEndpointRoutingError(error: unknown): boolean {
+  const reason = error instanceof Error ? error.message : String(error ?? "");
+  // Deliberately narrow: a 400 usually means the model or payload is rejected,
+  // not that the path is wrong. Retrying those would only mask the real error.
+  return /HTTP\s*(?:404|405|501)\b|cannot\s+(?:POST|GET)\s|no\s+such\s+(?:route|path|endpoint)|unknown\s+(?:route|path|endpoint)|route\s+not\s+found/i.test(reason);
+}
+
+function describeApiEndpointTarget(profile: Pick<ApiProfile, "name" | "apiUrl">, url: string): string {
+  const label = profile.name?.trim() || profile.apiUrl?.trim() || "model source";
+  return `${label} → ${url}`;
+}
+
+// Every model request goes through here so a base URL that accepts
+// `/chat/completions` and one that requires `/v1/chat/completions` both work.
+// Only route-shaped failures (404/405/501) move on to the next candidate; a real
+// model or payload error is surfaced immediately. Shared by the chat view and by
+// the plugin-level lightweight/autocomplete/repair callers.
+async function runWithApiEndpointFallback<T>(
+  profile: ApiProfile,
+  mode: Exclude<ApiMode, "auto">,
+  run: (url: string) => Promise<T>
+): Promise<T> {
+  const roots = apiEndpointRoots(profile.apiUrl);
+  const candidates = roots.length ? roots : [apiUrlNormalizedRoot(profile.apiUrl)];
+  let lastError: unknown = null;
+  for (const [index, root] of candidates.entries()) {
+    try {
+      const value = await run(apiUrlForRoot(root, mode));
+      if (index > 0) rememberApiEndpointRoot(profile.apiUrl, root);
+      return value;
+    } catch (error) {
+      lastError = error;
+      if (index + 1 >= candidates.length || !isEndpointRoutingError(error)) throw error;
+    }
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(`Model request failed for ${describeApiEndpointTarget(profile, apiUrlForRoot(candidates[0], mode))}`);
 }
 
 function supportsPreviousResponseId(rawUrl: string): boolean {
