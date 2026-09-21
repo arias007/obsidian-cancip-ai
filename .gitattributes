@@ -4,3 +4,10 @@
 *.jpeg binary
 *.png binary
 *.zip binary
+
+# styles.css is a shipped release asset, not just source. With core.autocrlf=true
+# the worktree kept CRLF while the committed blob stayed LF, so every local check
+# validated 325,907 bytes while CI published 311,704 - the exact file users got was
+# never the file the gate saw. Pin the checkout to LF so the worktree, the blob and
+# the release asset are the same bytes.
+outputs/cancip/styles.css text eol=lf

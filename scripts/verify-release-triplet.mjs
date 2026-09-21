@@ -139,6 +139,41 @@ if (gitAvailable) {
   for (const name of TRIPLET) {
     check(`outputs/cancip/${name} is committed (a clean CI checkout can still ship it)`, tracked.has(`outputs/cancip/${name}`));
   }
+
+  // Tracking is not enough: CI ships the *blob*, while every check above reads the
+  // worktree. When the two disagree the release publishes bytes that were never
+  // verified - and nothing local notices. This is how a CRLF styles.css passed
+  // every check here while CI shipped the LF blob, 14,203 bytes different.
+  // Comparing against `HEAD:<path>` is what a clean checkout would produce.
+  for (const name of TRIPLET) {
+    const relative = `outputs/cancip/${name}`;
+    let blob = null;
+    try {
+      blob = execFileSync("git", ["cat-file", "blob", `HEAD:${relative}`], {
+        cwd: repoRoot,
+        stdio: ["ignore", "pipe", "ignore"],
+        maxBuffer: 64 * 1024 * 1024
+      });
+    } catch {
+      blob = null;
+    }
+    const worktree = (() => {
+      try {
+        return readFileSync(join(repoRoot, relative));
+      } catch {
+        return null;
+      }
+    })();
+    if (blob === null || worktree === null) {
+      check(`${relative} can be compared against its committed blob`, false, blob === null ? "no blob at HEAD" : "missing in worktree");
+      continue;
+    }
+    check(
+      `${relative} worktree bytes equal the committed blob (what CI actually ships)`,
+      blob.equals(worktree),
+      blob.equals(worktree) ? "" : `worktree ${worktree.length} B vs blob ${blob.length} B`
+    );
+  }
 } else {
   check("git tracking check skipped (no git available)", true);
 }
