@@ -1,8 +1,0 @@
-﻿Obsidian: running
-  pid=5036 responding=True window=[]
-  pid=25212 responding=True window=[]
-  pid=36556 responding=True window=[Mobile Webviewer - note - Obsidian 1.13.7]
-  pid=37796 responding=True window=[]
-  pid=45260 responding=True window=[]
-  pid=54816 responding=True window=[]
-  Obsidian.com helpers: 0
