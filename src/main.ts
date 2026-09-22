@@ -7616,6 +7616,7 @@ export default class CancipPlugin extends Plugin {
   private agentBridgeLastError = "";
   private queueBridge: CancipQueueBridge | null = null;
   private queueBridgeLastError = "";
+  private queueBridgeIntervals: number[] = [];
   private agentDiagnosticsCache: ReturnType<typeof localAgentDiagnostics> = [];
   private agentDiagnosticsReady = false;
   private agentCliInstallPromise: Promise<string> | null = null;
@@ -8211,14 +8212,17 @@ export default class CancipPlugin extends Plugin {
         }, 18000);
         this.register(cancelLocalModelRefresh);
       }
-      // The queue bridge is the leg mobile can actually run: it needs no Node
-      // runtime and no listening port, so it starts on every platform. It shares
-      // the HTTP bridge's handler set, which keeps one operation surface.
-      const cancelQueueBridgeStartup = scheduleIdleWork(() => {
-        this.startQueueBridge();
-      }, Platform.isMobileApp ? 2000 : 12000);
-      this.register(cancelQueueBridgeStartup);
     });
+    // The queue bridge starts here rather than through scheduleIdleWork. It costs
+    // one directory check and two interval registrations, so there is nothing worth
+    // deferring - and deferring it was harmful: Chromium suspends idle and animation
+    // callbacks while the window is hidden, so a deferred start meant the one
+    // transport an agent connects to only came up when the user happened to be
+    // looking at Obsidian. Its intervals are still throttled in the background, but
+    // the transport exists from load and answers the CLI's heartbeat preflight at
+    // once. It shares the HTTP bridge's handler set, which keeps one operation
+    // surface across both legs.
+    this.startQueueBridge();
     this.registerEditorExtension(createCancipEditorAutocompleteExtension(this));
     this.registerEditorExtension(createContextEditEditorPreviewExtension(this));
     this.registerMarkdownPostProcessor((element, context) => this.processMarkdownWorkbenchEmbeds(element, context));
@@ -11190,17 +11194,25 @@ export default class CancipPlugin extends Plugin {
     void queueBridge.ensureDir().catch((error) => {
       this.queueBridgeLastError = error instanceof Error ? error.message : String(error);
     });
-    this.registerInterval(window.setInterval(() => {
-      void this.queueBridge?.tick();
-    }, QUEUE_BRIDGE_POLL_MS));
-    this.registerInterval(window.setInterval(() => {
-      void this.queueBridge?.beat();
-    }, QUEUE_BRIDGE_HEARTBEAT_MS));
+    this.queueBridgeIntervals = [
+      window.setInterval(() => {
+        void this.queueBridge?.tick();
+      }, QUEUE_BRIDGE_POLL_MS),
+      window.setInterval(() => {
+        void this.queueBridge?.beat();
+      }, QUEUE_BRIDGE_HEARTBEAT_MS)
+    ];
+    for (const interval of this.queueBridgeIntervals) this.registerInterval(interval);
     void queueBridge.beat();
   }
 
   private stopQueueBridge(): void {
     this.queueBridge = null;
+    // registerInterval keeps these alive until the plugin unloads, so a restart
+    // (the settings toggle) would otherwise stack one more poll and one more
+    // heartbeat timer onto the new bridge every time it ran.
+    for (const interval of this.queueBridgeIntervals) window.clearInterval(interval);
+    this.queueBridgeIntervals = [];
   }
 
   private agentBridgeCapabilities(): Record<string, unknown> {

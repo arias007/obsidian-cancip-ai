@@ -92,6 +92,28 @@ for (const op of ["ping", "list", "stat", "read", "write", "mkdir", "move", "del
 requireOrder(bundle, "this.register(cancelLocalModelRefresh);", "this.startQueueBridge();", {
   label: "queue bridge starts outside the desktop-only block"
 });
+// ...and it must not go back behind scheduleIdleWork. Chromium suspends idle
+// callbacks while the window is hidden, so an idled start meant the transport an
+// agent connects to only came up if the user happened to be looking at Obsidian.
+assert.doesNotMatch(
+  source,
+  /cancelQueueBridgeStartup/,
+  "the queue bridge must not be scheduled through scheduleIdleWork again"
+);
+assert.doesNotMatch(
+  source,
+  /scheduleIdleWork\([\s\S]{0,120}?startQueueBridge/,
+  "the queue bridge start must not be nested inside any idle callback"
+);
+// Stopping has to clear the timers. `registerInterval` keeps them alive until the
+// plugin unloads, so a restart without cleanup stacked one more poll and one more
+// heartbeat timer onto the new bridge every time the settings toggle ran.
+assert.match(source, /this\.queueBridgeIntervals = \[/, "queue bridge intervals must be tracked");
+assert.match(
+  source,
+  /private stopQueueBridge\(\): void \{[\s\S]{0,400}?clearInterval\(interval\)/,
+  "stopQueueBridge must clear the polling and heartbeat timers"
+);
 const sharedHandlerUse = (source.match(/this\.agentBridgeHandlers\(\)/g) || []).length;
 assert.ok(sharedHandlerUse >= 2, `both transports must share one handler set, found ${sharedHandlerUse} use(s)`);
 assert.match(source, /queueBridgeEnabled: typeof merged\.queueBridgeEnabled === "boolean"/);
