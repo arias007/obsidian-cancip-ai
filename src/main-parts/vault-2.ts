@@ -1829,21 +1829,34 @@ export function scheduleIdleWork(callback: () => void, timeoutMs: number): () =>
     cancelIdleCallback?: (id: number) => void;
   };
   let cancelled = false;
-  if (typeof idleWindow.requestIdleCallback === "function") {
-    const id = idleWindow.requestIdleCallback(() => {
-      if (!cancelled) callback();
-    }, { timeout: timeoutMs });
+  let settled = false;
+  const settle = () => {
+    if (cancelled || settled) return;
+    settled = true;
+    callback();
+  };
+  // Chromium suspends requestAnimationFrame and requestIdleCallback outright while the
+  // window is hidden or occluded, and Obsidian normally sits behind another window.
+  // Everything deferred through this helper - the agent bridge, the CLI install, the
+  // local model catalog - therefore only ran if the user happened to be looking at
+  // Obsidian, and requestIdleCallback's own timeout option does not rescue it because
+  // that deadline is measured in frames rather than wall-clock time. Race the idle
+  // callback against a timer of the same length: the visible case still goes through
+  // idle, the hidden case settles instead of hanging, and the settle latch keeps the
+  // callback single-shot when both arrive.
+  if (typeof idleWindow.requestIdleCallback !== "function") {
+    const fallback = window.setTimeout(settle, Math.min(timeoutMs, 800));
     return () => {
       cancelled = true;
-      idleWindow.cancelIdleCallback?.(id);
+      window.clearTimeout(fallback);
     };
   }
-  const timer = window.setTimeout(() => {
-    if (!cancelled) callback();
-  }, Math.min(timeoutMs, 800));
+  const timer = window.setTimeout(settle, Math.max(0, timeoutMs));
+  const idleId = idleWindow.requestIdleCallback(settle, { timeout: timeoutMs });
   return () => {
     cancelled = true;
     window.clearTimeout(timer);
+    idleWindow.cancelIdleCallback?.(idleId);
   };
 }
 
