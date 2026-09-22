@@ -1,10 +1,12 @@
 /**
  * Release triplet integrity gate.
  *
- * The Obsidian release is exactly three files — main.js, manifest.json and
- * styles.css — and .github/workflows/release.yml uploads and attest precisely
- * those three. An Obsidian plugin ships broken if any one of them is missing,
- * truncated or stale, so this gate asserts the *artifacts*, not the sources.
+ * The Obsidian release is three files — main.js, manifest.json and styles.css —
+ * and the same release carries a fourth, `cancip-cli.mjs`, because an agent on
+ * another machine needs that one file and nothing else. All four are uploaded
+ * and attested by .github/workflows/release.yml. An Obsidian plugin ships
+ * broken if any of the triplet is missing, truncated or stale, so this gate
+ * asserts the *artifacts*, not the sources.
  *
  * The two failure modes it exists to catch:
  *
@@ -26,11 +28,14 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import process from "node:process";
+import { gunzipSync } from "node:zlib";
 import ts from "typescript";
 import { repoRoot } from "./lib/source-bundle.mjs";
 
 const outputDir = process.env.CANCIP_OUTPUT_DIR ?? join(repoRoot, "outputs", "cancip");
 const TRIPLET = ["main.js", "manifest.json", "styles.css"];
+const CLI_ASSET = "cancip-cli.mjs";
+const RELEASE_ASSETS = [...TRIPLET, CLI_ASSET];
 
 const checks = [];
 const check = (name, pass, detail = "") => checks.push({ name, pass: Boolean(pass), detail });
@@ -56,6 +61,13 @@ for (const name of TRIPLET) {
   const path = join(outputDir, name);
   check(`release triplet contains ${name}`, existsSync(path) && statSync(path).size > 0, path);
 }
+// The CLI is a release asset in its own right, so a missing one must fail here
+// rather than at `gh release upload` time, after a tag has already been pushed.
+check(
+  `release assets contain ${CLI_ASSET}`,
+  existsSync(join(outputDir, CLI_ASSET)) && statSync(join(outputDir, CLI_ASSET)).size > 0,
+  join(outputDir, CLI_ASSET)
+);
 
 const mainJs = readMaybe(join(outputDir, "main.js"));
 const manifestText = readMaybe(join(outputDir, "manifest.json"));
@@ -178,14 +190,75 @@ if (gitAvailable) {
   check("git tracking check skipped (no git available)", true);
 }
 
+// ------------------------------------------------------------ the CLI asset
+// The CLI is the entry point for callers that are not Obsidian, so it earns its
+// own integrity pass. The invariants are the ones a caller would otherwise only
+// discover at runtime: the file must really be there, it must genuinely be one
+// self-contained file (that was the chosen distribution shape), and the version
+// baked into it must be the version being released.
+const cliText = readMaybe(join(outputDir, CLI_ASSET));
+check(`${CLI_ASSET} is present and non-trivial`, cliText !== null && cliText.length > 5000);
+if (cliText !== null) {
+  const cliVersionMatch = cliText.match(/^const CLI_VERSION = "([^"]+)";/m);
+  check(`${CLI_ASSET} declares CLI_VERSION`, cliVersionMatch !== null);
+  check(
+    `${CLI_ASSET} version matches manifest.json (one release, one version)`,
+    cliVersionMatch !== null && manifest !== null && cliVersionMatch[1] === manifest.version,
+    cliVersionMatch === null
+      ? "no CLI_VERSION literal"
+      : `cli ${cliVersionMatch[1]} vs manifest ${manifest === null ? "(unreadable)" : manifest.version}`
+  );
+  const relativeRefs = cliText.match(/(?:from|import|require)\s*\(?\s*["']\.[^"']*["']/g) ?? [];
+  check(
+    `${CLI_ASSET} is one self-contained file (no relative imports)`,
+    relativeRefs.length === 0,
+    relativeRefs.join(", ")
+  );
+  check(
+    `${CLI_ASSET} still carries the file-queue transport`,
+    cliText.includes("queue.jsonl") && cliText.includes("--transport")
+  );
+  // Shipping LF keeps the artifact identical on Windows and Linux, and keeps the
+  // committed blob comparable to the built file.
+  check(`${CLI_ASSET} ships with LF line endings`, !cliText.includes("\r\n"));
+
+  // The plugin bakes this same source into main.js and writes it back out when a
+  // user connects an agent. If the baked copy and the shipped copy ever diverge,
+  // the file the local agent runs is not the file the release publishes.
+  const generatedCli = readMaybe(join(repoRoot, "src", "generated", "cancipCliSource.ts"));
+  const embeddedMatch = generatedCli === null ? null : generatedCli.match(/CANCIP_CLI_GZIP_BASE64 = "([^"]+)"/);
+  if (embeddedMatch === null) {
+    check("the CLI is baked into main.js (embedded payload present)", false, "src/generated/cancipCliSource.ts");
+  } else {
+    let embeddedCli = null;
+    try {
+      embeddedCli = gunzipSync(Buffer.from(embeddedMatch[1], "base64")).toString("utf8");
+    } catch {
+      embeddedCli = null;
+    }
+    check("the embedded CLI payload decompresses", embeddedCli !== null);
+    check(
+      "the payload baked into main.js is byte-identical to the shipped cancip-cli.mjs",
+      embeddedCli !== null && embeddedCli === cliText,
+      embeddedCli === null ? "could not inflate" : `embedded ${embeddedCli.length} B vs shipped ${cliText.length} B`
+    );
+  }
+}
+
 // ------------------------------------------------- release workflow agreement
 const workflow = readFileSync(join(repoRoot, ".github", "workflows", "release.yml"), "utf8");
-for (const name of TRIPLET) {
+for (const name of RELEASE_ASSETS) {
   check(`release workflow publishes ${name}`, workflow.includes(`outputs/cancip/${name}`));
 }
 const uploaded = [...workflow.matchAll(/outputs\/cancip\/([A-Za-z0-9._-]+)/g)].map((m) => m[1]);
-const unexpected = [...new Set(uploaded)].filter((name) => !TRIPLET.includes(name));
-check("release workflow uploads nothing outside the triplet", unexpected.length === 0, unexpected.join(", "));
+const unexpected = [...new Set(uploaded)].filter((name) => !RELEASE_ASSETS.includes(name));
+check("release workflow uploads nothing beyond the release assets", unexpected.length === 0, unexpected.join(", "));
+// The workflow must refuse to publish a CLI whose version is not the tag. Without
+// this, a forgotten version bump ships a release whose CLI reports the old number.
+check(
+  "release workflow refuses to publish a CLI whose version is not the tag",
+  workflow.includes('"$cli" != "$tag"')
+);
 
 // ------------------------------------------------- optional deployed copy
 const deployDir = process.env.CANCIP_DEPLOY_DIR ?? "E:/note/.obsidian/plugins/cancip";

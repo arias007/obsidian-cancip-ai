@@ -38,7 +38,12 @@ await writeFile(
   `export const PRIME_TTS_WORKER_VERSION = ${JSON.stringify(version)};\nexport const PRIME_TTS_WORKER_GZIP_BASE64 = ${JSON.stringify(workerGzipBase64)};\n`
 );
 
-const cliSource = await readFile("cli/cancip-cli.mjs", "utf8");
+// Normalise line endings on the way in. This one source is used twice - gzipped
+// into main.js and written out as the shipped cancip-cli.mjs - and `core.autocrlf`
+// decides whether the worktree copy is CRLF or LF. Without this, a Windows build
+// and a Linux build embed different payloads and publish different files for the
+// same version.
+const cliSource = (await readFile("cli/cancip-cli.mjs", "utf8")).replace(/\r\n/g, "\n");
 const cliVersion = cliSource.match(/const CLI_VERSION = "([^"]+)";/)?.[1] ?? "";
 if (cliVersion !== version) throw new Error(`Cancip CLI version ${cliVersion || "missing"} does not match plugin ${version}`);
 const cliGzipBase64 = portableGzipBase64(cliSource);

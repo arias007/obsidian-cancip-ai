@@ -29,6 +29,10 @@ import { fileURLToPath } from "node:url";
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const cliPath = join(root, "cli", "cancip-cli.mjs");
 
+// Read the version instead of hardcoding it: a literal here goes stale on every
+// release and turns a healthy tree red for the wrong reason.
+const pluginVersion = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
+
 // ------------------------------------------------------------------ consumer
 // Stands in for the plugin: drains queue.jsonl and answers in result.jsonl,
 // using the same envelope the real bridge writes.
@@ -127,7 +131,7 @@ async function runTests() {
   async function writeHeartbeat(ageMs = 0) {
     await writeFile(
       join(bridgeDir, "heartbeat.json"),
-      JSON.stringify({ ts: Date.now() - ageMs, bridge: "Cancip Queue Bridge", protocol: 1, v: "3.5.0", dir: bridgeDir })
+      JSON.stringify({ ts: Date.now() - ageMs, bridge: "Cancip Queue Bridge", protocol: 1, v: pluginVersion, dir: bridgeDir })
     );
   }
 
@@ -139,7 +143,7 @@ async function runTests() {
   }
 
   await mkdir(bridgeDir, { recursive: true });
-  await writeFile(join(pluginDir, "manifest.json"), JSON.stringify({ id: "cancip", version: "3.5.0" }));
+  await writeFile(join(pluginDir, "manifest.json"), JSON.stringify({ id: "cancip", version: pluginVersion }));
   await writeHeartbeat(0);
 
   consumer = spawn(process.execPath, [fileURLToPath(import.meta.url), "--consume", bridgeDir], { stdio: "ignore" });
@@ -178,6 +182,30 @@ async function runTests() {
       const result = runCli(["--transport", "queue", "--wait-ms", "15000", "--json", "stat", "A.md"]);
       assert.equal(result.status, 0, result.stderr);
       assert.equal(JSON.parse(result.stdout.trim()).exists, true);
+    });
+
+    await check("--version answers with the bare version instead of the help banner", () => {
+      // Regression guard: "version" was missing from the boolean-flag set, so
+      // parseArgs treated `--version` as a value-taking option, left no
+      // positional behind, and main() fell through to its "no command means
+      // help" default. The release workflow compares this string to the tag.
+      for (const args of [["--version"], ["version"], ["--vault", vault, "--version"]]) {
+        const result = runCli(args);
+        assert.equal(result.status, 0, `${args.join(" ")} -> ${result.stderr}`);
+        assert.equal(
+          result.stdout.trim(),
+          pluginVersion,
+          `${args.join(" ")} should print exactly the package version, got ${JSON.stringify(result.stdout.trim().slice(0, 80))}`
+        );
+      }
+    });
+
+    await check("help still wins for an explicit help request", () => {
+      for (const args of [[], ["help"], ["--help"]]) {
+        const result = runCli(args);
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /Usage:/, `${args.join(" ") || "(bare)"} should print the banner`);
+      }
     });
 
     await check("the queue channel maps every file-level command onto its op", () => {
@@ -252,7 +280,7 @@ async function runTests() {
       const result = runCli(["--transport", "queue", "--wait-ms", "15000", "doctor"]);
       assert.equal(result.status, 0, result.stderr);
       const parsed = JSON.parse(result.stdout);
-      assert.equal(parsed.cliVersion, "3.5.0");
+      assert.equal(parsed.cliVersion, pluginVersion);
       assert.equal(parsed.transports.queue.available, true);
       assert.equal(parsed.transports.http.available, false);
       assert.equal(parsed.transports.queue.dir, bridgeDir);

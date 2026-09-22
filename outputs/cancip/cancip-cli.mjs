@@ -28,7 +28,7 @@ import { basename, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 
-const CLI_VERSION = "3.5.0";
+const CLI_VERSION = "3.5.1";
 const BRIDGE_PORT = 43172;
 const PORT_FALLBACK_COUNT = 8;
 const REQUEST_TIMEOUT_MS = 10 * 60_000;
@@ -68,7 +68,7 @@ const HTTP_ROUTES = {
  * Flags that never take a value. Without this list `--json stat A.md` would
  * consume "stat" as the value of --json and leave "A.md" as the command name.
  */
-const BOOLEAN_OPTIONS = new Set(["json", "help", "force", "hard"]);
+const BOOLEAN_OPTIONS = new Set(["json", "help", "force", "hard", "version"]);
 
 function parseArgs(argv) {
   const options = {};
@@ -744,15 +744,21 @@ The CLI discovers the open Obsidian Vault and never prints the bridge token.`;
 
 async function main() {
   const { options, positionals } = parseArgs(process.argv.slice(2));
-  const command = positionals.shift() || "help";
-  if (command === "help" || command === "--help" || options.help === true) {
-    output(usage(), options);
-    return;
-  }
-  if (command === "version" || command === "--version") {
+  const rawCommand = positionals.shift();
+  // `--version` must be answered before the implicit "no command means help"
+  // default, otherwise a harmless `--vault X --version` degrades into the banner.
+  const wantsVersion = rawCommand === "version" || rawCommand === "--version" || options.version === true;
+  const wantsHelp =
+    rawCommand === "help" || rawCommand === "--help" || options.help === true || (!rawCommand && !wantsVersion);
+  if (wantsVersion && rawCommand !== "help" && rawCommand !== "--help" && options.help !== true) {
     output(CLI_VERSION, options);
     return;
   }
+  if (wantsHelp) {
+    output(usage(), options);
+    return;
+  }
+  const command = rawCommand;
   const context = resolveCancip(options);
   if (command === "mcp") {
     await runMcp(context);

@@ -19,6 +19,7 @@
  */
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -27,6 +28,10 @@ import { fileURLToPath } from "node:url";
 import esbuild from "esbuild";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
+
+// The bridge stamps the plugin version into the heartbeat and into every result,
+// so read it from package.json rather than hardcoding a literal that goes stale.
+const pluginVersion = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
 
 let pass = 0;
 let fail = 0;
@@ -173,7 +178,7 @@ function createHarness(settingsOverride = {}) {
 }
 
 function makeBridge(harness) {
-  return new CancipQueueBridge(harness.app, () => harness.settings, harness.handlers, "3.5.0");
+  return new CancipQueueBridge(harness.app, () => harness.settings, harness.handlers, pluginVersion);
 }
 
 async function enqueue(harness, commands) {
@@ -232,7 +237,7 @@ await checkAsync("ping reports the bridge identity, protocol, vault and queue di
   assert.equal(result.result.vault, "TestVault");
   assert.equal(result.result.files, 2);
   assert.equal(result.result.dir, DIR);
-  assert.equal(result.result.v, "3.5.0");
+  assert.equal(result.result.v, pluginVersion);
 });
 
 await checkAsync("list returns {p,s,m} rows and honours prefix", async () => {
@@ -454,7 +459,7 @@ await checkAsync("beat writes the heartbeat an outside caller polls for liveness
   const heartbeat = JSON.parse(harness.store.get(HEARTBEAT_PATH));
   assert.equal(heartbeat.bridge, "Cancip Queue Bridge");
   assert.equal(heartbeat.protocol, 1);
-  assert.equal(heartbeat.v, "3.5.0");
+  assert.equal(heartbeat.v, pluginVersion);
   assert.equal(heartbeat.dir, DIR);
   assert.equal(typeof heartbeat.ts, "number");
   assert.equal(heartbeat.ops.includes("eval"), true);

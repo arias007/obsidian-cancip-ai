@@ -19,3 +19,22 @@ outputs/cancip/styles.css text eol=lf
 # to LF so the worktree, the blob and the shipped asset are the same bytes.
 /manifest.json text eol=lf
 /outputs/cancip/manifest.json text eol=lf
+
+# `main.js` and the other build outputs are byte-compared by the release gate.
+# esbuild and the generators all emit LF, so with core.autocrlf=true the next
+# checkout would hand the gate a CRLF copy and it would report a byte mismatch on
+# a file nobody edited - the same false alarm already fixed for styles.css and
+# manifest.json. `src/generated/*.ts` is listed too: those bytes are gzipped
+# straight into main.js, so a line-ending flip there silently changes the bundle.
+/outputs/cancip/main.js text eol=lf
+/outputs/cancip/prime-tts-worker.js text eol=lf
+/outputs/cancip/versions.json text eol=lf
+/versions.json text eol=lf
+/src/generated/*.ts text eol=lf
+
+# The CLI is read by the generator and shipped as a release asset, so its line
+# endings must not depend on the developer's core.autocrlf setting. Without this
+# pin a Windows build embedded CRLF into main.js while CI embedded LF, and the two
+# builds published different bytes for the same version.
+/cli/cancip-cli.mjs text eol=lf
+/outputs/cancip/cancip-cli.mjs text eol=lf

@@ -17,6 +17,8 @@ import { repoRoot } from "./lib/source-bundle.mjs";
 const sourceDir = join(repoRoot, "outputs", "cancip");
 const gatePath = join(repoRoot, "scripts", "verify-release-triplet.mjs");
 const TRIPLET = ["main.js", "manifest.json", "styles.css"];
+const CLI_ASSET = "cancip-cli.mjs";
+const RELEASE_ASSETS = [...TRIPLET, CLI_ASSET];
 
 function runGate(dir) {
   try {
@@ -40,6 +42,7 @@ function mutation(name, apply) {
 const mainPath = (dir) => join(dir, "main.js");
 const stylesPath = (dir) => join(dir, "styles.css");
 const manifestPath = (dir) => join(dir, "manifest.json");
+const cliPath = (dir) => join(dir, CLI_ASSET);
 
 mutation("styles.css deleted", (dir) => unlinkSync(stylesPath(dir)));
 mutation("styles.css truncated to 1 KB", (dir) => writeFileSync(stylesPath(dir), readFileSync(stylesPath(dir), "utf8").slice(0, 1024)));
@@ -86,6 +89,23 @@ mutation("manifest.json id renamed", (dir) => {
   writeFileSync(manifestPath(dir), JSON.stringify(manifest, null, 2));
 });
 
+mutation("cancip-cli.mjs deleted", (dir) => unlinkSync(cliPath(dir)));
+mutation("cancip-cli.mjs version disagrees with manifest.json", (dir) => {
+  writeFileSync(
+    cliPath(dir),
+    readFileSync(cliPath(dir), "utf8").replace(/^const CLI_VERSION = "[^"]+";/m, `const CLI_VERSION = "9.9.9";`)
+  );
+});
+mutation("cancip-cli.mjs is no longer a single file", (dir) =>
+  writeFileSync(cliPath(dir), `import { helper } from "./helper.mjs";${readFileSync(cliPath(dir), "utf8")}`)
+);
+mutation("cancip-cli.mjs ships with CRLF endings", (dir) =>
+  writeFileSync(cliPath(dir), readFileSync(cliPath(dir), "utf8").replace(/\n/g, "\r\n"))
+);
+mutation("cancip-cli.mjs lost the file-queue transport", (dir) =>
+  writeFileSync(cliPath(dir), readFileSync(cliPath(dir), "utf8").replace(/queue\.jsonl/g, "queue.txt").replace(/--transport/g, "--legacy"))
+);
+
 let pass = 0;
 let fail = 0;
 
@@ -93,7 +113,7 @@ let fail = 0;
 // below would be meaningless.
 {
   const dir = mkdtempSync(join(tmpdir(), "triplet-control-"));
-  for (const name of TRIPLET) cpSync(join(sourceDir, name), join(dir, name));
+  for (const name of RELEASE_ASSETS) cpSync(join(sourceDir, name), join(dir, name));
   const result = runGate(dir);
   if (result.ok) {
     pass += 1;
@@ -107,7 +127,7 @@ let fail = 0;
 
 for (const { name, apply } of mutations) {
   const dir = mkdtempSync(join(tmpdir(), "triplet-mutation-"));
-  for (const file of TRIPLET) cpSync(join(sourceDir, file), join(dir, file));
+  for (const file of RELEASE_ASSETS) cpSync(join(sourceDir, file), join(dir, file));
   apply(dir);
   const result = runGate(dir);
   const rejected = !result.ok;
