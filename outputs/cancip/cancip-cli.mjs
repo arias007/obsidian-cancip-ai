@@ -64,6 +64,12 @@ const HTTP_ROUTES = {
   "agent.run": { method: "POST", path: "/v1/agent/run" }
 };
 
+/**
+ * Flags that never take a value. Without this list `--json stat A.md` would
+ * consume "stat" as the value of --json and leave "A.md" as the command name.
+ */
+const BOOLEAN_OPTIONS = new Set(["json", "help", "force", "hard"]);
+
 function parseArgs(argv) {
   const options = {};
   const positionals = [];
@@ -79,6 +85,10 @@ function parseArgs(argv) {
       continue;
     }
     const key = arg.slice(2);
+    if (BOOLEAN_OPTIONS.has(key)) {
+      options[key] = true;
+      continue;
+    }
     const next = argv[index + 1];
     if (next && !next.startsWith("--")) {
       options[key] = next;

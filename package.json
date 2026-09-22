@@ -8,6 +8,8 @@
     "verify:source-parity": "node scripts/verify-source-runtime-parity.mjs",
     "verify:feature-regressions": "node scripts/verify-feature-regressions.mjs",
     "verify:agent-bridge": "node scripts/verify-agent-bridge.mjs",
+    "verify:queue-bridge": "node scripts/verify-queue-bridge.mjs",
+    "verify:cli-queue": "node scripts/verify-cli-queue-transport.mjs",
     "verify:plugin-compatibility": "node scripts/verify-plugin-compatibility.mjs",
     "verify:obsidian-community": "node scripts/verify-obsidian-community-standards.mjs",
     "verify:release-triplet": "node scripts/verify-release-triplet.mjs",
@@ -17,7 +19,7 @@
     "test:document-package-edit": "node scripts/verify-document-package-edit.mjs",
     "test:tts": "node scripts/verify-tts-regression.mjs",
     "build:ocr-package": "node scripts/prepare-ocr-package.mjs",
-    "build": "npm run verify:source-bundle && npm run verify:source-parity && npm run verify:feature-regressions && npm run verify:agent-bridge && npm run verify:plugin-compatibility && npm run verify:obsidian-community && npm run test:office-context-edit && npm run test:document-package-edit && npm run verify:api-endpoint && tsc --noEmit --skipLibCheck && node scripts/prepare-release-output.mjs && node esbuild.config.mjs production && npm run verify:bundle-loads && npm run verify:release-triplet",
+    "build": "npm run verify:source-bundle && npm run verify:source-parity && npm run verify:feature-regressions && npm run verify:agent-bridge && npm run verify:queue-bridge && npm run verify:cli-queue && npm run verify:plugin-compatibility && npm run verify:obsidian-community && npm run test:office-context-edit && npm run test:document-package-edit && npm run verify:api-endpoint && tsc --noEmit --skipLibCheck && node scripts/prepare-release-output.mjs && node esbuild.config.mjs production && npm run verify:bundle-loads && npm run verify:release-triplet",
     "check": "tsc --noEmit --skipLibCheck",
     "verify": "npm run check && npm run build",
     "verify:api-endpoint": "node scripts/verify-api-endpoint-resolution.mjs"
