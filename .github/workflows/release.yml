@@ -31,16 +31,6 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Verify the shipped CLI reports this tag
-        run: |
-          tag="$GITHUB_REF_NAME"
-          cli="$(node outputs/cancip/cancip-cli.mjs --version | tr -d '\r\n')"
-          echo "cli=$cli tag=$tag"
-          if [ "$cli" != "$tag" ]; then
-            echo "cancip-cli.mjs reports $cli but the tag is $tag. Refusing to publish."
-            exit 1
-          fi
-
       - name: Create draft release with assets
         env:
           GH_TOKEN: ${{ github.token }}
@@ -52,7 +42,6 @@ jobs:
               outputs/cancip/main.js \
               outputs/cancip/manifest.json \
               outputs/cancip/styles.css \
-              outputs/cancip/cancip-cli.mjs \
               --clobber
           else
             gh release create "$tag" \
@@ -61,8 +50,7 @@ jobs:
               --draft \
               outputs/cancip/main.js \
               outputs/cancip/manifest.json \
-              outputs/cancip/styles.css \
-              outputs/cancip/cancip-cli.mjs
+              outputs/cancip/styles.css
           fi
 
       - name: Attest release assets
@@ -72,14 +60,13 @@ jobs:
             outputs/cancip/main.js
             outputs/cancip/manifest.json
             outputs/cancip/styles.css
-            outputs/cancip/cancip-cli.mjs
 
       - name: Verify assets and publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="$GITHUB_REF_NAME"
-          for asset in main.js manifest.json styles.css cancip-cli.mjs; do
+          for asset in main.js manifest.json styles.css; do
             state="$(gh release view "$tag" --json assets --jq ".assets[] | select(.name == \"$asset\") | .state" | tr '[:upper:]' '[:lower:]')"
             if [ "$state" != "uploaded" ]; then
               echo "Release asset $asset is missing or not uploaded (state=$state). The release remains a draft."
