@@ -11,3 +11,11 @@
 # never the file the gate saw. Pin the checkout to LF so the worktree, the blob and
 # the release asset are the same bytes.
 outputs/cancip/styles.css text eol=lf
+
+# The released manifest.json has exactly the same problem as styles.css above:
+# with core.autocrlf=true the worktree keeps CRLF while the committed blob stays
+# LF, so "does the worktree match the blob" compares two different files and the
+# release gate reports a byte mismatch on a file nobody edited. Pin both copies
+# to LF so the worktree, the blob and the shipped asset are the same bytes.
+/manifest.json text eol=lf
+/outputs/cancip/manifest.json text eol=lf
