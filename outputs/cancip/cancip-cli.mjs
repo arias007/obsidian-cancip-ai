@@ -1,18 +1,68 @@
 #!/usr/bin/env node
+/*
+ * Cancip CLI
+ *
+ * One command-line surface for driving Obsidian through Cancip, over whichever
+ * local channel the machine can actually offer:
+ *
+ *   http   the Agent Bridge — a listener on 127.0.0.1 with a private Bearer
+ *          credential. Fast and synchronous, but it needs Node's node:http, so
+ *          it only exists on desktop.
+ *   queue  the file-queue bridge — commands appended to `bridge/queue.jsonl`
+ *          inside the vault, answers read back from `bridge/result.jsonl`. No
+ *          socket and no Node runtime on Obsidian's side, so it also works on
+ *          mobile and inside sandboxes that can only reach the vault directory.
+ *
+ * Both channels reach the same handler set inside the plugin, so an agent sees
+ * one operation surface. `--transport auto` (the default) prefers the HTTP leg
+ * and falls back to the queue; operations that only the queue can perform
+ * (file writes, command execution, Obsidian-side evaluation) select it directly.
+ *
+ * The queue protocol is item-for-item compatible with arias007/minis-bridge.
+ */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 
-const CLI_VERSION = "3.4.52";
+const CLI_VERSION = "3.5.0";
 const BRIDGE_PORT = 43172;
 const PORT_FALLBACK_COUNT = 8;
 const REQUEST_TIMEOUT_MS = 10 * 60_000;
 const PLUGIN_IDS = ["cancip"];
 const MCP_PROTOCOL_VERSION = "2024-11-05";
+
+// ---------------------------------------------------------------- queue channel
+const QUEUE_SUBDIR = "bridge";
+const QUEUE_FILE = "queue.jsonl";
+const QUEUE_RESULT_FILE = "result.jsonl";
+const QUEUE_HEARTBEAT_FILE = "heartbeat.json";
+const QUEUE_POLL_MS = 120;
+const QUEUE_DEFAULT_WAIT_MS = 30_000;
+const QUEUE_HEARTBEAT_STALE_MS = 60_000;
+const TRANSPORTS = ["auto", "http", "queue"];
+
+/**
+ * Operations the HTTP bridge has no route for. Naming them here is what lets
+ * `auto` quietly pick the queue instead of failing with a 404.
+ */
+const QUEUE_ONLY_OPS = new Set([
+  "ping", "list", "stat", "write", "mkdir", "move", "delete", "cmds", "cmd", "sync", "notice", "eval"
+]);
+
+const HTTP_ROUTES = {
+  status: { method: "GET", path: "/v1/status" },
+  capabilities: { method: "GET", path: "/v1/capabilities" },
+  search: { method: "POST", path: "/v1/search" },
+  read: { method: "POST", path: "/v1/read" },
+  open: { method: "POST", path: "/v1/open" },
+  prompt: { method: "POST", path: "/v1/prompt" },
+  action: { method: "POST", path: "/v1/action" },
+  "agent.run": { method: "POST", path: "/v1/agent/run" }
+};
 
 function parseArgs(argv) {
   const options = {};
@@ -49,6 +99,20 @@ function readJson(path) {
   return JSON.parse(readFileSync(path, "utf8"));
 }
 
+function readJsonIfPresent(path) {
+  try {
+    if (!existsSync(path)) return null;
+    const parsed = JSON.parse(readFileSync(path, "utf8"));
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function sleep(ms) {
+  return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
+}
+
 function obsidianConfigCandidates() {
   if (process.platform === "win32") {
     return [join(process.env.APPDATA || join(homedir(), "AppData", "Roaming"), "obsidian", "obsidian.json")];
@@ -62,21 +126,28 @@ function obsidianConfigCandidates() {
   ];
 }
 
+/**
+ * Locate an installed Cancip inside a vault.
+ *
+ * `manifest.json` is the only hard requirement: the queue channel needs no
+ * credential at all, so a vault that has Cancip installed but has never written
+ * `data.json` must still be discoverable.
+ */
 function pluginDataForVault(vaultPath) {
   for (const pluginId of PLUGIN_IDS) {
     const pluginDir = join(vaultPath, ".obsidian", "plugins", pluginId);
-    const dataPath = join(pluginDir, "data.json");
     const manifestPath = join(pluginDir, "manifest.json");
-    if (!existsSync(dataPath) || !existsSync(manifestPath)) continue;
+    if (!existsSync(manifestPath)) continue;
+    let manifest;
     try {
-      const data = readJson(dataPath);
-      const manifest = readJson(manifestPath);
-      const token = typeof data.agentBridgeToken === "string" ? data.agentBridgeToken.trim() : "";
-      const port = asInt(data.agentBridgePort, BRIDGE_PORT, 1024, 65535);
-      return { vaultPath, pluginDir, dataPath, manifest, data, token, port };
+      manifest = readJson(manifestPath);
     } catch {
-      // Keep looking for another installed Cancip instance.
+      continue;
     }
+    const data = readJsonIfPresent(join(pluginDir, "data.json")) ?? {};
+    const token = typeof data.agentBridgeToken === "string" ? data.agentBridgeToken.trim() : "";
+    const port = asInt(data.agentBridgePort, BRIDGE_PORT, 1024, 65535);
+    return { vaultPath, pluginDir, manifest, data, token, port };
   }
   return null;
 }
@@ -114,6 +185,8 @@ function resolveCancip(options) {
   throw new Error("No Obsidian vault with an installed Cancip plugin was found. Open the vault or pass --vault <path>.");
 }
 
+// ---------------------------------------------------------------- http channel
+
 async function probePort(context, port) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 1200);
@@ -145,8 +218,15 @@ async function resolveBridge(context) {
   throw new Error("Cancip Agent Bridge is not reachable. Open Obsidian, enable Cancip Agent Bridge, then reload the plugin.");
 }
 
-async function bridgeRequest(context, method, path, body) {
-  const bridge = await resolveBridge(context);
+async function httpBridgeOrNull(context) {
+  try {
+    return await resolveBridge(context);
+  } catch {
+    return null;
+  }
+}
+
+async function bridgeRequestOn(context, bridge, method, path, body) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
@@ -173,6 +253,121 @@ async function bridgeRequest(context, method, path, body) {
   }
 }
 
+async function bridgeRequest(context, method, path, body) {
+  return await bridgeRequestOn(context, await resolveBridge(context), method, path, body);
+}
+
+// --------------------------------------------------------------- queue channel
+
+function queueDir(context) {
+  return join(context.pluginDir, QUEUE_SUBDIR);
+}
+
+function appendQueueLine(dir, line) {
+  mkdirSync(dir, { recursive: true });
+  appendFileSync(join(dir, QUEUE_FILE), line, "utf8");
+}
+
+/** Scan result.jsonl for the answer whose `id` matches ours. */
+function findQueueResult(dir, id) {
+  let raw = "";
+  try {
+    raw = readFileSync(join(dir, QUEUE_RESULT_FILE), "utf8");
+  } catch {
+    return null;
+  }
+  for (const line of raw.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || !trimmed.includes(id)) continue;
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed && parsed.id === id) return parsed;
+    } catch {
+      // A partially written line is expected while the plugin is appending;
+      // it parses on a later poll.
+    }
+  }
+  return null;
+}
+
+/**
+ * Send one command through the file queue and wait for its result.
+ *
+ * The heartbeat is checked first so a caller gets "Cancip is not running"
+ * instead of a silent timeout. Note the delivery contract inherited from
+ * minis-bridge: the plugin clears the queue before executing it, so a command
+ * that has left the queue but has no result yet is "in flight", not lost.
+ */
+async function queueRequest(context, op, payload, options) {
+  const dir = queueDir(context);
+  const heartbeat = readJsonIfPresent(join(dir, QUEUE_HEARTBEAT_FILE));
+  if (!heartbeat) {
+    throw new Error(
+      `Cancip's file-queue channel is not ready: no ${QUEUE_HEARTBEAT_FILE} in ${dir}. ` +
+        "Open the vault in Obsidian with Cancip enabled, and turn on the file-queue channel in Cancip settings."
+    );
+  }
+  const beatAge = Date.now() - Number(heartbeat.ts || 0);
+  if (!Number.isFinite(beatAge) || beatAge > QUEUE_HEARTBEAT_STALE_MS) {
+    throw new Error(
+      `Cancip's file-queue heartbeat is stale (${Number.isFinite(beatAge) ? Math.round(beatAge / 1000) : "?"}s old). ` +
+        "Obsidian is probably closed, or its timers are frozen while the app sits in the background. " +
+        "Bring Obsidian to the foreground and retry."
+    );
+  }
+  const id = `cancip-cli-${process.pid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  appendQueueLine(dir, `${JSON.stringify({ ...payload, id, op })}\n`);
+  const waitMs = asInt(options["wait-ms"], QUEUE_DEFAULT_WAIT_MS, 1000, 600_000);
+  const deadline = Date.now() + waitMs;
+  while (Date.now() < deadline) {
+    const result = findQueueResult(dir, id);
+    if (result) {
+      if (result.ok === true) return result.result ?? null;
+      const error = new Error(result.error || "Cancip queue command failed.");
+      error.code = "queue_command_failed";
+      throw error;
+    }
+    await sleep(QUEUE_POLL_MS);
+  }
+  throw new Error(
+    `Cancip did not answer within ${waitMs}ms. The command may still be running; ` +
+      `check Obsidian, or read ${join(dir, QUEUE_RESULT_FILE)} directly.`
+  );
+}
+
+function requestedTransport(options) {
+  const raw = String(options.transport || process.env.CANCIP_TRANSPORT || "auto").trim().toLowerCase();
+  return TRANSPORTS.includes(raw) ? raw : "auto";
+}
+
+/**
+ * Single entry point for every operation, on either channel.
+ *
+ * `auto` prefers HTTP because it is synchronous and cheaper; it falls back to
+ * the queue only when the bridge is genuinely unreachable, never when a request
+ * reached the bridge and was rejected.
+ */
+async function callCancip(context, op, payload, options) {
+  const transport = requestedTransport(options);
+  const queueOnly = QUEUE_ONLY_OPS.has(op);
+  if (transport === "http" && queueOnly) {
+    throw new Error(`"${op}" needs the file-queue channel, the only leg that can perform it. Re-run without --transport http.`);
+  }
+  if (transport === "queue" || queueOnly) return await queueRequest(context, op, payload, options);
+  const route = HTTP_ROUTES[op];
+  if (transport === "http") {
+    if (!route) throw new Error(`"${op}" has no HTTP route; omit --transport http to use the file-queue channel.`);
+    return await bridgeRequest(context, route.method, route.path, route.method === "GET" ? undefined : payload);
+  }
+  const bridge = await httpBridgeOrNull(context);
+  if (bridge && route) {
+    return await bridgeRequestOn(context, bridge, route.method, route.path, route.method === "GET" ? undefined : payload);
+  }
+  return await queueRequest(context, op, payload, options);
+}
+
+// ------------------------------------------------------------------- output
+
 function human(value) {
   if (typeof value === "string") return value;
   return JSON.stringify(value, null, 2);
@@ -193,6 +388,8 @@ async function stdinText() {
   for await (const chunk of process.stdin) text += chunk;
   return text.trim();
 }
+
+// -------------------------------------------------------------- agent linking
 
 function commandCandidate(provider) {
   const locator = process.platform === "win32" ? "where.exe" : "which";
@@ -269,10 +466,17 @@ function requestedLinkProviders(words) {
   return [];
 }
 
+// ---------------------------------------------------------------------- MCP
+
 const MCP_TOOLS = [
   {
     name: "cancip_status",
     description: "Check the local Cancip/Obsidian bridge and its permission mode.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false }
+  },
+  {
+    name: "cancip_ping",
+    description: "Probe the file-queue channel: returns plugin version, vault name, file count and queue statistics.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false }
   },
   {
@@ -292,6 +496,20 @@ const MCP_TOOLS = [
     }
   },
   {
+    name: "cancip_ls",
+    description: "List files in the Vault, optionally filtered by path prefix.",
+    inputSchema: {
+      type: "object",
+      properties: { prefix: { type: "string" } },
+      additionalProperties: false
+    }
+  },
+  {
+    name: "cancip_stat",
+    description: "Report whether a Vault path exists, and its kind, size and modification time.",
+    inputSchema: { type: "object", properties: { path: { type: "string" } }, required: ["path"], additionalProperties: false }
+  },
+  {
     name: "cancip_read",
     description: "Read a Vault-relative file, folder, PDF, Office document, archive, or other Cancip-supported attachment.",
     inputSchema: {
@@ -308,11 +526,74 @@ const MCP_TOOLS = [
     }
   },
   {
+    name: "cancip_write",
+    description: "Write a Vault file, creating it when missing.",
+    inputSchema: {
+      type: "object",
+      properties: { path: { type: "string" }, data: { type: "string" } },
+      required: ["path", "data"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "cancip_mkdir",
+    description: "Create a Vault folder.",
+    inputSchema: { type: "object", properties: { path: { type: "string" } }, required: ["path"], additionalProperties: false }
+  },
+  {
+    name: "cancip_move",
+    description: "Move or rename a Vault path.",
+    inputSchema: {
+      type: "object",
+      properties: { from: { type: "string" }, to: { type: "string" } },
+      required: ["from", "to"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "cancip_delete",
+    description: "Delete Vault paths. Defaults to the Obsidian trash; `hard` removes them permanently.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string" },
+        paths: { type: "array", items: { type: "string" }, maxItems: 200 },
+        hard: { type: "boolean" }
+      },
+      additionalProperties: false
+    }
+  },
+  {
+    name: "cancip_cmds",
+    description: "List Obsidian command ids, optionally filtered by substring.",
+    inputSchema: { type: "object", properties: { filter: { type: "string" } }, additionalProperties: false }
+  },
+  {
+    name: "cancip_cmd",
+    description: "Execute an Obsidian command by id.",
+    inputSchema: { type: "object", properties: { command: { type: "string" } }, required: ["command"], additionalProperties: false }
+  },
+  {
     name: "cancip_open",
     description: "Open a Vault file or folder in Obsidian using Cancip's verified target route.",
     inputSchema: {
       type: "object",
       properties: { path: { type: "string" }, query: { type: "string" }, targetKind: { type: "string" } },
+      additionalProperties: false
+    }
+  },
+  {
+    name: "cancip_notice",
+    description: "Show an Obsidian notice in the running app.",
+    inputSchema: { type: "object", properties: { text: { type: "string" } }, required: ["text"], additionalProperties: false }
+  },
+  {
+    name: "cancip_eval",
+    description: "Run Obsidian-side JavaScript through Cancip's obsidian.eval route. Honours the Execute Obsidian commands setting.",
+    inputSchema: {
+      type: "object",
+      properties: { code: { type: "string" }, timeoutMs: { type: "integer", minimum: 200, maximum: 15000 } },
+      required: ["code"],
       additionalProperties: false
     }
   },
@@ -341,15 +622,23 @@ const MCP_TOOLS = [
 ];
 
 async function mcpToolCall(context, name, args) {
-  if (name === "cancip_status") {
-    const bridge = await resolveBridge(context);
-    return bridge.status;
-  }
-  if (name === "cancip_search") return await bridgeRequest(context, "POST", "/v1/search", args);
-  if (name === "cancip_read") return await bridgeRequest(context, "POST", "/v1/read", args);
-  if (name === "cancip_open") return await bridgeRequest(context, "POST", "/v1/open", args);
-  if (name === "cancip_send") return await bridgeRequest(context, "POST", "/v1/prompt", args);
-  if (name === "cancip_action") return await bridgeRequest(context, "POST", "/v1/action", args);
+  if (name === "cancip_status") return await callCancip(context, "status", {}, {});
+  if (name === "cancip_ping") return await callCancip(context, "ping", {}, {});
+  if (name === "cancip_search") return await callCancip(context, "search", args, {});
+  if (name === "cancip_ls") return await callCancip(context, "list", { prefix: args.prefix ?? "" }, {});
+  if (name === "cancip_stat") return await callCancip(context, "stat", { path: args.path }, {});
+  if (name === "cancip_read") return await callCancip(context, "read", args, {});
+  if (name === "cancip_write") return await callCancip(context, "write", { path: args.path, data: args.data ?? "" }, {});
+  if (name === "cancip_mkdir") return await callCancip(context, "mkdir", { path: args.path }, {});
+  if (name === "cancip_move") return await callCancip(context, "move", { from: args.from, to: args.to }, {});
+  if (name === "cancip_delete") return await callCancip(context, "delete", args, {});
+  if (name === "cancip_cmds") return await callCancip(context, "cmds", { filter: args.filter ?? "" }, {});
+  if (name === "cancip_cmd") return await callCancip(context, "cmd", { command: args.command }, {});
+  if (name === "cancip_open") return await callCancip(context, "open", args, {});
+  if (name === "cancip_notice") return await callCancip(context, "notice", { text: args.text }, {});
+  if (name === "cancip_eval") return await callCancip(context, "eval", args, {});
+  if (name === "cancip_send") return await callCancip(context, "prompt", { prompt: args.prompt }, {});
+  if (name === "cancip_action") return await callCancip(context, "action", args, {});
   throw new Error(`Unknown Cancip MCP tool: ${name}`);
 }
 
@@ -372,7 +661,7 @@ async function runMcp(context) {
           protocolVersion: MCP_PROTOCOL_VERSION,
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: "cancip", version: CLI_VERSION },
-          instructions: "Use Cancip for Obsidian Vault search, reads, UI opens, and permission-aware actions."
+          instructions: "Use Cancip for Obsidian Vault search, reads, file operations, UI opens, and permission-aware actions. Cancip selects the HTTP or file-queue channel automatically."
         };
       } else if (request.method === "ping") {
         result = {};
@@ -397,25 +686,51 @@ async function runMcp(context) {
   }
 }
 
+// -------------------------------------------------------------------- usage
+
 function usage() {
   return `Cancip CLI ${CLI_VERSION}
 
 Usage:
   cancip status [--vault <path>] [--json]
   cancip capabilities
+  cancip ping
+  cancip doctor
   cancip search <query> [--limit 12] [--scope both]
   cancip read <vault-path> [--query <text>] [--max-chars 12000]
+  cancip ls [prefix] [--limit 200]
+  cancip stat <vault-path>
+  cancip write <vault-path> [--data <text>|stdin]
+  cancip mkdir <vault-path>
+  cancip mv <from> <to>
+  cancip rm <path...> [--hard]
+  cancip cmds [filter]
+  cancip cmd <command-id>
+  cancip sync [command-id]
   cancip open <vault-path>
+  cancip notice <text>
+  cancip eval <code>
   cancip send <prompt>
   cancip action '<cancip-action JSON>'
   cancip agent run <prompt> [--agent auto|codex|claude] [--model <model>]
   cancip connect [codex|claude|all] [--force]
   cancip link [obsidian cancip|codex|claude|all] [--force]
-  cancip doctor
   cancip mcp
 
-The CLI discovers the open Obsidian Vault and authenticates locally without printing the bridge token.`;
+Channel options:
+  --transport auto|http|queue   Which local channel to use (default: auto)
+  --wait-ms <ms>                Queue-channel answer timeout (default: 30000)
+  --json                        Machine-readable output
+
+  http   listens on 127.0.0.1 with a private credential; desktop only.
+  queue  appends to bridge/queue.jsonl inside the vault; works on mobile and in
+         sandboxes that can only reach the vault directory. Operation names and
+         file formats match arias007/minis-bridge.
+
+The CLI discovers the open Obsidian Vault and never prints the bridge token.`;
 }
+
+// --------------------------------------------------------------------- main
 
 async function main() {
   const { options, positionals } = parseArgs(process.argv.slice(2));
@@ -434,48 +749,127 @@ async function main() {
     return;
   }
   if (command === "status") {
-    const bridge = await resolveBridge(context);
-    output({ connected: true, vault: basename(context.vaultPath), pluginVersion: context.manifest.version, port: bridge.port, ...bridge.status }, options);
+    const bridge = requestedTransport(options) === "http" ? await resolveBridge(context) : await httpBridgeOrNull(context);
+    if (bridge) {
+      output({ connected: true, transport: "http", vault: basename(context.vaultPath), pluginVersion: context.manifest.version, port: bridge.port, ...bridge.status }, options);
+      return;
+    }
+    output({ connected: true, transport: "queue", vault: basename(context.vaultPath), ...(await callCancip(context, "status", {}, options)) }, options);
+    return;
+  }
+  if (command === "ping") {
+    output(await callCancip(context, "ping", {}, options), options);
     return;
   }
   if (command === "capabilities") {
-    output(await bridgeRequest(context, "GET", "/v1/capabilities"), options);
+    output(await callCancip(context, "capabilities", {}, options), options);
     return;
   }
   if (command === "search") {
     const query = positionals.join(" ").trim() || String(options.query || "").trim();
     if (!query) throw new Error("search requires a query.");
-    output(await bridgeRequest(context, "POST", "/v1/search", {
+    output(await callCancip(context, "search", {
       query,
       limit: asInt(options.limit, 12, 1, 50),
       scope: options.scope || "both",
       includeConfigs: options["include-configs"] === true,
       includeArchived: options["include-archived"] === true
-    }), options);
+    }, options), options);
     return;
   }
   if (command === "read") {
     const path = positionals.join(" ").trim() || String(options.path || "").trim();
     if (!path) throw new Error("read requires a Vault-relative path.");
-    output(await bridgeRequest(context, "POST", "/v1/read", {
+    output(await callCancip(context, "read", {
       path,
       query: options.query || "",
       startLine: options["start-line"],
       endLine: options["end-line"],
       maxChars: asInt(options["max-chars"], 12000, 500, 30000)
-    }), options);
+    }, options), options);
+    return;
+  }
+  if (command === "ls" || command === "list") {
+    const prefix = positionals.join(" ").trim() || String(options.prefix || "").trim();
+    const listed = await callCancip(context, "list", { prefix }, options);
+    const limit = asInt(options.limit, 200, 1, 20_000);
+    if (listed && Array.isArray(listed.files) && listed.files.length > limit) {
+      output({ count: listed.count, shown: limit, files: listed.files.slice(0, limit) }, options);
+      return;
+    }
+    output(listed, options);
+    return;
+  }
+  if (command === "stat") {
+    const path = positionals.join(" ").trim() || String(options.path || "").trim();
+    if (!path) throw new Error("stat requires a Vault-relative path.");
+    output(await callCancip(context, "stat", { path }, options), options);
+    return;
+  }
+  if (command === "write") {
+    const path = positionals.join(" ").trim() || String(options.path || "").trim();
+    if (!path) throw new Error("write requires a Vault-relative path.");
+    const data = typeof options.data === "string" ? options.data : await stdinText();
+    output(await callCancip(context, "write", { path, data }, options), options);
+    return;
+  }
+  if (command === "mkdir") {
+    const path = positionals.join(" ").trim() || String(options.path || "").trim();
+    if (!path) throw new Error("mkdir requires a Vault-relative path.");
+    output(await callCancip(context, "mkdir", { path }, options), options);
+    return;
+  }
+  if (command === "mv" || command === "move") {
+    const from = positionals[0] || String(options.from || "").trim();
+    const to = positionals[1] || String(options.to || "").trim();
+    if (!from || !to) throw new Error("mv requires <from> and <to>.");
+    output(await callCancip(context, "move", { from, to }, options), options);
+    return;
+  }
+  if (command === "rm" || command === "delete") {
+    const paths = positionals.filter(Boolean);
+    if (!paths.length) throw new Error("rm requires at least one Vault path.");
+    output(await callCancip(context, "delete", { paths, hard: options.hard === true }, options), options);
+    return;
+  }
+  if (command === "cmds") {
+    const filter = positionals.join(" ").trim() || String(options.filter || "").trim();
+    output(await callCancip(context, "cmds", { filter }, options), options);
+    return;
+  }
+  if (command === "cmd") {
+    const id = positionals.join(" ").trim() || String(options.command || "").trim();
+    if (!id) throw new Error("cmd requires a command id.");
+    output(await callCancip(context, "cmd", { command: id }, options), options);
+    return;
+  }
+  if (command === "sync") {
+    const id = positionals.join(" ").trim() || String(options.command || "").trim();
+    output(await callCancip(context, "sync", { command: id }, options), options);
     return;
   }
   if (command === "open") {
     const path = positionals.join(" ").trim() || String(options.path || "").trim();
     if (!path) throw new Error("open requires a Vault-relative path.");
-    output(await bridgeRequest(context, "POST", "/v1/open", { path }), options);
+    output(await callCancip(context, "open", { path }, options), options);
+    return;
+  }
+  if (command === "notice") {
+    const text = positionals.join(" ").trim() || String(options.text || "").trim();
+    if (!text) throw new Error("notice requires text.");
+    output(await callCancip(context, "notice", { text }, options), options);
+    return;
+  }
+  if (command === "eval") {
+    const code = positionals.join(" ").trim() || await stdinText();
+    if (!code) throw new Error("eval requires code.");
+    output(await callCancip(context, "eval", { code, timeoutMs: asInt(options["timeout-ms"], 2500, 200, 15000) }, options), options);
     return;
   }
   if (command === "send") {
     const prompt = positionals.join(" ").trim() || await stdinText();
     if (!prompt) throw new Error("send requires a prompt.");
-    output(await bridgeRequest(context, "POST", "/v1/prompt", { prompt }), options);
+    output(await callCancip(context, "prompt", { prompt }, options), options);
     return;
   }
   if (command === "action") {
@@ -483,18 +877,18 @@ async function main() {
     if (!raw) throw new Error("action requires a JSON action object or actions array.");
     const parsed = JSON.parse(raw);
     const body = Array.isArray(parsed) ? { actions: parsed } : parsed?.actions ? parsed : { action: parsed };
-    output(await bridgeRequest(context, "POST", "/v1/action", body), options);
+    output(await callCancip(context, "action", body, options), options);
     return;
   }
   if (command === "agent" && positionals.shift() === "run") {
     const prompt = positionals.join(" ").trim() || await stdinText();
     if (!prompt) throw new Error("agent run requires a prompt.");
-    output(await bridgeRequest(context, "POST", "/v1/agent/run", {
+    output(await callCancip(context, "agent.run", {
       prompt,
       provider: options.agent || "auto",
       model: options.model || "",
       system: options.system || ""
-    }), options);
+    }, options), options);
     return;
   }
   if (command === "link" || command === "connect") {
@@ -513,12 +907,10 @@ async function main() {
     return;
   }
   if (command === "doctor") {
-    let bridge;
-    try {
-      bridge = await resolveBridge(context);
-    } catch (error) {
-      bridge = { error: error instanceof Error ? error.message : String(error) };
-    }
+    const httpBridge = await httpBridgeOrNull(context);
+    const dir = queueDir(context);
+    const heartbeat = readJsonIfPresent(join(dir, QUEUE_HEARTBEAT_FILE));
+    const beatAge = heartbeat ? Date.now() - Number(heartbeat.ts || 0) : null;
     output({
       cliVersion: CLI_VERSION,
       node: process.version,
@@ -526,7 +918,17 @@ async function main() {
       vault: basename(context.vaultPath),
       pluginVersion: context.manifest.version,
       tokenInitialized: Boolean(context.token),
-      bridge,
+      transports: {
+        http: httpBridge
+          ? { available: true, port: httpBridge.port, status: httpBridge.status }
+          : { available: false, detail: "Agent Bridge not reachable (desktop only)." },
+        queue: {
+          available: Boolean(heartbeat),
+          dir,
+          stale: beatAge === null ? null : beatAge > QUEUE_HEARTBEAT_STALE_MS,
+          heartbeat
+        }
+      },
       agents: ["codex", "claude"].map((provider) => mcpConnectionState(provider)),
       connect: {
         automatic: "cancip link obsidian cancip",

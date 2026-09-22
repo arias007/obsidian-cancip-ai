@@ -529,7 +529,7 @@ GitHub settings live in the advanced Command bus group and mirror to the Cancip 
 
 Use the official API or a trusted self-owned relay; do not send GitHub tokens through public accelerators.
 
-## Cancip CLI and local Agent bridge
+## Cancip CLI, local Agent bridge, and file-queue channel
 
 Desktop Cancip can connect bidirectionally with Codex, Claude Code, and other MCP-compatible local agents. Cancip remains the Obsidian interface and execution layer: it supplies Vault search/read/open tools, displays the conversation and progress, and applies its existing confirmation/full-access and Review rules to every write-like action. The local agent can be selected as Cancip's text-model brain without gaining a direct write route around Cancip.
 
@@ -545,9 +545,44 @@ node "/path/to/.obsidian/plugins/cancip/cli/cancip-cli.mjs" send "Summarize the 
 
 `link obsidian cancip` detects installed Codex/Claude Code CLIs and registers Cancip with each available agent; `connect codex` and `connect claude` provide explicit routes. Cancip also writes `cli/CANCIP_AGENT_CONNECT.md` beside the installed CLI so an agent can discover the exact local command after the user says “link Obsidian Cancip”. `doctor` reports CLI availability and real MCP registration state. Other MCP clients can start the same CLI with the `mcp` command.
 
+The CLI drives Cancip over whichever local channel the machine can actually offer. Both channels reach the same handler set inside the plugin, so an agent sees one operation surface:
+
+- **http** — the Agent Bridge. A listener on `127.0.0.1` guarded by a private Bearer credential. Synchronous and cheap, but it needs Node's `node:http`, which is why it exists on desktop Obsidian only.
+- **queue** — the file-queue channel. Commands are appended one JSON object per line to `.obsidian/plugins/cancip/bridge/queue.jsonl` inside the vault, and answers are read back from `bridge/result.jsonl`. There is no socket, no port and no Node runtime on Obsidian's side, so this leg also works on mobile and from sandboxes that can only reach the vault directory.
+
+`--transport auto` (the default) prefers `http` and falls back to `queue` when the bridge is unreachable. Operations the HTTP bridge has no route for — file writes, folder and move operations, deletions, Obsidian command execution and Obsidian-side evaluation — select the queue directly:
+
+```bash
+# either channel (auto)
+node cancip-cli.mjs status
+node cancip-cli.mjs search "weekly report"
+node cancip-cli.mjs read "Diary/2026-09-22.md"
+
+# file-queue channel — works on mobile and in vault-only sandboxes
+node cancip-cli.mjs ping
+node cancip-cli.mjs ls "Diary/"
+node cancip-cli.mjs stat "Diary/2026-09-22.md"
+node cancip-cli.mjs write "Inbox/note.md" --data "hello"
+node cancip-cli.mjs mkdir "Archive/2026"
+node cancip-cli.mjs mv "Inbox/note.md" "Archive/2026/note.md"
+node cancip-cli.mjs rm "Inbox/old.md"
+node cancip-cli.mjs cmds "workspace:"
+node cancip-cli.mjs cmd "app:reload"
+node cancip-cli.mjs notice "queued from the CLI"
+node cancip-cli.mjs eval "1 + 1"
+
+# pin a channel explicitly
+node cancip-cli.mjs --transport queue status
+node cancip-cli.mjs --transport http search "todo"
+```
+
+The same switch reaches every agent that speaks MCP: the queue-only operations are exposed as `cancip_ping`, `cancip_ls`, `cancip_stat`, `cancip_write`, `cancip_mkdir`, `cancip_move`, `cancip_delete`, `cancip_cmds`, `cancip_cmd`, `cancip_notice` and `cancip_eval`, alongside the existing `cancip_status`, `cancip_search`, `cancip_read`, `cancip_open`, `cancip_send` and `cancip_action` tools. Run `doctor` to see both legs and which one is live.
+
 Available Codex and Claude Code CLIs appear directly in Cancip's model selector and can be used by normal chat, automation, planning, subagents, Review, and final-answer flows. For local models, the model-source presets include Ollama (`127.0.0.1:11434`), LM Studio (`127.0.0.1:1234`), and vLLM (`127.0.0.1:8000`); arbitrary OpenAI-compatible local/private endpoints can be added as normal model sources. Local/private sources may omit the API key. “Refresh local models” discovers both Ollama `/api/tags` and OpenAI-compatible `/v1/models` catalogs.
 
 The HTTP bridge listens only on `127.0.0.1`, requires a random Bearer credential on every route, limits request/output sizes and request rate, and is disabled on mobile. When Cancip invokes a local Agent as its brain, Codex keeps the user's existing authentication/model provider but runs read-only with MCP and project rules disabled for that child invocation; Claude Code runs with tools disabled. This prevents recursive bridge calls or direct writes without reading or copying Agent credentials. Confirmation mode queues writes for approval; Full access executes them through Cancip and records Review data as usual.
+
+The file-queue channel is **unattended by design**. There is no credential on this leg because there is no listener to authenticate against: the vault directory itself is the trust boundary, so any program that can write inside it can queue a command — including one that runs Obsidian-side JavaScript through `eval`. Turn the channel off in `Cancip settings -> Advanced -> File-queue channel` when the vault is shared with software you do not trust. Cancip's confirmation/Full-access and Review rules still govern Cancip's own action protocol (`send` and `action`); the raw file operations mirror `arias007/minis-bridge` exactly and act immediately.
 
 `autoContinueAfterTools` controls whether completed tool runs are sent back to the model for another reasoning step. `maxToolIterations` caps the loop so a bad prompt cannot run forever.
 

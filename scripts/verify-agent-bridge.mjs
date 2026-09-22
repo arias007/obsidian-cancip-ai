@@ -69,6 +69,41 @@ assert.match(cliSource, /Authorization: `Bearer \$\{context\.token\}`/);
 assert.match(cliSource, /command === "link" \|\| command === "connect"/);
 assert.match(cliSource, /normalized\.includes\("obsidian"\) \|\| normalized\.includes\("cancip"\)/);
 assert.match(cliSource, /mcpConnectionState/);
+
+// ------------------------------------------------------- file-queue channel
+// The queue leg is what makes mobile and vault-only sandboxes drivable, so the
+// gate has to prove the three properties it depends on, not just that the file
+// exists: no Node HTTP runtime, minis-bridge compatible wire names, and one
+// shared handler set behind both transports.
+const queueBridgeSource = bundle.fileTextFor("class CancipQueueBridge").text;
+// Match real imports, not the explanatory comment that names node:http as the
+// thing this transport exists to avoid.
+assert.doesNotMatch(queueBridgeSource, /^\s*import\s[^\n]*from\s+"node:/m, "the queue bridge must not import a Node builtin (that is why mobile can run it)");
+assert.doesNotMatch(queueBridgeSource, /require\(\s*"node:/, "the queue bridge must not require a Node builtin");
+assert.doesNotMatch(queueBridgeSource, /Platform\.isMobileApp/, "the queue bridge must not be gated to desktop");
+assert.match(queueBridgeSource, /QUEUE_BRIDGE_QUEUE_FILE = "queue\.jsonl"/);
+assert.match(queueBridgeSource, /QUEUE_BRIDGE_RESULT_FILE = "result\.jsonl"/);
+assert.match(queueBridgeSource, /QUEUE_BRIDGE_HEARTBEAT_FILE = "heartbeat\.json"/);
+for (const op of ["ping", "list", "stat", "read", "write", "mkdir", "move", "delete", "cmds", "cmd", "sync", "open", "eval", "notice", "search", "prompt", "action", "agent.run"]) {
+  assert.match(queueBridgeSource, new RegExp(`case "${op.replace(/\./g, "\\.")}"`), `queue op is not handled: ${op}`);
+}
+// The queue startup must sit *after* the desktop-only block, or mobile would
+// never start the one transport it can actually run.
+requireOrder(bundle, "this.register(cancelLocalModelRefresh);", "this.startQueueBridge();", {
+  label: "queue bridge starts outside the desktop-only block"
+});
+const sharedHandlerUse = (source.match(/this\.agentBridgeHandlers\(\)/g) || []).length;
+assert.ok(sharedHandlerUse >= 2, `both transports must share one handler set, found ${sharedHandlerUse} use(s)`);
+assert.match(source, /queueBridgeEnabled: typeof merged\.queueBridgeEnabled === "boolean"/);
+assert.match(source, /"queueBridgeEnabled"/);
+
+assert.match(cliSource, /const QUEUE_SUBDIR = "bridge"/);
+assert.match(cliSource, /const QUEUE_ONLY_OPS = new Set\(/);
+assert.match(cliSource, /async function queueRequest\(/);
+assert.match(cliSource, /--transport auto\|http\|queue/);
+for (const op of ["ping", "list", "stat", "write", "mkdir", "mv", "rm", "cmds", "cmd", "sync", "notice", "eval"]) {
+  assert.match(cliSource, new RegExp(`command === "${op}"`), `CLI command is missing: ${op}`);
+}
 assert.match(source, /Ollama Local/);
 assert.match(source, /LM Studio Local/);
 assert.match(source, /vLLM Local/);

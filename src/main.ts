@@ -48,11 +48,18 @@ import {
   localAgentDiagnostics,
   runLocalAgent,
   type AgentBridgeActionResponse,
+  type AgentBridgeHandlers,
   type AgentBridgePromptResponse,
   type LocalAgentProvider,
   type LocalAgentRunResult
 } from "./agentBridge";
 import { CANCIP_CLI_GZIP_BASE64, CANCIP_CLI_VERSION } from "./generated/cancipCliSource";
+import {
+  CancipQueueBridge,
+  QUEUE_BRIDGE_HEARTBEAT_MS,
+  QUEUE_BRIDGE_POLL_MS,
+  type QueueBridgeAppLike
+} from "./queueBridge";
 import { PRIME_TTS_WORKER_GZIP_BASE64, PRIME_TTS_WORKER_VERSION } from "./generated/primeTtsWorkerSource";
 import supportCodeOneDataUrl from "./support/code-1.png";
 import supportCodeTwoDataUrl from "./support/code-2.png";
@@ -925,6 +932,7 @@ type Settings = {
   agentBridgeEnabled: boolean;
   agentBridgePort: number;
   agentBridgeToken: string;
+  queueBridgeEnabled: boolean;
   agentBrainEnabled: boolean;
   agentBrainProvider: LocalAgentProvider;
   agentBrainModel: string;
@@ -1860,6 +1868,7 @@ const DEFAULT_SETTINGS: Settings = {
   agentBridgeEnabled: true,
   agentBridgePort: 43172,
   agentBridgeToken: "",
+  queueBridgeEnabled: true,
   agentBrainEnabled: false,
   agentBrainProvider: "auto",
   agentBrainModel: "",
@@ -3257,6 +3266,15 @@ const EN = {
   settingsAgentBridgeRunning: "Connected on 127.0.0.1:{port}",
   settingsAgentBridgeStopped: "Stopped",
   settingsAgentBridgeMobile: "Desktop Obsidian only",
+  settingsQueueBridge: "File-queue channel (works on mobile)",
+  settingsQueueBridgeDesc: "A second local channel that needs no port and no Node runtime: an outside program appends commands to a JSONL file inside this vault and Cancip executes them through its own APIs. This is the leg that phone and sandbox agents can actually reach.",
+  settingsQueueBridgeEnabled: "Enable file-queue channel",
+  settingsQueueBridgeStatus: "Queue status",
+  settingsQueueBridgeRunning: "Consuming {dir} · {executed} command(s) executed",
+  settingsQueueBridgeStopped: "Stopped",
+  settingsQueueBridgeCli: "Cancip CLI (queue channel)",
+  settingsQueueBridgeCopyCli: "Copy queue command",
+  settingsQueueBridgeNoAuth: "Unattended channel. Any program that can write inside the vault directory can queue commands, including Obsidian-side JavaScript. Leave it off when the vault is shared with software you do not trust.",
   settingsAgentBridgeCli: "Cancip CLI",
   settingsAgentBridgeCliDesc: "The CLI is installed with Cancip. Use one command to link its MCP tools to an agent.",
   settingsAgentBridgeCopyCodex: "Copy Codex link",
@@ -4513,6 +4531,15 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     settingsAgentBridgeRunning: "已连接 127.0.0.1:{port}",
     settingsAgentBridgeStopped: "未运行",
     settingsAgentBridgeMobile: "仅桌面版 Obsidian 可用",
+    settingsQueueBridge: "文件队列通道（移动端可用）",
+    settingsQueueBridgeDesc: "第二条本机通道：不需要端口，也不需要 Node 运行时。外部程序把指令追加到本库内的 JSONL 文件，Cancip 用自己的 API 执行。手机端与沙箱类 Agent 走的就是这条通道。",
+    settingsQueueBridgeEnabled: "启用文件队列通道",
+    settingsQueueBridgeStatus: "队列状态",
+    settingsQueueBridgeRunning: "正在消费 {dir} · 已执行 {executed} 条指令",
+    settingsQueueBridgeStopped: "未运行",
+    settingsQueueBridgeCli: "Cancip CLI（队列通道）",
+    settingsQueueBridgeCopyCli: "复制队列命令",
+    settingsQueueBridgeNoAuth: "无人值守通道。任何能写入本库目录的程序都能投递指令（含执行 Obsidian 端 JavaScript）。若本库与其他不可信软件共享，请保持关闭。",
     settingsAgentBridgeCli: "Cancip CLI",
     settingsAgentBridgeCliDesc: "CLI 随 Cancip 自动安装，一条命令即可把 MCP 工具连接到 Agent。",
     settingsAgentBridgeCopyCodex: "复制 Codex 连接命令",
@@ -7587,6 +7614,8 @@ export default class CancipPlugin extends Plugin {
   private agentBridge: CancipAgentBridge | null = null;
   private agentBridgeBoundPort = 0;
   private agentBridgeLastError = "";
+  private queueBridge: CancipQueueBridge | null = null;
+  private queueBridgeLastError = "";
   private agentDiagnosticsCache: ReturnType<typeof localAgentDiagnostics> = [];
   private agentDiagnosticsReady = false;
   private agentCliInstallPromise: Promise<string> | null = null;
@@ -8182,6 +8211,13 @@ export default class CancipPlugin extends Plugin {
         }, 18000);
         this.register(cancelLocalModelRefresh);
       }
+      // The queue bridge is the leg mobile can actually run: it needs no Node
+      // runtime and no listening port, so it starts on every platform. It shares
+      // the HTTP bridge's handler set, which keeps one operation surface.
+      const cancelQueueBridgeStartup = scheduleIdleWork(() => {
+        this.startQueueBridge();
+      }, Platform.isMobileApp ? 2000 : 12000);
+      this.register(cancelQueueBridgeStartup);
     });
     this.registerEditorExtension(createCancipEditorAutocompleteExtension(this));
     this.registerEditorExtension(createContextEditEditorPreviewExtension(this));
@@ -10464,6 +10500,7 @@ export default class CancipPlugin extends Plugin {
   onunload(): void {
     this.unloading = true;
     void this.stopAgentBridge();
+    this.stopQueueBridge();
     this.settleScoreActivity(false);
     this.universalSearchUnloaded = true;
     this.universalSearchBuildGeneration += 1;
@@ -10999,58 +11036,7 @@ export default class CancipPlugin extends Plugin {
         agentBrainModel: this.settings.agentBrainModel,
         agentBrainTimeoutSeconds: this.settings.agentBrainTimeoutSeconds
       }),
-      {
-        status: () => ({
-          name: "Cancip Agent Bridge",
-          pluginVersion: this.manifest.version,
-          accessMode: this.settings.accessMode,
-          agentBrainEnabled: this.settings.agentBrainEnabled,
-          agentBrainProvider: this.settings.agentBrainProvider
-        }),
-        capabilities: async () => this.agentBridgeCapabilities(),
-        search: async (input) => await this.runAgentBridgeActions([{
-          type: "command",
-          command: "cancip.searchVault",
-          args: {
-            query: stringArg(input.query),
-            scope: stringArg(input.scope) || "both",
-            limit: clampInt(input.limit, 12, 1, 50),
-            includeConfigs: input.includeConfigs === true,
-            includeArchived: input.includeArchived === true
-          }
-        }]),
-        read: async (input) => await this.runAgentBridgeActions([{
-          type: "read",
-          path: stringArg(input.path),
-          query: stringArg(input.query) || undefined,
-          startLine: optionalPositiveInt(input.startLine),
-          endLine: optionalPositiveInt(input.endLine),
-          maxChars: clampInt(input.maxChars, 12000, 500, 30000)
-        }]),
-        open: async (input) => await this.runAgentBridgeActions([{
-          type: "command",
-          command: "cancip.openFile",
-          args: {
-            path: stringArg(input.path),
-            query: stringArg(input.query),
-            targetKind: stringArg(input.targetKind) || "file"
-          }
-        }]),
-        prompt: async (input) => await this.runAgentBridgePrompt(bridgeStringArg(input.prompt, 200000)),
-        action: async (input) => {
-          const raw = Array.isArray(input.actions) ? input.actions : input.action ? [input.action] : [];
-          return await this.runAgentBridgeRawActions(raw);
-        },
-        agentRun: async (input) => {
-          const provider = isLocalAgentProvider(input.provider) ? input.provider : "auto";
-          return await this.runLocalAgentBrain({
-            provider,
-            model: bridgeStringArg(input.model, 200),
-            system: bridgeStringArg(input.system, 200000),
-            prompt: bridgeStringArg(input.prompt, 200000)
-          });
-        }
-      },
+      this.agentBridgeHandlers(),
       (port) => {
         this.agentBridgeBoundPort = port;
         this.agentBridgeLastError = "";
@@ -11073,6 +11059,148 @@ export default class CancipPlugin extends Plugin {
     this.agentBridge = null;
     this.agentBridgeBoundPort = 0;
     if (bridge) await bridge.stop();
+  }
+
+  /**
+   * The handler set shared by Cancip's two local transports.
+   *
+   * The HTTP Agent Bridge and the file-queue bridge both drive Obsidian through
+   * this one object, so an outside caller sees a single operation surface no
+   * matter which leg it reaches Cancip through. Keeping the handlers in one
+   * place is what stops the two transports from drifting apart.
+   */
+  private agentBridgeHandlers(): AgentBridgeHandlers {
+    return {
+      status: () => ({
+        name: "Cancip Agent Bridge",
+        pluginVersion: this.manifest.version,
+        accessMode: this.settings.accessMode,
+        agentBrainEnabled: this.settings.agentBrainEnabled,
+        agentBrainProvider: this.settings.agentBrainProvider
+      }),
+      capabilities: async () => this.agentBridgeCapabilities(),
+      search: async (input) => await this.runAgentBridgeActions([{
+        type: "command",
+        command: "cancip.searchVault",
+        args: {
+          query: stringArg(input.query),
+          scope: stringArg(input.scope) || "both",
+          limit: clampInt(input.limit, 12, 1, 50),
+          includeConfigs: input.includeConfigs === true,
+          includeArchived: input.includeArchived === true
+        }
+      }]),
+      read: async (input) => await this.runAgentBridgeActions([{
+        type: "read",
+        path: stringArg(input.path),
+        query: stringArg(input.query) || undefined,
+        startLine: optionalPositiveInt(input.startLine),
+        endLine: optionalPositiveInt(input.endLine),
+        maxChars: clampInt(input.maxChars, 12000, 500, 30000)
+      }]),
+      open: async (input) => await this.runAgentBridgeActions([{
+        type: "command",
+        command: "cancip.openFile",
+        args: {
+          path: stringArg(input.path),
+          query: stringArg(input.query),
+          targetKind: stringArg(input.targetKind) || "file"
+        }
+      }]),
+      prompt: async (input) => await this.runAgentBridgePrompt(bridgeStringArg(input.prompt, 200000)),
+      action: async (input) => {
+        const raw = Array.isArray(input.actions) ? input.actions : input.action ? [input.action] : [];
+        return await this.runAgentBridgeRawActions(raw);
+      },
+      agentRun: async (input) => {
+        const provider = isLocalAgentProvider(input.provider) ? input.provider : "auto";
+        return await this.runLocalAgentBrain({
+          provider,
+          model: bridgeStringArg(input.model, 200),
+          system: bridgeStringArg(input.system, 200000),
+          prompt: bridgeStringArg(input.prompt, 200000)
+        });
+      }
+    };
+  }
+
+  /** Vault-relative directory that carries the queue bridge's three files. */
+  queueBridgeDir(): string {
+    return `${this.pluginInstallDir()}/bridge`;
+  }
+
+  queueBridgeStatus(): {
+    running: boolean;
+    enabled: boolean;
+    dir: string;
+    error: string;
+    ticks: number;
+    executed: number;
+    failures: number;
+  } {
+    const stats = this.queueBridge?.stats();
+    return {
+      running: this.queueBridge !== null,
+      enabled: this.settings.queueBridgeEnabled,
+      dir: this.queueBridgeDir(),
+      error: this.queueBridgeLastError,
+      ticks: stats?.ticks ?? 0,
+      executed: stats?.executed ?? 0,
+      failures: stats?.failures ?? 0
+    };
+  }
+
+  async restartQueueBridge(): Promise<void> {
+    this.stopQueueBridge();
+    if (this.settings.queueBridgeEnabled) this.startQueueBridge();
+  }
+
+  /**
+   * Start the file-queue transport.
+   *
+   * Unlike the HTTP Agent Bridge this leg also runs on mobile: it never touches
+   * `node:http`, it only reads and writes three files through the vault adapter.
+   * It reuses the HTTP bridge's handler set and adds the two abilities that need
+   * host context — notices and Obsidian-side evaluation — so a queue caller gets
+   * the same surface plus Cancip's own obsidian.eval route (which still honours
+   * the Execute Obsidian commands setting).
+   */
+  private startQueueBridge(): void {
+    if (this.unloading || !this.settings.queueBridgeEnabled || this.queueBridge) return;
+    const queueBridge = new CancipQueueBridge(
+      // The plugin's App is structurally compatible with the bridge's narrow
+      // interface; the cast keeps that contract explicit instead of implicit.
+      this.app as unknown as QueueBridgeAppLike,
+      () => ({ enabled: this.settings.queueBridgeEnabled, dir: this.queueBridgeDir() }),
+      {
+        ...this.agentBridgeHandlers(),
+        notice: (text: string) => {
+          new Notice(text, 4000);
+        },
+        evalCode: async (code: string, args: Record<string, unknown>) => await this.runAgentBridgeRawActions([{
+          type: "command",
+          command: "obsidian.eval",
+          args: { ...args, code }
+        }])
+      },
+      this.manifest.version
+    );
+    this.queueBridge = queueBridge;
+    this.queueBridgeLastError = "";
+    void queueBridge.ensureDir().catch((error) => {
+      this.queueBridgeLastError = error instanceof Error ? error.message : String(error);
+    });
+    this.registerInterval(window.setInterval(() => {
+      void this.queueBridge?.tick();
+    }, QUEUE_BRIDGE_POLL_MS));
+    this.registerInterval(window.setInterval(() => {
+      void this.queueBridge?.beat();
+    }, QUEUE_BRIDGE_HEARTBEAT_MS));
+    void queueBridge.beat();
+  }
+
+  private stopQueueBridge(): void {
+    this.queueBridge = null;
   }
 
   private agentBridgeCapabilities(): Record<string, unknown> {
@@ -67684,7 +67812,7 @@ const SETTINGS_PAGE_KEYS: Record<string, Array<keyof Settings>> = {
     "maxRecentTranscriptMessages", "includeHistoryAnchors", "maxHistoryAnchors", "maxMentionResults",
     "maxMentionFolderFiles", "maxFileContextChars", "maxFolderFileContextChars", "contextCompactionEnabled",
     "contextCompactionTriggerTokens", "contextCompactionTargetTokens", "contextCompactionKeepRecentMessages",
-    "contextCompactionUseModel", "contextCompactionShowStats", "agentBridgeEnabled", "agentBridgePort", "agentBrainEnabled",
+    "contextCompactionUseModel", "contextCompactionShowStats", "agentBridgeEnabled", "agentBridgePort", "queueBridgeEnabled", "agentBrainEnabled",
     "agentBrainProvider", "agentBrainModel", "agentBrainTimeoutSeconds", "scoreEnabled", "scoreAccuracyWeight",
     "scoreUsageWeight", "scoreDecayDays", "scoreLayoutSuggestions", "dailyLocalVersioning", "localVersionHour", "temperature", "maxOutputTokens",
     "localVersionMaxFileBytes", "sessionCleanupSchedule", "sessionCleanupRetentionDays", "forceStatusBarVisible", "preventAutomaticSessionOpen", "systemPrompt"
@@ -68580,6 +68708,38 @@ class CancipSettingTab extends PluginSettingTab {
       await this.plugin.restartAgentBridge();
       this.refreshSettings();
     });
+    const queueBridge = this.createPersistentDetails(
+      agentBridgeBody,
+      "advanced:queue-bridge",
+      "obcc-settings-group obcc-advanced-settings-group",
+      this.plugin.t("settingsQueueBridge"),
+      false
+    );
+    queueBridge.createEl("p", { cls: "obcc-settings-group-desc", text: this.plugin.t("settingsQueueBridgeDesc") });
+    const queueBridgeBody = queueBridge.createDiv({ cls: "obcc-settings-group-body" });
+    const queueBridgeStatus = this.plugin.queueBridgeStatus();
+    const queueBridgeStatusText = queueBridgeStatus.running
+      ? this.plugin.t("settingsQueueBridgeRunning", { dir: queueBridgeStatus.dir, executed: queueBridgeStatus.executed })
+      : [this.plugin.t("settingsQueueBridgeStopped"), queueBridgeStatus.error].filter(Boolean).join(": ");
+    new Setting(queueBridgeBody)
+      .setName(this.plugin.t("settingsQueueBridgeStatus"))
+      .setDesc(queueBridgeStatusText);
+    this.addToggleSetting(queueBridgeBody, "settingsQueueBridgeEnabled", this.plugin.settings.queueBridgeEnabled, async (value) => {
+      this.plugin.settings.queueBridgeEnabled = value;
+      await this.plugin.saveSettings();
+      await this.plugin.restartQueueBridge();
+      this.refreshSettings();
+    });
+    new Setting(queueBridgeBody)
+      .setName(this.plugin.t("settingsQueueBridgeCli"))
+      .setDesc(`${this.plugin.agentCliDisplayCommand()} --transport queue · ${this.plugin.t("settingsQueueBridgeNoAuth")}`)
+      .addButton((button) => {
+        button
+          .setButtonText(this.plugin.t("settingsQueueBridgeCopyCli"))
+          .onClick(async () => {
+            await copyTextToClipboard(`${this.plugin.agentCliDisplayCommand()} --transport queue status`, this.plugin.t("settingsAgentBridgeCopied"), (key, vars) => this.plugin.t(key, vars));
+          });
+      });
     new Setting(agentBridgeBody)
       .setName(this.plugin.t("settingsAgentBridgeCli"))
       .setDesc(`${this.plugin.t("settingsAgentBridgeCliDesc")} ${this.plugin.agentCliDisplayCommand()}`)
@@ -75358,6 +75518,7 @@ function normalizeSettings(input: Partial<Settings>): Settings {
     agentBridgeEnabled: typeof merged.agentBridgeEnabled === "boolean" ? merged.agentBridgeEnabled : DEFAULT_SETTINGS.agentBridgeEnabled,
     agentBridgePort: Number.isFinite(agentBridgePort) ? Math.max(1024, Math.min(65527, agentBridgePort)) : DEFAULT_SETTINGS.agentBridgePort,
     agentBridgeToken: normalizeAgentBridgeToken(merged.agentBridgeToken),
+    queueBridgeEnabled: typeof merged.queueBridgeEnabled === "boolean" ? merged.queueBridgeEnabled : DEFAULT_SETTINGS.queueBridgeEnabled,
     agentBrainEnabled: Boolean(selectedAgentProvider)
       || (typeof merged.agentBrainEnabled === "boolean" ? merged.agentBrainEnabled : DEFAULT_SETTINGS.agentBrainEnabled),
     agentBrainProvider: selectedAgentProvider
@@ -75527,6 +75688,7 @@ function settingsToCancipConfig(settings: Settings): Record<string, unknown> {
     multiAgentTimeoutMinutes: settings.multiAgentTimeoutMinutes,
     agentBridgeEnabled: settings.agentBridgeEnabled,
     agentBridgePort: settings.agentBridgePort,
+    queueBridgeEnabled: settings.queueBridgeEnabled,
     agentBrainEnabled: settings.agentBrainEnabled,
     agentBrainProvider: settings.agentBrainProvider,
     agentBrainModel: settings.agentBrainModel,
@@ -75874,6 +76036,7 @@ const CANCIP_CONFIG_BOOLEAN_KEYS = new Set([
   "multiAgentAutoDelegate",
   "multiAgentCrossReview",
   "agentBridgeEnabled",
+  "queueBridgeEnabled",
   "agentBrainEnabled",
   "scoreEnabled",
   "scoreLayoutSuggestions",
