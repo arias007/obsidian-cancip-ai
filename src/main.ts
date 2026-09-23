@@ -56524,18 +56524,13 @@ class CancipView extends ItemView {
     return true;
   }
 
-  private ensureFinalAnswerAuditSections(content: string, runs: ToolRun[], originalPrompt = "", visibleText = ""): string {
-    if (!runs.length) return content;
-    const base = stripStructuredChoices(stripProgrammaticRunStats(content).content).trim();
-    const visible = prepareMessageDisplay(redactSensitiveText(base)).visibleContent;
-    const sections: string[] = [];
-    if (!/(?:^|\n)\s*(?:验证结果|Verification result)\s*[:：]/i.test(visible)) {
-      const verificationLines = this.finalAnswerVerificationLines(runs, originalPrompt, visibleText);
-      if (verificationLines.length === 1) sections.push(`验证结果：${verificationLines[0]}`);
-      else if (verificationLines.length > 1) sections.push(["验证结果：", ...verificationLines].join("\n"));
-    }
-    if (!sections.length) return base || content;
-    return [base || this.humanFinalConclusion(runs, false, originalPrompt), ...sections].filter(Boolean).join("\n\n");
+  // Verification lines are no longer appended below the final answer: the
+  // programmatic "验证结果：command … · scope: … · elapsed: …" text read like
+  // leaked process output and duplicated what the collapsed process record
+  // already shows. Tool evidence stays in the process record and the
+  // programmatic run-stats footer.
+  private ensureFinalAnswerAuditSections(content: string, _runs: ToolRun[], _originalPrompt = "", _visibleText = ""): string {
+    return stripStructuredChoices(stripProgrammaticRunStats(content).content).trim() || content;
   }
 
   // Older sessions may reference this method name. Changed files now render
@@ -64318,6 +64313,18 @@ class CancipView extends ItemView {
       this.renderSingleMessage(renderItem, finalAssistantIndex);
     }
     flushProcessGroup();
+    // A trailing process group must never render below the final answer: keep
+    // the collapsed process record above the final message, matching the
+    // split-final path that hoists embedded process blocks.
+    const finalAnswerEl = this.messagesEl.querySelector<HTMLElement>(".obcc-message.is-final-answer");
+    if (finalAnswerEl) {
+      let trailing = finalAnswerEl.nextElementSibling;
+      while (trailing?.classList.contains("is-process-record")) {
+        const move = trailing;
+        trailing = trailing.nextElementSibling;
+        this.messagesEl.insertBefore(move, finalAnswerEl);
+      }
+    }
     if (this.activeRequest && !this.messagesEl.querySelector(".obcc-process-record-details.is-live-process-record")) {
       this.renderLiveProcessPlaceholder();
     }
