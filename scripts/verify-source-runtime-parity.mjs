@@ -45,6 +45,7 @@ const intentionallyRemovedRuntimeMethods = new Set([
   "createPlanButton",
   "createNoteDrawWorkbenchStage",
   "deterministicChoiceOptionsForMessage",
+  "expandExchangeAuditStep",
   "ensureModelChoiceOptions",
   "findPendingReviewBaselineItem",
   "globalFinalAnswerTemplatePrompt",
