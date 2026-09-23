@@ -43546,6 +43546,13 @@ class CancipView extends ItemView {
         visibleAnswer = "";
         narrationOnlyFinal = true;
       }
+      // "要我查一下吗？" 反问确认类回复被 isToolPrefaceOnlyAnswer 清空，
+      // 记录该形态以便失败时给出精确原因（模型请求确认而非回答/执行）。
+      let confirmationSeekingFinal = false;
+      if (!visibleAnswer && !answerHasExecutableActions && !initialProtocolIssue && !narrationOnlyFinal
+        && (/<!--\s*cancip-choices\b/i.test(answer) || isToolPrefaceOnlyAnswer(answer) || isProseApprovalRequestAnswer(answer))) {
+        confirmationSeekingFinal = true;
+      }
       this.updateModelProcessAuditSections(generationStep, answer, visibleAnswer);
       this.updateProgressStep(generationStep, this.generationStepSummary(this.t("generating"), this.currentModelCharUsageText()), this.formatGenerationAuditDetail(modelPrompt, context, activeProfile, answer, visibleAnswer, rawPrompt));
       const assistantMessage = visibleAnswer ? this.addMessage("assistant", visibleAnswer) : undefined;
@@ -43565,6 +43572,10 @@ class CancipView extends ItemView {
             retryVisible = "";
             narrationOnlyFinal = true;
           }
+          if (!retryVisible && !retryHasActions && !retryProtocolIssue
+            && (/<!--\s*cancip-choices\b/i.test(retryAnswer) || isToolPrefaceOnlyAnswer(retryAnswer) || isProseApprovalRequestAnswer(retryAnswer))) {
+            confirmationSeekingFinal = true;
+          }
           const retryMessage = retryVisible ? this.addMessage("assistant", retryVisible) : undefined;
           if (retryMessage) this.attachChoiceSource(retryMessage, retryAnswer);
           if (retryMessage) this.renderMessagesAfterMutation();
@@ -43576,7 +43587,11 @@ class CancipView extends ItemView {
               ? invalidCancipActionFailureReason(retryProtocolIssue || initialProtocolIssue, isChineseLanguage(this.plugin.language()))
               : narrationOnlyFinal
                 ? (isChineseLanguage(this.plugin.language()) ? "模型只返回过程说明，没有给出回答或动作。" : "The model only returned process narration without an answer or action.")
-                : this.t("emptyApiReply"), startedAt);
+                : confirmationSeekingFinal
+                  ? (isChineseLanguage(this.plugin.language())
+                    ? "模型两次都在请求确认，没有直接回答或执行动作。"
+                    : "The model twice asked for confirmation instead of answering or acting.")
+                  : this.t("emptyApiReply"), startedAt);
             await this.finishCurrentSessionStatus("failed", true, request);
             return;
           }
@@ -43585,7 +43600,11 @@ class CancipView extends ItemView {
           this.markResumableTask(taskGoal, "failed");
           this.addModelFailureFinal(taskGoal, initialProtocolIssue
             ? invalidCancipActionFailureReason(initialProtocolIssue, isChineseLanguage(this.plugin.language()))
-            : this.t("emptyApiReply"), startedAt);
+            : confirmationSeekingFinal
+              ? (isChineseLanguage(this.plugin.language())
+                ? "模型在请求确认，没有直接回答或执行动作；重试也未成功。"
+                : "The model asked for confirmation instead of answering or acting; the retry did not succeed either.")
+              : this.t("emptyApiReply"), startedAt);
           await this.finishCurrentSessionStatus("failed", true, request);
           return;
         }
@@ -49723,14 +49742,26 @@ class CancipView extends ItemView {
   ): Promise<string> {
     if (request.signal.aborted || !this.isCurrentRequest(request)) return "";
     const protocolIssue = cancipActionProtocolIssue(previousAnswer);
+    // 反问确认类回复（"要我查一下吗？" + cancip-choices 选项块）会被
+    // isToolPrefaceOnlyAnswer 清空成不可见回答。重试时必须显式禁止反问，
+    // 否则模型会原样再问一次，两次都空后整轮失败。
+    const confirmationSeeking = !protocolIssue && (
+      /<!--\s*cancip-choices\b/i.test(previousAnswer)
+      || isToolPrefaceOnlyAnswer(previousAnswer)
+      || isProseApprovalRequestAnswer(previousAnswer)
+    );
     const retryPrompt = [
       prompt,
       "",
       protocolIssue
         ? `The previous reply was non-empty, but Cancip could not execute its action: ${protocolIssue}`
-        : "The previous model reply was empty or contained no visible answer/action.",
-      protocolIssue ? "Keep the same task intent and repair only the action protocol; do not restart, summarize, or ask the user." : "Retry now without adding process narration.",
-      "Return either one concise final answer if no tool is needed, or exactly one executable cancip-action for the current next step.",
+        : confirmationSeeking
+          ? "The previous reply only asked the user for permission or offered a choice list (e.g. \"要我查一下吗?\") instead of acting. Do NOT ask for confirmation and do NOT offer choice lists — decide yourself and act now."
+          : "The previous model reply was empty or contained no visible answer/action.",
+      protocolIssue ? "Keep the same task intent and repair only the action protocol; do not restart, summarize, or ask the user." : confirmationSeeking
+        ? "Either answer the user's question directly from the context you already have, or return exactly one executable cancip-action for the current next step."
+        : "Retry now without adding process narration.",
+      confirmationSeeking ? "" : "Return either one concise final answer if no tool is needed, or exactly one executable cancip-action for the current next step.",
       "Direct file actions may use type/action read, write, append, patch, move, copy, delete, or mkdir. Command capabilities use {\"type\":\"command\",\"command\":\"cancip.findTarget\",\"args\":{...}} (or another exact command name).",
       "Do not chain unresolved placeholders with then. Cancip will return the concrete tool result for the next decision.",
       protocolIssue ? `Previous reply, verbatim:\n${trimContext(previousAnswer, 2400)}` : ""
