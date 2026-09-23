@@ -43446,27 +43446,18 @@ class CancipView extends ItemView {
       searchHits: [] as SearchHit[],
       images: [] as ImageAttachmentContext[]
     };
-    const contextStep = this.addProgressStep(this.contextPreparationHeadline(taskGoal), this.formatInitialContextAuditDetail(taskGoal));
-    const requestProgressSteps: ChatMessage[] = [contextStep];
+    // Context preparation is internal plumbing, not a user-facing process step:
+    // ordinary chat turns no longer render a "准备上下文" card.
+    const requestProgressSteps: ChatMessage[] = [];
     let generationStep: ChatMessage | null = null;
     try {
       this.setStatus(this.t("preparingContext"));
       context = await this.buildContext(taskGoal, rawPrompt);
       if (request.signal.aborted || !this.hasRequest(request)) return;
-      const compactionStatus = await this.ensureContextCompaction();
+      await this.ensureContextCompaction();
       if (request.signal.aborted || !this.hasRequest(request)) return;
       // The context summary is process detail, not a second model exchange.
       // The actual request body is recorded by the API call itself below.
-      contextStep.processAuditSections = undefined;
-      this.updateProgressStep(
-        contextStep,
-        this.contextPreparationHeadline(taskGoal),
-        [
-          this.formatInitialContextAuditDetail(taskGoal),
-          this.formatContextAuditDetail(rawPrompt, taskGoal, modelPrompt, context),
-          compactionStatus
-        ].filter(Boolean).join("\n\n")
-      );
 
       userMessage.sources = context.searchHits;
       userMessage.contextText = context.contextText;
@@ -43478,7 +43469,6 @@ class CancipView extends ItemView {
 
       const activeProfile = requestProfile;
       if (!this.plugin.modelTransportConfigured(activeProfile, context.images)) {
-        this.updateProgressStep(contextStep, this.t("preparingContext"), this.localFallback(rawPrompt, context.searchHits, this.t("missingApi")), this.t("toolRunFailed"));
         this.setStatus(this.t("callFailed"));
         this.markResumableTask(taskGoal, "failed");
         this.addModelFailureFinal(taskGoal, this.t("missingApi"), startedAt);
@@ -48806,13 +48796,12 @@ class CancipView extends ItemView {
     if (isOneClickHtmlPrompt(prompt)) sections.push(this.oneClickHtmlSystemPrompt());
     sections.push(modeInstruction);
     if (this.mode === "search") sections.push(this.universalSearchPolicyPrompt());
-    if (!policy.includeToolProtocol) {
-      sections.push(policy.includeToolCatalog
-        ? this.lightweightCapabilityPolicyPrompt(prompt)
-        : policy.includeMemoryIndex
-          ? "Payload policy: lightweight memory/info turn. If the answer depends on identity, personal profile, memory, prior session, or missing context, use only read-only actions such as memory index reads, focused reads, or cancip.sessionHistory before asking the user."
-          : "Payload policy: lightweight turn. Answer only what the user asked, briefly and directly. For a greeting, do not restate your identity/capabilities or make a generic customer-service offer. Do not request tool actions unless the user explicitly asks for implementation, file operations, commands, GitHub, automations, or plugin/self repair.");
+    if (!policy.includeToolProtocol && policy.includeToolCatalog) {
+      sections.push(this.lightweightCapabilityPolicyPrompt(prompt));
     }
+    // The hidden English "Payload policy: lightweight turn …" rules were removed
+    // (user request): they suppressed tool actions on ordinary questions and were
+    // not part of the system prompt, global memory, or any user-visible context.
     return sections.filter(Boolean).join("\n\n");
   }
 
