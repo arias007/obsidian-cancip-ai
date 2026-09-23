@@ -50523,7 +50523,9 @@ class CancipView extends ItemView {
     const adapter = this.app.vault.adapter;
     const path = this.plugin.memoryPath("CANCIP_INDEX.md");
     if (!(await adapter.exists(path))) return "";
-    return trimContext(await adapter.read(path), 520);
+    // The index is the user-curated memory entry: inject it whole, no
+    // artificial character cap. Size control belongs to the file itself.
+    return (await adapter.read(path)).trim();
   }
 
   private async readDetailedRules(prompt: string): Promise<string> {
@@ -64303,14 +64305,17 @@ class CancipView extends ItemView {
     const finalAssistantIndex = this.lastFinalAssistantMessageIndex(rendered);
     this.liveProcessRecordActive = Boolean(this.activeRequest);
     let processGroup: RenderedMessage[] = [];
+    // Once the final answer is on screen, later process-only messages with no
+    // intervening user turn (queue retries, background evals, tool feedback
+    // stragglers) must not render as extra cards below the answer. They stay
+    // in session history for audit; the next real user turn restarts normal
+    // process rendering.
+    let pastFinalAnswerWithoutNewUserTurn = false;
     const flushProcessGroup = (): void => {
       const meaningful = processGroup.filter((item) => isMeaningfulProcessRecord(item.message, item.display));
-      if (!meaningful.length) {
-        processGroup = [];
-        return;
-      }
-      this.renderProcessRecord(meaningful);
       processGroup = [];
+      if (!meaningful.length || pastFinalAnswerWithoutNewUserTurn) return;
+      this.renderProcessRecord(meaningful);
     };
 
     for (const item of rendered) {
@@ -64339,25 +64344,10 @@ class CancipView extends ItemView {
       }
       flushProcessGroup();
       this.renderSingleMessage(renderItem, finalAssistantIndex);
+      if (renderItem.message.role === "user") pastFinalAnswerWithoutNewUserTurn = false;
+      else if (item.index === finalAssistantIndex) pastFinalAnswerWithoutNewUserTurn = true;
     }
     flushProcessGroup();
-    // A same-turn trailing process group must not render below the final
-    // answer: hoist it above the final message, matching the split-final path.
-    // Process records created AFTER the final answer belong to later activity
-    // (follow-up turns, queue/automation work) and stay in place so the
-    // transcript keeps chronological order.
-    const finalAnswerEl = this.messagesEl.querySelector<HTMLElement>(".obcc-message.is-final-answer");
-    if (finalAnswerEl) {
-      const finalCreatedAt = finalAssistantIndex >= 0 ? Number(rendered[finalAssistantIndex]?.message.createdAt ?? 0) : 0;
-      let trailing = finalAnswerEl.nextElementSibling as HTMLElement | null;
-      while (trailing?.classList.contains("is-process-record")) {
-        const move = trailing;
-        trailing = trailing.nextElementSibling as HTMLElement | null;
-        const moveCreatedAt = Number(move.dataset.processLatestCreatedAt ?? 0);
-        if (finalCreatedAt && moveCreatedAt && moveCreatedAt > finalCreatedAt) break;
-        this.messagesEl.insertBefore(move, finalAnswerEl);
-      }
-    }
     if (this.activeRequest && !this.messagesEl.querySelector(".obcc-process-record-details.is-live-process-record")) {
       this.renderLiveProcessPlaceholder();
     }
