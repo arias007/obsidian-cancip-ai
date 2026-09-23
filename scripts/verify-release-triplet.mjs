@@ -251,7 +251,7 @@ if (cliText !== null) {
 // behind the CLI. In that state the CLI-specific assertions below are reported as
 // SKIP, never as PASS: they are visibly deferred rather than silently dropped, and
 // they reactivate on their own the moment the workflow ships the CLI asset again.
-const workflow = readFileSync(join(repoRoot, ".github", "workflows", "release.yml.disabled"), "utf8");
+const workflow = readFileSync(join(repoRoot, ".github", "workflows", "release.yml"), "utf8");
 const workflowShipsCli = workflow.includes(`outputs/cancip/${CLI_ASSET}`);
 const skipped = [];
 for (const name of RELEASE_ASSETS) {
