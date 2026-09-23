@@ -50358,33 +50358,25 @@ class CancipView extends ItemView {
 
   private compactActionRouteIndexPrompt(): string {
     const navigationPath = this.plugin.memoryPath("CANCIP_NAV.md");
+    // Compact reference-only route: the full command directory lives in
+    // CANCIP_NAV.md and cancip.tools.help. Keep the per-turn payload to the
+    // base essentials (system prompt, memory, session history, latest user
+    // prompt / tool result) and let the model pull command details on demand.
     if (this.plugin.language().startsWith("zh")) {
       return [
-        "紧凑路由：先判断读/写/执行；目标不清 findTarget，路线不清 tools.index 或 capability.resolve。用户已给出新文件名或路径时直接 read/write；明确读取路径不存在就是有效结果，除非用户要求模糊查找，否则直接回答且不打开别的文件。findTarget 只找已有且不明确的目标。每轮只决定当前一步。",
-        "- 优先复用本轮已有 Skill、已验证经验、记忆路线、已安装插件命令/API/UI 和 Cancip 原生能力；路线不清只查一次对应 help/list/pluginCapabilities。现有能力确实不能完成时才写 JS 或代码。按钮用 obsidian.ui，统计视图优先 Dataview，涂鸦优先 NoteDraw/Excalidraw，任务优先 Tasks，复习卡优先 Spaced Repetition。",
-        "- 读：read/search/list/status/currentView/sessionHistory；结果足够就直接答。",
-        "- Vault 搜索：使用 command cancip.searchVault，args={query,scope:'filename'|'content'|'both',limit:8}。多个独立查询放入同一个 actions 数组并列执行；只有查 Obsidian 命令时才用 obsidian.listCommands。示例：{\"actions\":[{\"type\":\"command\",\"command\":\"cancip.searchVault\",\"args\":{\"query\":\"关键词\",\"scope\":\"content\",\"limit\":8}}]}。",
-        "- Obsidian 命令：找候选用 obsidian.listCommands，必须传 args={query:'用户给的名称、ID 片段或用途',limit:8}；解析一个明确候选用 obsidian.resolveCommand；只有用户要求执行时才用 obsidian.execute，执行后核对可见状态。",
-        "- 会话历史：列最近/全部会话用 cancip.sessionHistory，args={all:true,mode:'summary',limit:12}；读指定旧会话用 args={sessionId:'完整 session-... ID',mode:'full'}，只有确需当时上下文时才加 includeContext:true。省略 all/sessionId 只会读取当前会话。",
-        "- 多 Agent：适合并行的复杂步骤用 cancip.subagents.parallel；用户点多 Agent 工具后首批动作必须创建至少 2 个真实子会话。主 Agent 按任务风险和可并行性，以及可用路线的价格、速度、能力、历史成功率和当前可用性，自主决定 2 至上限的数量、拆分、同模型并行或多模型交叉验证、角色、模型、验收、时限、wait 与 consensus；禁止固定永远用最强模型或固定模型组合。",
-        "- 改：最小读取 -> patch/write/config/command -> outcome.verify；权限由 UI 处理。",
-        "- 运行时 UI/按钮：用 obsidian.ui.buttons 和 obsidian.ui.buttonRules 读当前状态，用 obsidian.ui.applyButtonRules 修改；这是权威入口，不搜 Vault、不猜配置文件或源码。拿到按钮和规则后直接 apply，再按同 selector 定向读回；需要恢复时只 reset 本次规则后再读回。",
-        "- 插件、Skill、附件、自动化、GitHub、TTS：先查对应 help/list，再按需读取具体入口。",
-        `- 总导航：${navigationPath}；详细参数：cancip.tools.help。`
+        "紧凑路由：每轮只决定当前一步，需要工具时输出一个 ```cancip-action JSON 块；基础上下文只有系统提示、记忆、会话历史和最新用户提示词/工具结果，其余信息按需推导查证。",
+        "- 命令优先级：先用 Obsidian 原生命令和已装插件命令/API/UI，再用 Cancip 原生能力，现有能力确实不能完成才写 JS；不重复造轮子。",
+        "- 最小闭环：读最小相关片段 -> 执行动作 -> 读回验证（cancip.outcome.verify）；目标不清 cancip.findTarget；路线不清 cancip.capability.resolve 或 cancip.tools.index；参数不清 cancip.tools.help。",
+        "- 高频入口：Vault 搜索 cancip.searchVault（args:{query,scope,limit}）；Obsidian 命令 obsidian.listCommands/resolveCommand/execute。",
+        `- 全量命令目录不随轮注入：按需读 ${navigationPath} 中当前任务对应小节（只取相关链接，不要整页展开），或用 cancip.tools.help 查单条命令参数。`
       ].join("\n");
     }
     return [
-      "Compact route: decide read/write/execute; unclear target -> findTarget, unclear route -> tools.index or capability.resolve. Read/write an explicit path directly. A missing explicit read path is a valid result: answer it without opening another file unless fuzzy search was requested. findTarget is only for an existing ambiguous target. Decide only the current step.",
-      "- Reuse injected Skills, verified experience, memory routes, installed plugin commands/APIs/UI, and native Cancip capabilities first. If the route is unclear, query the matching help/list/pluginCapabilities once. Write JS or code only when existing capabilities cannot do the work. Prefer obsidian.ui for buttons, Dataview for statistical views, NoteDraw/Excalidraw for drawing, Tasks for tasks, and Spaced Repetition for review cards.",
-      "- Read: read/search/list/status/currentView/sessionHistory; answer when enough.",
-      "- Vault search: use command cancip.searchVault with args={query,scope:'filename'|'content'|'both',limit:8}. Put independent queries in one actions array; obsidian.listCommands is only for Obsidian command lookup. Example: {\"actions\":[{\"type\":\"command\",\"command\":\"cancip.searchVault\",\"args\":{\"query\":\"term\",\"scope\":\"content\",\"limit\":8}}]}.",
-      "- Obsidian commands: find candidates with obsidian.listCommands and args={query:'user name, ID fragment, or purpose',limit:8}; resolve one candidate with obsidian.resolveCommand; use obsidian.execute only when execution was requested, then verify visible state.",
-      "- Session history: list recent/all sessions with cancip.sessionHistory args={all:true,mode:'summary',limit:12}; read one saved session with args={sessionId:'full session-... ID',mode:'full'}, adding includeContext:true only when its original context is required. Omitting both all and sessionId reads only the current session.",
-      "- Multi-agent: use cancip.subagents.parallel for a complex independently parallelizable step. Explicit invocation needs at least two real child sessions with distinct roles, tasks, acceptance criteria, and deadlines; use wait:true for dependent work and consensus:true for cross-review.",
-      "- Change: focused read -> patch/write/config/command -> outcome.verify; UI handles access.",
-      "- Runtime UI/buttons: read current state with obsidian.ui.buttons and obsidian.ui.buttonRules, mutate with obsidian.ui.applyButtonRules. These runtime commands are authoritative: do not search the Vault or guess config/source files. After button and rule evidence, apply directly, verify with the same selector, and reset only the new rule when restoration is required.",
-      "- Plugins, Skills, attachments, automations, GitHub, and TTS start with the matching help/list entry.",
-      `- Navigation: ${navigationPath}; detailed parameters: cancip.tools.help.`
+      "Compact route: decide only the current step; when tools are needed output one ```cancip-action JSON block. The base context is only the system prompt, memory, session history, and the latest user prompt / tool result; derive and verify everything else on demand.",
+      "- Command priority: Obsidian native commands and installed plugin commands/APIs/UI first, then native Cancip capabilities; write JS only when existing capabilities cannot do the work. Do not reinvent wheels.",
+      "- Minimal loop: read the smallest relevant snippet -> act -> verify by reading state back (cancip.outcome.verify); unclear target -> cancip.findTarget; unclear route -> cancip.capability.resolve or cancip.tools.index; unclear parameters -> cancip.tools.help.",
+      "- High-frequency entries: Vault search cancip.searchVault (args:{query,scope,limit}); Obsidian commands obsidian.listCommands/resolveCommand/execute.",
+      `- The full command catalog is not injected per turn: read only the section of ${navigationPath} relevant to the current task (follow targeted links, never expand the whole page), or call cancip.tools.help for a single command's parameters.`
     ].join("\n");
   }
 
