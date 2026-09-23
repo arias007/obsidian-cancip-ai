@@ -128,6 +128,23 @@ async function runTests() {
     });
   }
 
+  /**
+   * Async twin of runCli. spawnSync blocks this process's event loop, which
+   * would starve the in-process mock HTTP bridge the CLI is probing - the probe
+   * times out and the CLI silently falls back to the queue. Tests that need the
+   * HTTP leg running inside this process must use this one.
+   */
+  function runCliAsync(args) {
+    return new Promise((resolvePromise) => {
+      const child = spawn(process.execPath, [cliPath, "--vault", vault, ...args], { stdio: ["ignore", "pipe", "pipe"] });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (chunk) => { stdout += chunk; });
+      child.stderr.on("data", (chunk) => { stderr += chunk; });
+      child.on("close", (status) => resolvePromise({ status, stdout, stderr }));
+    });
+  }
+
   async function writeHeartbeat(ageMs = 0) {
     await writeFile(
       join(bridgeDir, "heartbeat.json"),
@@ -250,6 +267,12 @@ async function runTests() {
         request.on("end", () => {
           seen.push({ method: request.method, url: request.url, auth: request.headers.authorization, body });
           response.setHeader("Content-Type", "application/json");
+          if (request.url === "/v1/status") {
+            // The CLI discovers the HTTP leg by probing this route and checking
+            // the bridge name, so the mock has to answer it too.
+            response.end(JSON.stringify({ ok: true, name: "Cancip Agent Bridge", protocolVersion: 1, authRequired: true, pluginVersion }));
+            return;
+          }
           if (request.url === "/v1/op") {
             const parsed = JSON.parse(body || "{}");
             response.end(JSON.stringify({ ok: true, result: { count: 1, files: [{ p: `${parsed.op}.md`, s: 1, m: 1 }] } }));
@@ -265,7 +288,7 @@ async function runTests() {
       const saved = existsSync(dataPath) ? readFileSync(dataPath, "utf8") : null;
       writeFileSync(dataPath, JSON.stringify({ agentBridgeToken: "test-token", agentBridgePort: port }));
       try {
-        const result = runCli(["list"]);
+        const result = await runCliAsync(["list"]);
         assert.equal(result.status, 0, `stderr=${result.stderr}`);
         const parsed = JSON.parse(result.stdout);
         assert.equal(parsed.files[0].p, "list.md", "list must be answered by the generic HTTP leg");
