@@ -52799,16 +52799,15 @@ class CancipView extends ItemView {
       if (workflowReason) reason = workflowReason;
       else if (seen.has(key)) {
         const prior = previousByKey.get(key);
-        // Idempotent replay: queue/transport retries reuse the same explicit
-        // action id. A read-only action that already executed carries no state
-        // change, so return the previous result instead of a blocked row.
-        const actionArgs = (action as { args?: Record<string, unknown> }).args ?? {};
-        const explicitId = typeof actionArgs.id === "string" ? actionArgs.id : "";
-        if (prior && prior.status === "executed" && isReadOnlyAction(action) && explicitId) {
+        // Idempotent replay: queue/transport retries (with or without an
+        // explicit action id) and genuine re-reads of the same target are safe
+        // to replay for read-only actions — they carry no state change, so
+        // return the previous result instead of a blocked row.
+        if (prior && prior.status === "executed" && isReadOnlyAction(action)) {
           const replay = this.createToolRun(action);
           replay.status = "executed";
           replay.executedAt = new Date().toISOString();
-          replay.result = `${(prior.result ?? "").trim()}\n\n（幂等重放：相同 action id 已执行过，未重新执行，返回前次结果）`;
+          replay.result = `${(prior.result ?? "").trim()}\n\n（幂等重放：相同只读动作已执行过，未重新执行，返回前次结果）`;
           runs.push(replay);
           continue;
         }
