@@ -28,7 +28,7 @@ import { basename, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 
-const CLI_VERSION = "3.5.19";
+const CLI_VERSION = "3.5.20";
 const BRIDGE_PORT = 43172;
 const PORT_FALLBACK_COUNT = 8;
 const REQUEST_TIMEOUT_MS = 10 * 60_000;
@@ -41,7 +41,7 @@ const QUEUE_FILE = "queue.jsonl";
 const QUEUE_RESULT_FILE = "result.jsonl";
 const QUEUE_HEARTBEAT_FILE = "heartbeat.json";
 const QUEUE_POLL_MS = 120;
-const QUEUE_DEFAULT_WAIT_MS = 30_000;
+const QUEUE_DEFAULT_WAIT_MS = 90_000;
 const QUEUE_HEARTBEAT_STALE_MS = 60_000;
 const TRANSPORTS = ["auto", "http", "queue"];
 
@@ -729,7 +729,7 @@ Usage:
 
 Channel options:
   --transport auto|http|queue   Which local channel to use (default: auto)
-  --wait-ms <ms>                Queue-channel answer timeout (default: 30000)
+  --wait-ms <ms>                Queue-channel answer timeout (default: 90000)
   --json                        Machine-readable output
 
   http   listens on 127.0.0.1 with a private credential; desktop only.
