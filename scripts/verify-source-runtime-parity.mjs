@@ -53,6 +53,7 @@ const intentionallyRemovedRuntimeMethods = new Set([
   "insertPersonalizedDiary",
   "installReviewTreeTouchScroll",
   "isNativeSelectionToolbarProtected",
+  "lightweightCapabilityPolicyPrompt",
   "noteDrawControllerForStage",
   "noteDrawRuntime",
   "prewarmBuiltinPrimeTts",
