@@ -1170,6 +1170,11 @@ export function foldModelReasoningArtifacts(content: string, hiddenToolBlocks: F
 export function stripModelReasoningArtifacts(content: string): string {
   const hidden: FoldedMessageBlock[] = [];
   let text = content.replace(/<(think|thinking|reasoning)\b[^>]*>[\s\S]*?<\/\1>/gi, "\n\n");
+  // deepseek 系模型经部分代理时会把原生 DSML 工具调用语法（<|dsml|invoke ...>，
+  // 竖线常为全角 U+FF5C）以纯文本泄漏到 content。这些标记对用户是乱码，
+  // 从可见文本中删除；独立成行的标记整行删除，行内成对标记连同参数一并删除。
+  text = text.replace(/^[^\S\n]*<\s*[/|｜]{0,3}\s*dsml\s*[|｜]{0,3}[^>\n]*>[^\S\n]*$/gim, "");
+  text = text.replace(/<\s*[/|｜]{0,3}\s*dsml\s*[|｜]{0,3}[^>\n]*>([\s\S]{0,400}?)<\s*[/|｜]{0,3}\s*dsml\s*[|｜]{0,3}[^>\n]*>/gi, "\n\n");
   text = foldReasoningSections(text, hidden);
   return foldModelReasoningArtifacts(text, hidden);
 }
