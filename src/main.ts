@@ -15784,6 +15784,22 @@ export default class CancipPlugin extends Plugin {
       await ensureFolder(adapter, CANCIP_CONFIG_DIR);
       await ensureFolder(adapter, CANCIP_MACHINE_INDEX_DIR);
       await this.ensureCancipNavigationFiles();
+      const globalMemoryPath = this.memoryPath("全局记忆.md");
+      if (!(await adapter.exists(globalMemoryPath))) {
+        // 全局记忆 is the user-owned per-turn base file. Create it once with a
+        // minimal skeleton; never overwrite the user's content afterwards.
+        await adapter.write(globalMemoryPath, `# 全局记忆
+
+<!-- 这个文件的全文会进入 Cancip 每次发送的内容，无截断；只写用户重点记忆，插件不会覆盖你修改后的内容。 -->
+
+## 重点记忆
+- 用户：木拉提（Murat），中国新疆，中文优先。
+- 工作：医院医疗行政——远程会诊、转诊登记、医师资格证、义诊团队协调。
+- 技术：MT5 / XAUUSDc 量化与 .mq5 EA；Obsidian 插件开发；GitHub \`arias007\`。
+- 纠错：地名写全称（如"奎依巴格乡"）；没有"喀什/喀二"，除非用户明确给出。
+- 偏好：结论先行、简洁；给选项并附推荐；删除/移动/真实交易等高风险动作先确认。
+`);
+      }
       if (!(await adapter.exists(memoryIndexPath))) {
         await adapter.write(memoryIndexPath, `# Cancip Memory Index
 
@@ -48403,9 +48419,9 @@ class CancipView extends ItemView {
 
     // These reads do not depend on one another. Start them together and keep
     // the existing section order when assembling the final compact context.
-    const memoryIndexPromise = policy.includeMemoryIndex
-      ? this.safeContextStep(this.t("coreMemory"), () => this.readMemoryIndex(), "", CONTEXT_STEP_TIMEOUT_MS)
-      : Promise.resolve("");
+    // 全局记忆 is the user-owned per-turn base: injected every turn, no cap.
+    // The CANCIP_INDEX.md navigation entry is no longer injected per turn.
+    const globalMemoryPromise = this.safeContextStep("global memory", () => this.readGlobalMemory(), "", CONTEXT_STEP_TIMEOUT_MS);
     const detailedRulesPromise = policy.includeDetailedRules
       ? this.safeContextStep("detailed rules", () => this.readDetailedRules(prompt), "", CONTEXT_STEP_TIMEOUT_MS)
       : Promise.resolve("");
@@ -48451,10 +48467,8 @@ class CancipView extends ItemView {
       ? this.safeContextStep(this.t("vaultSearch"), () => this.searchVault(prompt, settings.maxContextFiles), [] as SearchHit[], CONTEXT_STEP_TIMEOUT_MS)
       : Promise.resolve([] as SearchHit[]);
 
-    if (policy.includeMemoryIndex) {
-      const memoryIndex = await memoryIndexPromise;
-      if (memoryIndex) parts.push(`## Memory router index\n${memoryIndex}`);
-    }
+    const globalMemory = await globalMemoryPromise;
+    if (globalMemory) parts.push(`## 全局记忆\n${globalMemory}`);
 
     if (policy.includeDetailedRules) {
       const detailedRules = await detailedRulesPromise;
@@ -50525,6 +50539,16 @@ class CancipView extends ItemView {
     if (!(await adapter.exists(path))) return "";
     // The index is the user-curated memory entry: inject it whole, no
     // artificial character cap. Size control belongs to the file itself.
+    return (await adapter.read(path)).trim();
+  }
+
+  private async readGlobalMemory(): Promise<string> {
+    const adapter = this.app.vault.adapter;
+    const path = this.plugin.memoryPath("全局记忆.md");
+    if (!(await adapter.exists(path))) return "";
+    // 全局记忆 is the user-owned per-turn base file: inject it whole, no
+    // artificial character cap. The plugin creates it once and never
+    // overwrites the user's content.
     return (await adapter.read(path)).trim();
   }
 
