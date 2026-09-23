@@ -48645,7 +48645,13 @@ class CancipView extends ItemView {
     const capabilityNeed = directVaultFileTask || vaultTargetOpenTask || externalPathTask || memoryOnlyNeed ? false : shouldUseCapabilityDiscovery(prompt);
     const detailedToolHelpNeed = !directVaultFileTask && !vaultTargetOpenTask && !externalPathTask && shouldUseDetailedToolProtocol(prompt);
     const cancipSelfNeed = !directVaultFileTask && !vaultTargetOpenTask && !externalPathTask && promptMentionsCancipSelf(prompt);
-    const needTaskContinuity = continuing || this.manualTodos.some((todo) => todo.sendToModel !== false) || this.messages.slice(-4).some((message) => (message.toolRuns ?? []).length > 0);
+    // Task continuity requires unresolved work: pending/executing runs, an
+    // explicit continue prompt, or live Plan todos. Already-executed runs in
+    // recent messages belong to a settled turn and must not force the full
+    // action protocol onto a new chat or recall prompt.
+    const recentUnresolvedRuns = this.messages.slice(-4).some((message) =>
+      (message.toolRuns ?? []).some((run) => run.status === "pending" || run.status === "executing"));
+    const needTaskContinuity = continuing || this.manualTodos.some((todo) => todo.sendToModel !== false) || recentUnresolvedRuns;
     const hasHistoryAnchors = Boolean(this.previousUserPromptForModel(prompt) || this.previousAssistantConclusion());
     const currentFileNeed = this.mode === "edit" || hasMentions || hasManualContext || promptNeedsCurrentFileContext(prompt);
     const skillRouteNeed = !memoryOnlyNeed && (
