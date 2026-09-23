@@ -1036,6 +1036,10 @@ export function hasExplicitExecutionDirective(prompt: string): boolean {
   if (!text || promptExplicitlyRequestsReadOnly(text) || isDirectAnswerOnlyPrompt(text)) return false;
   if (isExecutableTtsPrompt(text) || looksLikeMemoryWritePrompt(text) || looksLikeCreateVaultFilePrompt(text)) return true;
   const action = "(?:add|implement|fix|repair|change|modify|update|delete|move|rename|create|install|restart|build|execute|run|open|close|hide|show|sort|pin|unpin|patch|write|save|apply|publish|release|commit|新增|添加|补充|修改|更新|修复|修好|删除|移动|重命名|新建|创建|安装|重启|构建|执行|运行|打开|开启|关闭|隐藏|显示|排序|置顶|取消置顶|写入|保存|应用|发布|提交|回退|恢复|弄好|做成)";
+  // 疑问句不是执行指令：动作词后紧跟疑问词（"我现在打开了个什么"/"打开的是什么"）
+  // 是在问当前状态，不是要求执行动作；否则终态校验会把只读回答误判为"未完成改动"。
+  const questionFollowUp = "(?:什么|什麼|啥|哪些|哪|誰|谁|多少|多久|怎么|怎麼|如何|吗|嘛|呢|？|\\?)";
+  if (new RegExp(`${action}\\s*(?:的是|[了个过一]{0,2})\\s*${questionFollowUp}`, "i").test(text)) return false;
   if (new RegExp(`^\\s*(?:请|請|麻烦|麻煩|帮我|幫我|给我|給我|直接|立即|现在|現在|务必|務必)?\\s*${action}`, "i").test(text)) return true;
   if (new RegExp(`(?:请|請|麻烦|麻煩|帮我|幫我|给我|給我|直接|立即|现在|現在|务必|務必|实际|實際).{0,24}${action}`, "i").test(text)) return true;
   if (new RegExp(`(?:把|将|將).{1,80}${action}`, "i").test(text)) return true;
