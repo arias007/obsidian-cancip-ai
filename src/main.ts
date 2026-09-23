@@ -48796,12 +48796,11 @@ class CancipView extends ItemView {
     if (isOneClickHtmlPrompt(prompt)) sections.push(this.oneClickHtmlSystemPrompt());
     sections.push(modeInstruction);
     if (this.mode === "search") sections.push(this.universalSearchPolicyPrompt());
-    if (!policy.includeToolProtocol && policy.includeToolCatalog) {
-      sections.push(this.lightweightCapabilityPolicyPrompt(prompt));
-    }
-    // The hidden English "Payload policy: lightweight turn …" rules were removed
-    // (user request): they suppressed tool actions on ordinary questions and were
-    // not part of the system prompt, global memory, or any user-visible context.
+    // Per-turn payload stays limited to the four base modules (system prompt,
+    // global memory, session history, latest user prompt / tool results).
+    // No plugin-authored encouragement or prohibition text: the model decides
+    // on its own whether to use tools; anything that must ship every turn
+    // belongs to the user's 全局记忆.md file.
     return sections.filter(Boolean).join("\n\n");
   }
 
@@ -48839,15 +48838,6 @@ class CancipView extends ItemView {
       "Automation fields: schedule supports manual/hourly/daily; watchNewFiles=true also listens for file creation; newFilePattern accepts comma-separated globs; newFileDebounceSeconds batches bursts.",
       "notifyMode supports inherit/always/failure/never and independently controls notifications; automations always run in the background runner without opening or switching sessions. Keep notifications brief and structured as task/result; automation never bypasses approval or review for risky writes.",
       "Do not create a Plan for a one-action automation. Create and follow a Plan only when at least two independent steps genuinely need tracking."
-    ].join("\n");
-  }
-
-  private lightweightCapabilityPolicyPrompt(prompt: string): string {
-    void prompt;
-    return [
-      "Capability turn.",
-      "Do not guess or ask for files. Use the smallest useful action from the tool index.",
-      "If blocked, name the failed and next executable routes."
     ].join("\n");
   }
 
