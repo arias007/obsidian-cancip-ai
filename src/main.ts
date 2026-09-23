@@ -43537,7 +43537,15 @@ class CancipView extends ItemView {
       const answerHasExecutableActions = !suppressToolActions && extractedActions.length > 0;
       const initialProtocolIssue = suppressToolActions ? "" : cancipActionProtocolIssue(answer);
       const rawVisibleAnswer = answerHasExecutableActions || initialProtocolIssue ? "" : visibleAssistantAnswer(answer, suppressToolActions);
-      const visibleAnswer = rawVisibleAnswer;
+      let visibleAnswer = rawVisibleAnswer;
+      // "我先看一下…" 这类意图说明是过程，不是最终回答：单独记为中途说明步骤，
+      // 然后按"无可见回答/动作"走重试，绝不让它穿上最终回答的外衣。
+      let narrationOnlyFinal = false;
+      if (visibleAnswer && this.looksLikeProcessNarration(visibleAnswer)) {
+        this.addNarrationProcessStep(visibleAnswer);
+        visibleAnswer = "";
+        narrationOnlyFinal = true;
+      }
       this.updateModelProcessAuditSections(generationStep, answer, visibleAnswer);
       this.updateProgressStep(generationStep, this.generationStepSummary(this.t("generating"), this.currentModelCharUsageText()), this.formatGenerationAuditDetail(modelPrompt, context, activeProfile, answer, visibleAnswer, rawPrompt));
       const assistantMessage = visibleAnswer ? this.addMessage("assistant", visibleAnswer) : undefined;
@@ -43550,7 +43558,13 @@ class CancipView extends ItemView {
           const retryActions = extractCancipActions(retryAnswer);
           const retryHasActions = !suppressToolActions && retryActions.length > 0;
           const retryProtocolIssue = suppressToolActions ? "" : cancipActionProtocolIssue(retryAnswer);
-          const retryVisible = retryHasActions || retryProtocolIssue ? "" : visibleAssistantAnswer(retryAnswer, suppressToolActions);
+          const retryVisibleRaw = retryHasActions || retryProtocolIssue ? "" : visibleAssistantAnswer(retryAnswer, suppressToolActions);
+          let retryVisible = retryVisibleRaw;
+          if (retryVisible && this.looksLikeProcessNarration(retryVisible)) {
+            this.addNarrationProcessStep(retryVisible);
+            retryVisible = "";
+            narrationOnlyFinal = true;
+          }
           const retryMessage = retryVisible ? this.addMessage("assistant", retryVisible) : undefined;
           if (retryMessage) this.attachChoiceSource(retryMessage, retryAnswer);
           if (retryMessage) this.renderMessagesAfterMutation();
@@ -43560,7 +43574,9 @@ class CancipView extends ItemView {
             this.markResumableTask(taskGoal, "failed");
             this.addModelFailureFinal(taskGoal, retryProtocolIssue || initialProtocolIssue
               ? invalidCancipActionFailureReason(retryProtocolIssue || initialProtocolIssue, isChineseLanguage(this.plugin.language()))
-              : this.t("emptyApiReply"), startedAt);
+              : narrationOnlyFinal
+                ? (isChineseLanguage(this.plugin.language()) ? "模型只返回过程说明，没有给出回答或动作。" : "The model only returned process narration without an answer or action.")
+                : this.t("emptyApiReply"), startedAt);
             await this.finishCurrentSessionStatus("failed", true, request);
             return;
           }
@@ -49679,6 +49695,22 @@ class CancipView extends ItemView {
     const remaining = modelReplyTruncationReason(this.lastModelCallAudit?.responseJson, combined);
     if (remaining) throw new Error(`model reply remained incomplete after continuation: ${remaining}`);
     return combined;
+  }
+
+  private looksLikeProcessNarration(text: string): boolean {
+    const trimmed = text.trim();
+    if (!trimmed || trimmed.length > 160) return false;
+    if (extractCancipActions(trimmed).length) return false;
+    return /(我先|让我|我来|我看一下|我看下|我看下|稍等|正在查看|正在读取|正在检查|正在打开|正在整理|接下来我|首先我|我去看|让我看看|让我先|let me\b|i'll (?:first|check|look))/i.test(trimmed);
+  }
+
+  private addNarrationProcessStep(text: string): void {
+    const chinese = isChineseLanguage(this.plugin.language());
+    const title = chinese ? "中途说明" : "Intermediate note";
+    const step = this.addProgressStep(title, text, this.t("toolRunExecuted"));
+    step.content = `${step.content}\n<!-- cancip-step-title:${title} -->`;
+    void this.saveCurrentSession();
+    this.renderMessagesAfterMutation();
   }
 
   private async retryEmptyAssistantReply(
@@ -64912,6 +64944,8 @@ class CancipView extends ItemView {
 
   private isLowSignalModelProcessStep(step: ProcessRecordStep): boolean {
     const message = step.rendered.message;
+    // Explicit titled steps (发送/接收/运行/中途说明) are always standalone rows.
+    if (step.overrideTitle) return false;
     // A genuine reasoning row is intentionally kept as its own DSH-style
     // Think disclosure.  Only protocol-only model lifecycle rows are folded
     // into the adjacent actionable row.
@@ -65070,6 +65104,46 @@ class CancipView extends ItemView {
     return output;
   }
 
+  private expandExchangeAuditStep(step: ProcessRecordStep): ProcessRecordStep[] {
+    const sections = step.auditSections;
+    if (!sections.length || sections.length < 2 || step.rendered.message.toolRuns?.length) return [step];
+    const chinese = isChineseLanguage(this.plugin.language());
+    const counters = { sent: 0, received: 0, runtime: 0 };
+    return sections.map((section, index) => {
+      let label: string;
+      if (section.group === "sent") {
+        counters.sent += 1;
+        label = chinese ? `发送 ${counters.sent}` : `Sent ${counters.sent}`;
+      } else if (section.group === "received") {
+        counters.received += 1;
+        label = chinese ? `接收 ${counters.received}` : `Received ${counters.received}`;
+      } else {
+        counters.runtime += 1;
+        label = chinese ? `运行${counters.runtime > 1 ? ` ${counters.runtime}` : ""}` : `Runtime${counters.runtime > 1 ? ` ${counters.runtime}` : ""}`;
+      }
+      const last = index === sections.length - 1;
+      const message = last
+        ? step.rendered.message
+        : { ...step.rendered.message, modelUsage: undefined, modelTiming: undefined };
+      return {
+        ...step,
+        rendered: { ...step.rendered, message },
+        kind: "result" as ProcessStepKind,
+        reasoningSummary: "",
+        reasoningDetail: "",
+        headline: "",
+        brief: { reasoning: "", action: "", result: "", next: "" },
+        readableDetail: "",
+        detail: "",
+        blocks: [],
+        auditSections: [section],
+        hasDetail: true,
+        count: 1,
+        overrideTitle: label
+      };
+    });
+  }
+
   private renderProcessRecord(items: RenderedMessage[]): void {
     this.liveProcessRecordActive = Boolean(this.activeRequest);
     let latestUserIndex = -1;
@@ -65148,11 +65222,12 @@ class CancipView extends ItemView {
           auditSections,
           hasDetail,
           count: 1,
-          elapsedMs: this.processRecordStepElapsedMs(normalizedRendered.message)
+          elapsedMs: this.processRecordStepElapsedMs(normalizedRendered.message),
+          overrideTitle: normalizedRendered.message.content.match(/<!--\s*cancip-step-title:([^>]+?)\s*-->/i)?.[1]?.trim() || undefined
         };
       })
       .filter((step) => {
-        const title = this.processStepTitleFromBrief(step.brief, step.headline);
+        const title = step.overrideTitle || this.processStepTitleFromBrief(step.brief, step.headline);
         const message = step.rendered.message;
         const hasLiveTelemetry = Boolean(message.modelUsage || message.modelTiming || this.progressStepTimers.has(message.id));
         // A live row may not have a readable title yet. Keep it as a stable
@@ -65161,7 +65236,10 @@ class CancipView extends ItemView {
         return Boolean(title) && (step.hasDetail || step.headline.length > 0 || hasLiveTelemetry)
           || hasLiveTelemetry;
       });
-    const steps = this.coalesceLowSignalModelSteps(this.dedupeProcessRecordSteps(rawSteps));
+    // 每个发送/接收/运行都是单独步骤：把一次模型交换的原始收发审计区块
+    // 拆成独立的步骤卡片，而不是折叠在同一张"模型回复"卡片里。
+    const expandedSteps = rawSteps.flatMap((step) => this.expandExchangeAuditStep(step));
+    const steps = this.coalesceLowSignalModelSteps(this.dedupeProcessRecordSteps(expandedSteps));
     if (!steps.length) return;
     const processFoldKey = this.processRecordFoldKey(items);
     const item = this.messagesEl.createDiv({ cls: "obcc-message obcc-assistant is-process-record" });
@@ -65218,14 +65296,16 @@ class CancipView extends ItemView {
       const conciseReceivedTitle = /^完成\s*[:：]/i.test(generatedTitle)
         ? (stepInfo.reasoningSummary || (isChineseLanguage(this.plugin.language()) ? "模型回复" : "Model response"))
         : generatedTitle;
-      const processTitle = stepInfo.kind === "think"
-        ? (isChineseLanguage(this.plugin.language()) ? "思考" : "Thinking")
-        : stepInfo.kind === "context"
-          ? (isChineseLanguage(this.plugin.language()) ? "准备上下文" : "Prepare context")
-          : conciseReceivedTitle
-            || (stepInfo.rendered.message.modelUsage || stepInfo.rendered.message.modelTiming
-              ? (isChineseLanguage(this.plugin.language()) ? "模型处理中" : "Model processing")
-              : (isChineseLanguage(this.plugin.language()) ? "过程步骤" : "Process step"));
+      const processTitle = stepInfo.overrideTitle
+        ? stepInfo.overrideTitle
+        : stepInfo.kind === "think"
+          ? (isChineseLanguage(this.plugin.language()) ? "思考" : "Thinking")
+          : stepInfo.kind === "context"
+            ? (isChineseLanguage(this.plugin.language()) ? "准备上下文" : "Prepare context")
+            : conciseReceivedTitle
+              || (stepInfo.rendered.message.modelUsage || stepInfo.rendered.message.modelTiming
+                ? (isChineseLanguage(this.plugin.language()) ? "模型处理中" : "Model processing")
+                : (isChineseLanguage(this.plugin.language()) ? "过程步骤" : "Process step"));
       stepTitle.createSpan({
         cls: "obcc-process-step-title-text",
         text: stepInfo.count > 1 ? `${processTitle} x${stepInfo.count}` : processTitle

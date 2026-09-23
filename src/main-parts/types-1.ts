@@ -1591,6 +1591,7 @@ export type ProcessRecordStep = {
   hasDetail: boolean;
   count: number;
   elapsedMs: number;
+  overrideTitle?: string;
 };
 
 export type ToolRunDisplayGroup = {
