@@ -399,7 +399,13 @@ export class CancipQueueBridge {
         const path = requirePath(command);
         const data = typeof command.data === "string" ? command.data : "";
         if (await adapter.exists(path)) await adapter.write(path, data);
-        else await vault.create(path, data);
+        else {
+          // A write that targets a missing folder creates it instead of failing
+          // with a confusing ENOENT — mkdir-then-write is what callers expect.
+          const parent = path.split("/").slice(0, -1).join("/");
+          if (parent && !(await adapter.exists(parent))) await vault.createFolder(parent);
+          await vault.create(path, data);
+        }
         return { written: path, bytes: data.length };
       }
 

@@ -52784,7 +52784,7 @@ class CancipView extends ItemView {
     const buttonDirective = this.uiButtonWorkflowDirective(taskRuns, this.previousActionableUserPrompt());
     actions = uniqueCancipActions(actions.map((action) => this.prepareUiButtonWorkflowAction(action, buttonDirective)));
     const previous = taskRuns.filter((run) => run.status !== "rejected" && run.status !== "blocked");
-    const previousBudgeted = taskRuns.filter((run) => run.status !== "rejected" && countsTowardToolActionBudget(run.action));
+    const previousBudgeted = taskRuns.filter((run) => run.status !== "rejected" && countsTowardToolActionBudgetEx(run.action));
     const taskLimit = this.activeAutomationTaskId ? MAX_AUTOMATION_TOOL_ACTIONS_PER_TASK : MAX_TOOL_ACTIONS_PER_TASK;
     const previousByKey = new Map(previous.map((run) => [stableCacheKey(run.action), run] as const));
     const seen = new Set(previousByKey.keys());
@@ -52815,7 +52815,7 @@ class CancipView extends ItemView {
         reason = this.duplicateActionBlockedReason(action, prior);
       }
       else if (accepted >= MAX_TOOL_ACTIONS_PER_BATCH) reason = `Action batch limit reached (${MAX_TOOL_ACTIONS_PER_BATCH}); finish from completed results.`;
-      else if (countsTowardToolActionBudget(action) && previousBudgeted.length + acceptedBudgeted >= taskLimit) reason = `Task action budget reached (${taskLimit}); no more tools may run in this task. Give the final answer now.`;
+      else if (countsTowardToolActionBudgetEx(action) && previousBudgeted.length + acceptedBudgeted >= taskLimit) reason = `Task action budget reached (${taskLimit}); no more tools may run in this task. Give the final answer now.`;
       if (reason) {
         if (!firstBlocked) firstBlocked = { action, reason };
         continue;
@@ -52823,7 +52823,7 @@ class CancipView extends ItemView {
       seen.add(key);
       runs.push(this.createToolRun(action));
       accepted += 1;
-      if (countsTowardToolActionBudget(action)) acceptedBudgeted += 1;
+      if (countsTowardToolActionBudgetEx(action)) acceptedBudgeted += 1;
     }
     if (firstBlocked) {
       const blocked = this.createToolRun(firstBlocked.action);
@@ -52979,7 +52979,7 @@ class CancipView extends ItemView {
     const limit = this.activeAutomationTaskId ? MAX_AUTOMATION_TOOL_ACTIONS_PER_TASK : MAX_TOOL_ACTIONS_PER_TASK;
     return this.currentTaskToolRuns().filter((run) =>
       run.status !== "rejected"
-      && countsTowardToolActionBudget(run.action)
+      && countsTowardToolActionBudgetEx(run.action)
     ).length >= limit;
   }
 
@@ -74212,6 +74212,13 @@ function runtimeI18nTemplate(key: I18nKey, template: string): string {
 
 function canExecuteWithoutApproval(action: CancipAction): boolean {
   return action.type === "todo" || isReadOnlyAction(action);
+}
+
+function countsTowardToolActionBudgetEx(action: CancipAction): boolean {
+  // The per-task action budget exists to stop runaway mutation loops, not to
+  // block discovery: read-only actions (read, search, currentView, list…) are
+  // unlimited and never consume it.
+  return countsTowardToolActionBudget(action) && !isReadOnlyAction(action);
 }
 
 function isReadOnlyAction(action: CancipAction): boolean {
