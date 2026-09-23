@@ -65134,46 +65134,6 @@ class CancipView extends ItemView {
     return output;
   }
 
-  private expandExchangeAuditStep(step: ProcessRecordStep): ProcessRecordStep[] {
-    const sections = step.auditSections;
-    if (!sections.length || sections.length < 2 || step.rendered.message.toolRuns?.length) return [step];
-    const chinese = isChineseLanguage(this.plugin.language());
-    const counters = { sent: 0, received: 0, runtime: 0 };
-    return sections.map((section, index) => {
-      let label: string;
-      if (section.group === "sent") {
-        counters.sent += 1;
-        label = chinese ? `发送 ${counters.sent}` : `Sent ${counters.sent}`;
-      } else if (section.group === "received") {
-        counters.received += 1;
-        label = chinese ? `接收 ${counters.received}` : `Received ${counters.received}`;
-      } else {
-        counters.runtime += 1;
-        label = chinese ? `运行${counters.runtime > 1 ? ` ${counters.runtime}` : ""}` : `Runtime${counters.runtime > 1 ? ` ${counters.runtime}` : ""}`;
-      }
-      const last = index === sections.length - 1;
-      const message = last
-        ? step.rendered.message
-        : { ...step.rendered.message, modelUsage: undefined, modelTiming: undefined };
-      return {
-        ...step,
-        rendered: { ...step.rendered, message },
-        kind: "result" as ProcessStepKind,
-        reasoningSummary: "",
-        reasoningDetail: "",
-        headline: "",
-        brief: { reasoning: "", action: "", result: "", next: "" },
-        readableDetail: "",
-        detail: "",
-        blocks: [],
-        auditSections: [section],
-        hasDetail: true,
-        count: 1,
-        overrideTitle: label
-      };
-    });
-  }
-
   private renderProcessRecord(items: RenderedMessage[]): void {
     this.liveProcessRecordActive = Boolean(this.activeRequest);
     let latestUserIndex = -1;
@@ -65266,10 +65226,8 @@ class CancipView extends ItemView {
         return Boolean(title) && (step.hasDetail || step.headline.length > 0 || hasLiveTelemetry)
           || hasLiveTelemetry;
       });
-    // 每个发送/接收/运行都是单独步骤：把一次模型交换的原始收发审计区块
-    // 拆成独立的步骤卡片，而不是折叠在同一张"模型回复"卡片里。
-    const expandedSteps = rawSteps.flatMap((step) => this.expandExchangeAuditStep(step));
-    const steps = this.coalesceLowSignalModelSteps(this.dedupeProcessRecordSteps(expandedSteps));
+    // 发送/接收审计区块合并在同一张步骤卡片里展示（不按 sent/received 拆成多张）。
+    const steps = this.coalesceLowSignalModelSteps(this.dedupeProcessRecordSteps(rawSteps));
     if (!steps.length) return;
     const processFoldKey = this.processRecordFoldKey(items);
     const item = this.messagesEl.createDiv({ cls: "obcc-message obcc-assistant is-process-record" });
