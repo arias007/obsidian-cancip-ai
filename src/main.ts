@@ -48678,12 +48678,26 @@ class CancipView extends ItemView {
       || needTaskContinuity
       || hasMentions
       || promptRequiresStateChange(prompt);
+    // Memory-only informational turns (identity questions, recall, chat) need
+    // the memory context and a minimal read-only tool entry, but they never
+    // need the full todo/plan response protocol or the final-answer format
+    // block. Reserve those for turns that can actually act.
+    const actionProtocolNeed = directVaultFileTask
+      || externalPathTask
+      || implementation
+      || capabilityNeed
+      || pluginNeed
+      || skillExperienceNeed
+      || cancipSelfNeed
+      || needTaskContinuity
+      || hasMentions
+      || promptRequiresStateChange(prompt);
     return {
       intent,
       compactStateChange,
-      includeToolProtocol: toolNeed,
+      includeToolProtocol: actionProtocolNeed,
       includeToolCatalog: toolNeed,
-      includeDetailedToolProtocol: toolNeed && detailedToolHelpNeed,
+      includeDetailedToolProtocol: actionProtocolNeed && detailedToolHelpNeed,
       includeAccessPrompt: implementation || promptRequiresStateChange(prompt) || cancipSelfNeed,
       // Once task state is present it already carries the previous goal,
       // plan, conclusion, and latest tool result. Sending the full recent
