@@ -52760,7 +52760,23 @@ class CancipView extends ItemView {
       let reason = "";
       const workflowReason = this.uiButtonWorkflowActionBlockReason(action, buttonDirective);
       if (workflowReason) reason = workflowReason;
-      else if (seen.has(key)) reason = this.duplicateActionBlockedReason(action, previousByKey.get(key));
+      else if (seen.has(key)) {
+        const prior = previousByKey.get(key);
+        // Idempotent replay: queue/transport retries reuse the same explicit
+        // action id. A read-only action that already executed carries no state
+        // change, so return the previous result instead of a blocked row.
+        const actionArgs = (action as { args?: Record<string, unknown> }).args ?? {};
+        const explicitId = typeof actionArgs.id === "string" ? actionArgs.id : "";
+        if (prior && prior.status === "executed" && isReadOnlyAction(action) && explicitId) {
+          const replay = this.createToolRun(action);
+          replay.status = "executed";
+          replay.executedAt = new Date().toISOString();
+          replay.result = `${(prior.result ?? "").trim()}\n\n（幂等重放：相同 action id 已执行过，未重新执行，返回前次结果）`;
+          runs.push(replay);
+          continue;
+        }
+        reason = this.duplicateActionBlockedReason(action, prior);
+      }
       else if (accepted >= MAX_TOOL_ACTIONS_PER_BATCH) reason = `Action batch limit reached (${MAX_TOOL_ACTIONS_PER_BATCH}); finish from completed results.`;
       else if (countsTowardToolActionBudget(action) && previousBudgeted.length + acceptedBudgeted >= taskLimit) reason = `Task action budget reached (${taskLimit}); no more tools may run in this task. Give the final answer now.`;
       if (reason) {
@@ -64325,15 +64341,20 @@ class CancipView extends ItemView {
       this.renderSingleMessage(renderItem, finalAssistantIndex);
     }
     flushProcessGroup();
-    // A trailing process group must never render below the final answer: keep
-    // the collapsed process record above the final message, matching the
-    // split-final path that hoists embedded process blocks.
+    // A same-turn trailing process group must not render below the final
+    // answer: hoist it above the final message, matching the split-final path.
+    // Process records created AFTER the final answer belong to later activity
+    // (follow-up turns, queue/automation work) and stay in place so the
+    // transcript keeps chronological order.
     const finalAnswerEl = this.messagesEl.querySelector<HTMLElement>(".obcc-message.is-final-answer");
     if (finalAnswerEl) {
-      let trailing = finalAnswerEl.nextElementSibling;
+      const finalCreatedAt = finalAssistantIndex >= 0 ? Number(rendered[finalAssistantIndex]?.message.createdAt ?? 0) : 0;
+      let trailing = finalAnswerEl.nextElementSibling as HTMLElement | null;
       while (trailing?.classList.contains("is-process-record")) {
         const move = trailing;
-        trailing = trailing.nextElementSibling;
+        trailing = trailing.nextElementSibling as HTMLElement | null;
+        const moveCreatedAt = Number(move.dataset.processLatestCreatedAt ?? 0);
+        if (finalCreatedAt && moveCreatedAt && moveCreatedAt > finalCreatedAt) break;
         this.messagesEl.insertBefore(move, finalAnswerEl);
       }
     }
@@ -65152,6 +65173,7 @@ class CancipView extends ItemView {
     const processFoldKey = this.processRecordFoldKey(items);
     const item = this.messagesEl.createDiv({ cls: "obcc-message obcc-assistant is-process-record" });
     item.dataset.messageId = processFoldKey.replace(/^process-record:/, "process-");
+    item.dataset.processLatestCreatedAt = String(Math.max(0, ...items.map((info) => Number(info.message.createdAt ?? 0))));
     const contentEl = item.createDiv({ cls: "obcc-content markdown-rendered obcc-process-record-content" });
     const details = contentEl.createEl("details", { cls: "obcc-process-summary obcc-process-record-details" });
     const liveProcessRecord = Boolean(this.activeRequest) && steps.some((step) => step.rendered.index > latestUserIndex);
