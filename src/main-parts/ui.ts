@@ -1175,6 +1175,12 @@ export function stripModelReasoningArtifacts(content: string): string {
   // 从可见文本中删除；独立成行的标记整行删除，行内成对标记连同参数一并删除。
   text = text.replace(/^[^\S\n]*<\s*[/|｜]{0,3}\s*dsml\s*[|｜]{0,3}[^>\n]*>[^\S\n]*$/gim, "");
   text = text.replace(/<\s*[/|｜]{0,3}\s*dsml\s*[|｜]{0,3}[^>\n]*>([\s\S]{0,400}?)<\s*[/|｜]{0,3}\s*dsml\s*[|｜]{0,3}[^>\n]*>/gi, "\n\n");
+  // deepseek 内部安全分类标记（<ds_safety>[判定]…</ds_safety>）经代理泄漏成
+  // 正文时对用户是噪音；整块删除，闭合标签后紧跟的孤立 Safe/Unsafe 分类词一并删除。
+  // 未闭合的 <ds_safety> 到结尾视为泄漏尾部，整段删除。
+  text = text.replace(/<ds_safety\b[^>]*>[\s\S]*?<\/ds_safety>\s*(?:Safe|Unsafe)?/gi, "\n\n");
+  text = text.replace(/<ds_safety\b[^>]*\/>/gi, "\n\n");
+  text = text.replace(/<ds_safety\b[^>]*>[\s\S]*$/gi, "\n\n");
   text = foldReasoningSections(text, hidden);
   return foldModelReasoningArtifacts(text, hidden);
 }
