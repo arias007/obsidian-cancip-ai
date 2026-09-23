@@ -327,209 +327,240 @@ export class CancipQueueBridge {
   }
 
   private async execute(command: Record<string, unknown>, op: string): Promise<unknown> {
-    const vault = this.app.vault;
-    const adapter = vault.adapter;
-    switch (op) {
-      case "ping":
-        return {
-          pong: true,
-          bridge: "Cancip Queue Bridge",
-          protocol: QUEUE_BRIDGE_PROTOCOL_VERSION,
-          v: this.pluginVersion,
-          vault: vault.getName(),
-          files: vault.getFiles().length,
-          dir: this.dir(),
-          ticks: this.ticks,
-          done: this.executed
-        };
-
-      case "status":
-        return { transport: "queue", ...this.stats(), ...this.handlers.status() };
-
-      case "capabilities":
-        return await this.handlers.capabilities();
-
-      case "list": {
-        const prefix = commandString(command.prefix);
-        let files = vault.getFiles().map((file) => ({ p: file.path, s: file.stat?.size ?? 0, m: file.stat?.mtime ?? 0 }));
-        if (prefix) files = files.filter((entry) => entry.p.startsWith(prefix));
-        const out = commandString(command.out);
-        if (out) {
-          await adapter.write(out, JSON.stringify(files));
-          return { count: files.length, out };
-        }
-        return { count: files.length, files };
-      }
-
-      case "stat": {
-        const path = requirePath(command);
-        const file = vault.getAbstractFileByPath(path);
-        if (!file) return { exists: false, path };
-        return {
-          exists: true,
-          path,
-          folder: isFolderLike(file),
-          size: file.stat?.size ?? null,
-          mtime: file.stat?.mtime ?? null
-        };
-      }
-
-      case "read": {
-        const path = requirePath(command);
-        const out = commandString(command.out);
-        if (out) {
-          if (!(await adapter.exists(path))) return { missing: path };
-          const data = await adapter.read(path);
-          await adapter.write(out, data);
-          return { path, out, bytes: data.length };
-        }
-        // Without an `out` target this is Cancip's richer read: it understands
-        // `query`, `startLine`, `endLine` and `maxChars`, and falls back to a
-        // plain file read when only `path` was supplied.
-        return await this.handlers.read({
-          path,
-          query: commandString(command.query),
-          startLine: command.startLine,
-          endLine: command.endLine,
-          maxChars: command.maxChars
-        });
-      }
-
-      case "write": {
-        const path = requirePath(command);
-        const data = typeof command.data === "string" ? command.data : "";
-        if (await adapter.exists(path)) await adapter.write(path, data);
-        else {
-          // A write that targets a missing folder creates it instead of failing
-          // with a confusing ENOENT — mkdir-then-write is what callers expect.
-          const parent = path.split("/").slice(0, -1).join("/");
-          if (parent && !(await adapter.exists(parent))) await vault.createFolder(parent);
-          await vault.create(path, data);
-        }
-        return { written: path, bytes: data.length };
-      }
-
-      case "mkdir": {
-        const path = requirePath(command);
-        if (!(await adapter.exists(path))) await vault.createFolder(path);
-        return { dir: path };
-      }
-
-      case "move": {
-        const from = requirePath(command, "from");
-        const to = commandString(command.to).trim();
-        if (!to) throw new Error("move requires a to.");
-        const source = vault.getAbstractFileByPath(from);
-        if (!source) throw new Error(`not found: ${from}`);
-        await this.app.fileManager.renameFile(source, to);
-        return { from, to };
-      }
-
-      case "delete": {
-        const requested = Array.isArray(command.paths) ? command.paths : [];
-        const paths: string[] = requested.filter((value): value is string => typeof value === "string");
-        const single = commandString(command.path);
-        if (single) paths.push(single);
-        const hard = command.hard === true;
-        const report = { total: paths.length, trashed: 0, hard: 0, missing: [] as string[], errors: [] as string[] };
-        for (let index = 0; index < paths.length; index += 1) {
-          const path = paths[index];
-          try {
-            const file = vault.getAbstractFileByPath(path);
-            if (!file) {
-              if (report.missing.length < MISSING_REPORT_LIMIT) report.missing.push(path);
-              continue;
-            }
-            if (hard) {
-              if (isFolderLike(file)) await adapter.rmdir(path, true);
-              else await adapter.remove(path);
-              report.hard += 1;
-            } else {
-              await this.app.fileManager.trashFile(file);
-              report.trashed += 1;
-            }
-          } catch (error) {
-            if (report.errors.length < ERROR_REPORT_LIMIT) {
-              report.errors.push(`${path}: ${error instanceof Error ? error.message : String(error)}`);
-            }
-          }
-          if (index % YIELD_EVERY === YIELD_EVERY - 1) {
-            await new Promise<void>((resolve) => {
-              setTimeout(() => resolve(), 0);
-            });
-          }
-        }
-        return report;
-      }
-
-      case "cmds": {
-        const filter = commandString(command.filter);
-        const ids = Object.keys(this.app.commands.commands).sort();
-        const matched = filter ? ids.filter((id) => id.includes(filter)) : ids;
-        return { count: matched.length, ids: matched };
-      }
-
-      case "cmd":
-      case "sync": {
-        const fallback = op === "sync" ? "remotely-save:start-sync" : "";
-        const commandId = commandString(command.command) || commandString(command.name) || fallback;
-        if (!commandId) throw new Error(`${op} requires a command.`);
-        return { command: commandId, executed: this.app.commands.executeCommandById(commandId) };
-      }
-
-      case "notice": {
-        const text = commandString(command.text);
-        this.handlers.notice(text);
-        return { shown: true, text };
-      }
-
-      case "open": {
-        const path = requirePath(command);
-        return await this.handlers.open({
-          path,
-          query: commandString(command.query),
-          targetKind: commandString(command.targetKind) || "file"
-        });
-      }
-
-      case "eval": {
-        const code = commandString(command.code);
-        if (!code.trim()) throw new Error("eval requires code.");
-        return await this.handlers.evalCode(code, command);
-      }
-
-      case "search":
-        return await this.handlers.search({
-          query: commandString(command.query),
-          limit: command.limit,
-          scope: commandString(command.scope),
-          includeConfigs: command.includeConfigs === true,
-          includeArchived: command.includeArchived === true
-        });
-
-      case "prompt": {
-        const prompt = commandString(command.prompt) || commandString(command.text);
-        if (!prompt.trim()) throw new Error("prompt requires a prompt.");
-        return await this.handlers.prompt({ prompt });
-      }
-
-      case "action": {
-        const batch = Array.isArray(command.actions) ? command.actions : command.action ? [command.action] : [];
-        if (!batch.length) throw new Error("action requires action or actions.");
-        return await this.handlers.action({ actions: batch });
-      }
-
-      case "agent.run":
-      case "agentrun":
-        return await this.handlers.agentRun({
-          provider: commandString(command.provider) || "auto",
-          model: commandString(command.model),
-          system: commandString(command.system),
-          prompt: commandString(command.prompt)
-        });
-
-      default:
-        throw new Error(`unknown op: ${op}`);
-    }
+    return await executeVaultOp(command, op, {
+      app: this.app,
+      handlers: this.handlers,
+      pluginVersion: this.pluginVersion,
+      dir: () => this.dir(),
+      ticks: () => this.ticks,
+      executed: () => this.executed,
+      stats: () => this.stats()
+    });
   }
+}
+
+/**
+ * Injection surface for the shared vault-operation executor.
+ *
+ * The HTTP Agent Bridge and the file-queue bridge both call executeVaultOp,
+ * so an outside caller gets the same operation surface on either leg: the
+ * queue keeps working on mobile, and the HTTP leg keeps working while
+ * Obsidian sits in the background (its timers are throttled, HTTP is not).
+ */
+export type VaultOpsContext = {
+  app: QueueBridgeAppLike;
+  handlers: QueueBridgeHandlers;
+  pluginVersion: string;
+  dir(): string;
+  ticks(): number;
+  executed(): number;
+  stats(): Record<string, unknown>;
+};
+
+export async function executeVaultOp(command: Record<string, unknown>, op: string, ctx: VaultOpsContext): Promise<unknown> {
+  const vault = ctx.app.vault;
+  const adapter = vault.adapter;
+  switch (op) {
+    case "ping":
+      return {
+        pong: true,
+        bridge: "Cancip Queue Bridge",
+        protocol: QUEUE_BRIDGE_PROTOCOL_VERSION,
+        v: ctx.pluginVersion,
+        vault: vault.getName(),
+        files: vault.getFiles().length,
+        dir: ctx.dir(),
+        ticks: ctx.ticks(),
+        done: ctx.executed()
+      };
+
+    case "status":
+      return { transport: "queue", ...ctx.stats(), ...ctx.handlers.status() };
+
+    case "capabilities":
+      return await ctx.handlers.capabilities();
+
+    case "list": {
+      const prefix = commandString(command.prefix);
+      let files = vault.getFiles().map((file) => ({ p: file.path, s: file.stat?.size ?? 0, m: file.stat?.mtime ?? 0 }));
+      if (prefix) files = files.filter((entry) => entry.p.startsWith(prefix));
+      const out = commandString(command.out);
+      if (out) {
+        await adapter.write(out, JSON.stringify(files));
+        return { count: files.length, out };
+      }
+      return { count: files.length, files };
+    }
+
+    case "stat": {
+      const path = requirePath(command);
+      const file = vault.getAbstractFileByPath(path);
+      if (!file) return { exists: false, path };
+      return {
+        exists: true,
+        path,
+        folder: isFolderLike(file),
+        size: file.stat?.size ?? null,
+        mtime: file.stat?.mtime ?? null
+      };
+    }
+
+    case "read": {
+      const path = requirePath(command);
+      const out = commandString(command.out);
+      if (out) {
+        if (!(await adapter.exists(path))) return { missing: path };
+        const data = await adapter.read(path);
+        await adapter.write(out, data);
+        return { path, out, bytes: data.length };
+      }
+      // Without an `out` target this is Cancip's richer read: it understands
+      // `query`, `startLine`, `endLine` and `maxChars`, and falls back to a
+      // plain file read when only `path` was supplied.
+      return await ctx.handlers.read({
+        path,
+        query: commandString(command.query),
+        startLine: command.startLine,
+        endLine: command.endLine,
+        maxChars: command.maxChars
+      });
+    }
+
+    case "write": {
+      const path = requirePath(command);
+      const data = typeof command.data === "string" ? command.data : "";
+      if (await adapter.exists(path)) await adapter.write(path, data);
+      else {
+        // A write that targets a missing folder creates it instead of failing
+        // with a confusing ENOENT — mkdir-then-write is what callers expect.
+        const parent = path.split("/").slice(0, -1).join("/");
+        if (parent && !(await adapter.exists(parent))) await vault.createFolder(parent);
+        await vault.create(path, data);
+      }
+      return { written: path, bytes: data.length };
+    }
+
+    case "mkdir": {
+      const path = requirePath(command);
+      if (!(await adapter.exists(path))) await vault.createFolder(path);
+      return { dir: path };
+    }
+
+    case "move": {
+      const from = requirePath(command, "from");
+      const to = commandString(command.to).trim();
+      if (!to) throw new Error("move requires a to.");
+      const source = vault.getAbstractFileByPath(from);
+      if (!source) throw new Error(`not found: ${from}`);
+      await ctx.app.fileManager.renameFile(source, to);
+      return { from, to };
+    }
+
+    case "delete": {
+      const requested = Array.isArray(command.paths) ? command.paths : [];
+      const paths: string[] = requested.filter((value): value is string => typeof value === "string");
+      const single = commandString(command.path);
+      if (single) paths.push(single);
+      const hard = command.hard === true;
+      const report = { total: paths.length, trashed: 0, hard: 0, missing: [] as string[], errors: [] as string[] };
+      for (let index = 0; index < paths.length; index += 1) {
+        const path = paths[index];
+        try {
+          const file = vault.getAbstractFileByPath(path);
+          if (!file) {
+            if (report.missing.length < MISSING_REPORT_LIMIT) report.missing.push(path);
+            continue;
+          }
+          if (hard) {
+            if (isFolderLike(file)) await adapter.rmdir(path, true);
+            else await adapter.remove(path);
+            report.hard += 1;
+          } else {
+            await ctx.app.fileManager.trashFile(file);
+            report.trashed += 1;
+          }
+        } catch (error) {
+          if (report.errors.length < ERROR_REPORT_LIMIT) {
+            report.errors.push(`${path}: ${error instanceof Error ? error.message : String(error)}`);
+          }
+        }
+        if (index % YIELD_EVERY === YIELD_EVERY - 1) {
+          await new Promise<void>((resolve) => {
+            setTimeout(() => resolve(), 0);
+          });
+        }
+      }
+      return report;
+    }
+
+    case "cmds": {
+      const filter = commandString(command.filter);
+      const ids = Object.keys(ctx.app.commands.commands).sort();
+      const matched = filter ? ids.filter((id) => id.includes(filter)) : ids;
+      return { count: matched.length, ids: matched };
+    }
+
+    case "cmd":
+    case "sync": {
+      const fallback = op === "sync" ? "remotely-save:start-sync" : "";
+      const commandId = commandString(command.command) || commandString(command.name) || fallback;
+      if (!commandId) throw new Error(`${op} requires a command.`);
+      return { command: commandId, executed: ctx.app.commands.executeCommandById(commandId) };
+    }
+
+    case "notice": {
+      const text = commandString(command.text);
+      ctx.handlers.notice(text);
+      return { shown: true, text };
+    }
+
+    case "open": {
+      const path = requirePath(command);
+      return await ctx.handlers.open({
+        path,
+        query: commandString(command.query),
+        targetKind: commandString(command.targetKind) || "file"
+      });
+    }
+
+    case "eval": {
+      const code = commandString(command.code);
+      if (!code.trim()) throw new Error("eval requires code.");
+      return await ctx.handlers.evalCode(code, command);
+    }
+
+    case "search":
+      return await ctx.handlers.search({
+        query: commandString(command.query),
+        limit: command.limit,
+        scope: commandString(command.scope),
+        includeConfigs: command.includeConfigs === true,
+        includeArchived: command.includeArchived === true
+      });
+
+    case "prompt": {
+      const prompt = commandString(command.prompt) || commandString(command.text);
+      if (!prompt.trim()) throw new Error("prompt requires a prompt.");
+      return await ctx.handlers.prompt({ prompt });
+    }
+
+    case "action": {
+      const batch = Array.isArray(command.actions) ? command.actions : command.action ? [command.action] : [];
+      if (!batch.length) throw new Error("action requires action or actions.");
+      return await ctx.handlers.action({ actions: batch });
+    }
+
+    case "agent.run":
+    case "agentrun":
+      return await ctx.handlers.agentRun({
+        provider: commandString(command.provider) || "auto",
+        model: commandString(command.model),
+        system: commandString(command.system),
+        prompt: commandString(command.prompt)
+      });
+
+    default:
+      throw new Error(`unknown op: ${op}`);
+  }
+
 }

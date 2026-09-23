@@ -28,7 +28,7 @@ import { basename, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 
-const CLI_VERSION = "3.5.25";
+const CLI_VERSION = "3.5.26";
 const BRIDGE_PORT = 43172;
 const PORT_FALLBACK_COUNT = 8;
 const REQUEST_TIMEOUT_MS = 10 * 60_000;
@@ -46,10 +46,11 @@ const QUEUE_HEARTBEAT_STALE_MS = 60_000;
 const TRANSPORTS = ["auto", "http", "queue"];
 
 /**
- * Operations the HTTP bridge has no route for. Naming them here is what lets
- * `auto` quietly pick the queue instead of failing with a 404.
+ * Verbs without a dedicated HTTP endpoint. They are not queue-only any more:
+ * `callCancip` sends them to the generic `/v1/op` leg and keeps the queue as the
+ * fallback for older plugins and for mobile, where no HTTP port exists.
  */
-const QUEUE_ONLY_OPS = new Set([
+const GENERIC_OP_VERBS = new Set([
   "ping", "list", "stat", "write", "mkdir", "move", "delete", "cmds", "cmd", "sync", "notice", "eval"
 ]);
 
@@ -353,25 +354,35 @@ function requestedTransport(options) {
 /**
  * Single entry point for every operation, on either channel.
  *
- * `auto` prefers HTTP because it is synchronous and cheaper; it falls back to
- * the queue only when the bridge is genuinely unreachable, never when a request
- * reached the bridge and was rejected.
+ * `auto` prefers HTTP for *every* verb: routes with no dedicated endpoint go
+ * through the generic /v1/op leg, which runs the same executor the queue uses.
+ * HTTP is synchronous and keeps answering while Obsidian sits in the background
+ * (queue polling stops when Chromium throttles the plugin's timers there). The
+ * queue stays as the fallback: it is the only leg that works on mobile, and it
+ * is what an older plugin without /v1/op still answers on.
  */
 async function callCancip(context, op, payload, options) {
   const transport = requestedTransport(options);
-  const queueOnly = QUEUE_ONLY_OPS.has(op);
-  if (transport === "http" && queueOnly) {
-    throw new Error(`"${op}" needs the file-queue channel, the only leg that can perform it. Re-run without --transport http.`);
-  }
-  if (transport === "queue" || queueOnly) return await queueRequest(context, op, payload, options);
   const route = HTTP_ROUTES[op];
+  const generic = !route || GENERIC_OP_VERBS.has(op);
+  const genericBody = () => ({ op, ...payload });
+  if (transport === "queue") return await queueRequest(context, op, payload, options);
   if (transport === "http") {
-    if (!route) throw new Error(`"${op}" has no HTTP route; omit --transport http to use the file-queue channel.`);
-    return await bridgeRequest(context, route.method, route.path, route.method === "GET" ? undefined : payload);
+    return generic
+      ? await bridgeRequest(context, "POST", "/v1/op", genericBody())
+      : await bridgeRequest(context, route.method, route.path, route.method === "GET" ? undefined : payload);
   }
   const bridge = await httpBridgeOrNull(context);
-  if (bridge && route) {
-    return await bridgeRequestOn(context, bridge, route.method, route.path, route.method === "GET" ? undefined : payload);
+  if (bridge) {
+    try {
+      return generic
+        ? await bridgeRequestOn(context, bridge, "POST", "/v1/op", genericBody())
+        : await bridgeRequestOn(context, bridge, route.method, route.path, route.method === "GET" ? undefined : payload);
+    } catch (error) {
+      // A plugin that predates the generic leg answers 404 here; the queue is
+      // then the only channel that can run this verb, so fall through to it.
+      if (error?.code !== "not_found") throw error;
+    }
   }
   return await queueRequest(context, op, payload, options);
 }
@@ -732,7 +743,9 @@ Channel options:
   --wait-ms <ms>                Queue-channel answer timeout (default: 90000)
   --json                        Machine-readable output
 
-  http   listens on 127.0.0.1 with a private credential; desktop only.
+  http   listens on 127.0.0.1 with a private credential; desktop only. Runs every
+         verb (the ones without a dedicated endpoint go through /v1/op) and keeps
+         answering while Obsidian sits in the background.
   queue  appends to bridge/queue.jsonl inside the vault; works on mobile and in
          sandboxes that can only reach the vault directory. Operation names and
          file formats match arias007/minis-bridge.

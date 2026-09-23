@@ -40,6 +40,13 @@ export type AgentBridgeHandlers = {
   prompt(input: Record<string, unknown>): Promise<unknown>;
   action(input: Record<string, unknown>): Promise<unknown>;
   agentRun(input: Record<string, unknown>): Promise<unknown>;
+  /**
+   * Generic vault-operation leg. Resolves to the shared executeVaultOp, so the
+   * HTTP transport can run every operation the queue transport can -
+   * list/stat/write/mkdir/move/delete/cmds/cmd/notice/eval - and keeps working
+   * while Obsidian is backgrounded (queue polling dies when timers throttle).
+   */
+  op?(op: string, input: Record<string, unknown>): Promise<unknown> | unknown;
 };
 
 export type LocalAgentRunRequest = {
@@ -312,6 +319,21 @@ export class CancipAgentBridge {
         "/v1/action": this.handlers.action,
         "/v1/agent/run": this.handlers.agentRun
       };
+      if (path === "/v1/op" && request.method === "POST") {
+        const op = typeof this.handlers.op === "function" ? this.handlers.op : null;
+        if (!op) {
+          jsonResponse(response, 404, { ok: false, error: { code: "not_found", message: "This Cancip build exposes no generic operation route." } });
+          return;
+        }
+        const body = await readJsonBody(request);
+        const name = typeof body.op === "string" ? body.op.trim().toLowerCase() : "";
+        if (!name) {
+          jsonResponse(response, 400, { ok: false, error: { code: "bad_request", message: "op is required." } });
+          return;
+        }
+        jsonResponse(response, 200, { ok: true, result: await op(name, body) });
+        return;
+      }
       const handler = routes[path];
       if (!handler || request.method !== "POST") {
         jsonResponse(response, 404, { ok: false, error: { code: "not_found", message: "Unknown Cancip Agent Bridge route." } });

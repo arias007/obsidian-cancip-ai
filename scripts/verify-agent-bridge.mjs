@@ -120,7 +120,17 @@ assert.match(source, /queueBridgeEnabled: typeof merged\.queueBridgeEnabled === 
 assert.match(source, /"queueBridgeEnabled"/);
 
 assert.match(cliSource, /const QUEUE_SUBDIR = "bridge"/);
-assert.match(cliSource, /const QUEUE_ONLY_OPS = new Set\(/);
+// Every verb must be reachable over HTTP, not just the handful with a dedicated
+// route: the generic /v1/op leg is what keeps ls/write/cmd/eval working while
+// Obsidian is backgrounded (queue polling dies when Chromium throttles timers).
+assert.match(cliSource, /const GENERIC_OP_VERBS = new Set\(/);
+assert.match(cliSource, /"\/v1\/op"/, "the CLI must reach the generic operation leg over HTTP");
+assert.match(cliSource, /op, \.\.\.payload/, "the generic leg sends the verb plus its payload");
+assert.match(cliSource, /error\?\.code !== "not_found"\) throw error;/, "auto must fall back to the queue only for plugins without /v1/op");
+assert.doesNotMatch(cliSource, /needs the file-queue channel/, "no verb may stay queue-only");
+assert.match(source, /executeVaultOp\(input, op, \{/, "the HTTP handler must run the shared vault-op executor");
+assert.match(source, /const handlers: QueueBridgeHandlers = \{/, "one handler set must serve both transports");
+assert.match(source, /op: async \(op, input\) => await executeVaultOp/, "the handler set must expose the generic op leg");
 assert.match(cliSource, /async function queueRequest\(/);
 assert.match(cliSource, /--transport auto\|http\|queue/);
 for (const op of ["ping", "list", "stat", "write", "mkdir", "mv", "rm", "cmds", "cmd", "sync", "notice", "eval"]) {

@@ -58,7 +58,9 @@ import {
   CancipQueueBridge,
   QUEUE_BRIDGE_HEARTBEAT_MS,
   QUEUE_BRIDGE_POLL_MS,
-  type QueueBridgeAppLike
+  executeVaultOp,
+  type QueueBridgeAppLike,
+  type QueueBridgeHandlers
 } from "./queueBridge";
 import { PRIME_TTS_WORKER_GZIP_BASE64, PRIME_TTS_WORKER_VERSION } from "./generated/primeTtsWorkerSource";
 import supportCodeOneDataUrl from "./support/code-1.png";
@@ -11073,8 +11075,8 @@ export default class CancipPlugin extends Plugin {
    * matter which leg it reaches Cancip through. Keeping the handlers in one
    * place is what stops the two transports from drifting apart.
    */
-  private agentBridgeHandlers(): AgentBridgeHandlers {
-    return {
+  private agentBridgeHandlers(): QueueBridgeHandlers {
+    const handlers: QueueBridgeHandlers = {
       status: () => ({
         name: "Cancip Agent Bridge",
         pluginVersion: this.manifest.version,
@@ -11124,8 +11126,29 @@ export default class CancipPlugin extends Plugin {
           system: bridgeStringArg(input.system, 200000),
           prompt: bridgeStringArg(input.prompt, 200000)
         });
-      }
+      },
+      notice: (text: string) => {
+        new Notice(text, 4000);
+      },
+      evalCode: async (code: string, args: Record<string, unknown>) => await this.runAgentBridgeRawActions([{
+        type: "command",
+        command: "obsidian.eval",
+        args: { ...args, code }
+      }]),
+      // Generic operation leg shared by both transports: HTTP calls it through
+      // /v1/op, the queue bridge calls it through its own op dispatch. Keeping
+      // one executor means every CLI verb works on whichever leg is reachable.
+      op: async (op, input) => await executeVaultOp(input, op, {
+        app: this.app as unknown as QueueBridgeAppLike,
+        handlers,
+        pluginVersion: this.manifest.version,
+        dir: () => this.queueBridgeDir(),
+        ticks: () => this.queueBridge?.stats().ticks ?? 0,
+        executed: () => this.queueBridge?.stats().executed ?? 0,
+        stats: () => this.queueBridge?.stats() ?? {}
+      })
     };
+    return handlers;
   }
 
   /** Vault-relative directory that carries the queue bridge's three files. */
@@ -11176,17 +11199,7 @@ export default class CancipPlugin extends Plugin {
       // interface; the cast keeps that contract explicit instead of implicit.
       this.app as unknown as QueueBridgeAppLike,
       () => ({ enabled: this.settings.queueBridgeEnabled, dir: this.queueBridgeDir() }),
-      {
-        ...this.agentBridgeHandlers(),
-        notice: (text: string) => {
-          new Notice(text, 4000);
-        },
-        evalCode: async (code: string, args: Record<string, unknown>) => await this.runAgentBridgeRawActions([{
-          type: "command",
-          command: "obsidian.eval",
-          args: { ...args, code }
-        }])
-      },
+      this.agentBridgeHandlers(),
       this.manifest.version
     );
     this.queueBridge = queueBridge;

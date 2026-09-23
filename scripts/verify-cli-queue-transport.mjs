@@ -6,8 +6,8 @@
  * `verify-queue-bridge.mjs` proves the plugin side of the file queue. This gate
  * proves the *caller* side: that `cli/cancip-cli.mjs` writes a well-formed
  * command, waits for the matching result by id, fails loudly instead of hanging
- * when the plugin is not there, and refuses to send a queue-only operation down
- * the HTTP leg.
+ * when the plugin is not there, routes every verb through the HTTP leg's
+ * generic /v1/op endpoint, and keeps the queue as the fallback leg.
  *
  * It stands up a throwaway vault plus a mock consumer in a child process, then
  * runs the real CLI against it. No Obsidian instance is required, so this keeps
@@ -237,10 +237,48 @@ async function runTests() {
       );
     });
 
-    await check("--transport http refuses an operation only the queue can run", () => {
-      const result = runCli(["--transport", "http", "ping"]);
-      assert.notEqual(result.status, 0);
-      assert.match(result.stderr, /file-queue channel/);
+    await check("every verb reaches the HTTP leg through /v1/op", async () => {
+      // Regression guard for the "backgrounded Obsidian" stall: verbs without a
+      // dedicated endpoint (list/write/cmd/eval/...) used to be refused on HTTP
+      // and forced onto the queue, whose polling stops when Chromium throttles
+      // the plugin's timers. They must now run on HTTP through /v1/op.
+      const http = await import("node:http");
+      const seen = [];
+      const server = http.createServer((request, response) => {
+        let body = "";
+        request.on("data", (chunk) => { body += chunk; });
+        request.on("end", () => {
+          seen.push({ method: request.method, url: request.url, auth: request.headers.authorization, body });
+          response.setHeader("Content-Type", "application/json");
+          if (request.url === "/v1/op") {
+            const parsed = JSON.parse(body || "{}");
+            response.end(JSON.stringify({ ok: true, result: { count: 1, files: [{ p: `${parsed.op}.md`, s: 1, m: 1 }] } }));
+            return;
+          }
+          response.statusCode = 404;
+          response.end(JSON.stringify({ ok: false, error: { code: "not_found", message: "no such route" } }));
+        });
+      });
+      await new Promise((resolvePromise) => server.listen(0, "127.0.0.1", resolvePromise));
+      const port = server.address().port;
+      const dataPath = join(pluginDir, "data.json");
+      const saved = existsSync(dataPath) ? readFileSync(dataPath, "utf8") : null;
+      writeFileSync(dataPath, JSON.stringify({ agentBridgeToken: "test-token", agentBridgePort: port }));
+      try {
+        const result = runCli(["list"]);
+        assert.equal(result.status, 0, `stderr=${result.stderr}`);
+        const parsed = JSON.parse(result.stdout);
+        assert.equal(parsed.files[0].p, "list.md", "list must be answered by the generic HTTP leg");
+        const opCall = seen.find((entry) => entry.url === "/v1/op");
+        assert.ok(opCall, `the CLI must POST to /v1/op, saw ${JSON.stringify(seen.map((entry) => entry.url))}`);
+        assert.equal(opCall.method, "POST");
+        assert.equal(opCall.auth, "Bearer test-token");
+        assert.equal(JSON.parse(opCall.body).op, "list");
+      } finally {
+        if (saved !== null) writeFileSync(dataPath, saved);
+        else await rm(dataPath, { force: true });
+        await new Promise((resolvePromise) => server.close(resolvePromise));
+      }
     });
 
     await check("a missing heartbeat fails fast with an actionable message", async () => {
