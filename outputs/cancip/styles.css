@@ -2122,6 +2122,26 @@ body .obcc-code-action-layer.obcc-code-action-layer > button.copy-code-button.co
   white-space: nowrap;
 }
 
+/* The concrete commands/actions a turn ran, readable on the collapsed record
+   line itself so auditing a turn does not require opening two folds. Sits left
+   of the right-aligned timer and truncates rather than wrapping the row. */
+.obcc-process-record-commands {
+  display: inline-flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  color: var(--text-faint);
+  font-family: var(--font-monospace);
+  font-size: 10px;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .obcc-process-icon-summary {
   display: inline-flex;
   align-items: center;
