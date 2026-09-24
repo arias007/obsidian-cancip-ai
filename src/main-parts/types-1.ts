@@ -2158,6 +2158,12 @@ export type ToolRun = {
   id: string;
   action: CancipAction;
   summary: string;
+  /**
+   * Model-written one-line title for this action ("读取日记并定位今日计划").
+   * Shown on the folded tool block; when absent the UI falls back to the
+   * mechanical action label so old sessions keep rendering.
+   */
+  title?: string;
   status: ToolRunStatus;
   createdAt: string;
   startedAt?: string;

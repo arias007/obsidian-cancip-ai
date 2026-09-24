@@ -2705,6 +2705,61 @@ details.obcc-process-step {
   word-break: break-word;
 }
 
+/* A tool block folds to the model-written title of its action; expanding it
+   reveals the concrete action, the raw result, and any changed files. */
+.obcc-tool-run > summary.obcc-tool-run-head {
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.obcc-tool-run > summary.obcc-tool-run-head::-webkit-details-marker {
+  display: none;
+}
+
+.obcc-tool-run > summary.obcc-tool-run-head::marker {
+  content: "";
+}
+
+.obcc-tool-run-toggle-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  color: var(--text-faint);
+  transition: transform 120ms ease;
+}
+
+.obcc-tool-run[open] > summary .obcc-tool-run-toggle-icon {
+  transform: rotate(90deg);
+}
+
+.obcc-tool-run.has-model-title > summary .obcc-tool-run-summary {
+  font-weight: 600;
+}
+
+.obcc-tool-run-body {
+  display: grid;
+  gap: 6px;
+  margin-top: 7px;
+  min-width: 0;
+}
+
+.obcc-process-record-tokens {
+  display: inline-flex;
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
 .obcc-tool-run-actions {
   display: flex;
   flex: 0 0 auto;

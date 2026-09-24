@@ -1948,6 +1948,13 @@ let CANCIP_PLUGIN_LEARNING_INDEX_PATH = `${CANCIP_MACHINE_INDEX_DIR}/plugin-lear
 const CANCIP_PLUGIN_LEARNING_INDEX_SCHEMA_VERSION = 2;
 let CANCIP_PLUGIN_GUIDE_PATH = `${CANCIP_CONFIG_DIR}/guides/PLUGIN_COMPATIBILITY.md`;
 let CANCIP_PLUGIN_SCHEMA_PATH = `${CANCIP_CONFIG_DIR}/guides/cancip-plugin.schema.json`;
+/**
+ * User-facing tutorial. It lives in the memory folder (not the hidden config
+ * dir) because a capability manual is something the user reads and can edit;
+ * it is never injected into the per-turn payload, only linked from CANCIP_NAV.
+ */
+const CANCIP_CAPABILITY_GUIDE_FILE = "CANCIP 能力手册.md";
+const CANCIP_CAPABILITY_GUIDE_MARKER = "cancip-capability-guide";
 const CANCIP_PLUGIN_DESCRIPTOR_FILE = "cancip-plugin.json";
 let CANCIP_GENERATED_SKILLS_DIR = `${CANCIP_CONFIG_DIR}/skills/generated`;
 let CANCIP_BUILTIN_CURATION_SKILL_PATH = `${CANCIP_CONFIG_DIR}/skills/vault-curation-specified-scope.skill.md`;
@@ -2346,6 +2353,7 @@ const EN = {
   openCancip: "Open Cancip",
   commandOpenChat: "Open chat",
   commandNewChat: "New chat",
+  commandOpenCapabilityGuide: "Open capability manual",
   commandCreateInteractiveHtml: "One-click interactive HTML",
   oneClickHtmlRequirement: "Describe the interactive HTML",
   oneClickHtmlRequirementPlaceholder: "Example: a mobile-friendly flowchart with clickable steps, progress, reset, and a polished light/dark interface.",
@@ -3525,7 +3533,7 @@ const EN = {
   accessPromptFull: "Access: full. Implemented tools may read/write the Vault, dot folders, Obsidian config, .cancip, installed Cancip files, and authorized external bridges. Do not claim unavailable before trying the indexed route. Execute small auditable actions and verify from tool results; plugin hot patches are valid when source build is unavailable.",
   configWriteFailed: "Could not write .obsidian/plugins/cancip/data/config.json: {reason}",
   configReadFailed: "Could not read .obsidian/plugins/cancip/data/config.json: {reason}",
-  toolProtocol: "Tool protocol: Choose tools by user intent, not by rigid greeting/simple-chat rules. For read/list/explain/analyze questions, even if they mention plugins, settings, config, folders, GitHub, or commands, use only read-only actions such as read, search, list, status, or help, then answer directly from the tool result; do not create reports or run write-like actions unless the user explicitly asks to create, modify, move, delete, configure, install, execute, or fix something. If an action is genuinely needed, output exactly one fenced block named cancip-action containing JSON like {\"actions\":[{\"type\":\"todo\",\"op\":\"set\",\"items\":[{\"text\":\"inspect files\"},{\"text\":\"apply patch\"}]},{\"type\":\"automation\",\"op\":\"add\",\"title\":\"Daily review\",\"prompt\":\"Review open todos\",\"schedule\":\"daily\",\"hour\":9,\"minute\":15,\"sessionMode\":\"new\",\"model\":\"gpt-5\"},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"query\":\"anchor\",\"maxChars\":8000},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"startLine\":120,\"endLine\":180},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"aroundLine\":240,\"maxChars\":4000},{\"type\":\"write\",\"path\":\"Folder/Note.md\",\"content\":\"...\"},{\"type\":\"write\",\"path\":\"Folder/Large.md\",\"chunks\":[\"part 1\",\"part 2\"]},{\"type\":\"move\",\"path\":\"Folder/Old.md\",\"newPath\":\"Folder/New.md\"},{\"type\":\"move\",\"path\":\"Folder/Old.md\",\"newPath\":\"Archive\"},{\"type\":\"delete\",\"path\":\"Folder/Old.md\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"find\":\"old\",\"replace\":\"new\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"regex\":true,\"find\":\"old\\\\s+pattern\",\"replace\":\"new\",\"flags\":\"m\"},{\"type\":\"config\",\"set\":{\"maxToolIterations\":6},\"unset\":[\"oldSetting\"]},{\"type\":\"command\",\"command\":\"cancip.findTarget\",\"args\":{\"query\":\"target or command name\",\"limit\":10}}]}. Supported action types: read, write, append, patch, config, todo, automation, mkdir, rename, move, copy, delete, command. Read supports query, occurrence, startLine, endLine, aroundLine, and maxChars for focused line-numbered snippets from large/minified files; prefer query or line ranges over whole-file reads, and reading a folder returns a direct child listing. Write and append support content or chunks:[\"part1\",\"part2\"]; for large files prefer chunks because Cancip writes/appends sequentially and verifies the result by reading it back. Move is the normal file/folder move action; rename is kept as an alias. If newPath is a folder path, Cancip keeps the original file/folder name under that folder. Delete moves to trash by default; if platform trash is unavailable, Cancip moves the target to Cancip trash; only use permanent:true when the user explicitly asks for permanent deletion. Patch supports exact find/replace or regex:true with optional flags; if patch text is not found, do not retry the same find text, read the current file with a focused query or line range and use a smaller anchored patch. Config safely deep-merges JSON into Cancip config by default, supports optional path, set, unset, replace, writes formatted JSON, and verifies by reading JSON back; use it for large config files instead of fragile string patches. Todo operations are set, add, update, remove, list, clear and update the visible Plan panel. Automation operations are add, update, remove, list, run; schedules are manual, hourly, daily and daily supports hour+minute; sessionMode can be current, new, or session with sessionId, condition stores an optional trigger note, and model selects a task-specific model while empty values follow the current model and its globally bound source. File actions use Vault-relative paths only, including dot folders, Obsidian config, Cancip installed files, and .cancip session JSON. Command actions use a named command bus: cancip.findTarget, cancip.tools.index, obsidian.listCommands, obsidian.execute, obsidian.js.help, obsidian.js.probe, obsidian.eval/js.eval/javascript.eval/browser.eval, obsidian.currentView, obsidian.dom.snapshot, obsidian.dom.click, obsidian.dom.input, obsidian.ui.buttons, obsidian.ui.buttonRules, obsidian.ui.applyButtonRules, obsidian.tags, obsidian.tags.pin, obsidian.tags.unpin, obsidian.tags.deleteUnpinned, obsidian.tabs, obsidian.tabs.pin, obsidian.tabs.unpin, obsidian.tabs.closeUnpinned, obsidian.tabs.closeAll, cancip.reviewGate, cancip.reviewGate.list, cancip.reviewGate.testMarkdown, cancip.sessionEvents, cancip.sessionHistory, cancip.subagents.start/list/status/stop/open, cancip.installedPlugins, cancip.pluginCapabilities, cancip.skills.list, cancip.skills.read, cancip.skills.refresh, cancip.experience.list, cancip.experience.harvest, cancip.attachment.help, cancip.tts.help/probe/voices/status/installLocal/speak/readActive/pause/resume/seek/stop, cancip.externalFiles.help, cancip.automation.templates, cancip.automation.addTemplate, cancip.searchVault, cancip.rebuildIndex, cancip.previewVaultSearch, cancip.localVersionCommit, cancip.importCapabilityPack, cancip.newsBrief, cancip.vaultDailyReport, cancip.automation.list, cancip.automation.add, cancip.automation.update, cancip.automation.addNewsBrief, cancip.automation.addVaultDailyReport, cancip.automation.addVaultCuration, cancip.automation.run, cancip.automation.remove, web.search, web.fetch, github.help, github.status, github.repo, github.issues, github.pulls, github.releases, github.workflowRuns, github.branches, github.file, github.createIssue, github.installObsidianPlugin. Use cancip.findTarget first when the file, folder, attachment, content, or Obsidian command target is unclear; it combines weak filename/path/folder inference, content hits, attachment metadata, and command fuzzy matches. Use cancip.tools.index when the route is unclear; it maps user intent to the right action/help/list command. Use obsidian.js.help/probe for JS bridge capability; use obsidian.eval only for explicit Obsidian app/workspace/vault/plugin API glue, with args.code/script/js/body or args.expression. It exposes app, workspace, vault, metadataCache, activeDocument, window, args, plugins, activeFile, activeLeaf, activeView, and helpers.plugin/api/runCommand/openPath/notice/query/click/input/sleep/snapshot. Use cancip.pluginCapabilities with pluginId/name/query for plugin feature requests; it returns installed plugin matches, Obsidian commands, runtime API surface, plugin files/settings, and command/UI/API/config/web routes. Use cancip.sessionHistory with all:true to list sessions, sessionId to read any saved session, path for .cancip/sessions/*.json, and mode:'full', includeContext:true when exact prior prompts/context are needed. Use cancip.subagents.start/list/status/stop/open to split long work into child sessions; children are visible under their parent in session history. Use obsidian.ui.buttons to inspect active note/PDF/more buttons; use obsidian.ui.applyButtonRules with selector rules to hide/show/order/rename/re-icon buttons and menu items. Use obsidian.tags to inspect right-sidebar tags, obsidian.tags.pin/unpin for fixed tags, and obsidian.tags.deleteUnpinned with dryRun:false only when the user asks to remove non-pinned tags from notes. Use obsidian.tabs to inspect workspace tabs/leaves, obsidian.tabs.pin/unpin to pin pages, obsidian.tabs.closeUnpinned to close non-pinned pages, and obsidian.tabs.closeAll to close all scoped pages without deleting files. Use cancip.skills.list/read/refresh to inspect available Skills when the task asks about capabilities or when a matching Skill is not already injected; use cancip.experience.harvest after repeated successful workflows so future runs can reuse a generated recipe. For settings/UI/plugin/self-fix requests, first inspect the relevant source/config with read/search actions, then patch/write/config and verify. If desktop source is unavailable, use the installed plugin files as the mobile hot-patch implementation surface; do not stop merely because npm build/restart/source sync is unavailable. Installed Cancip plugin file edits require reload/restart before visible effect. Use cancip.findTarget before cancip.searchVault when the target is unclear; use cancip.searchVault only when long-term memory and supplied context are insufficient and content search is the next step; then read only the necessary matched files. Keep action batches small and wait for results. If a tool fails, use the error as authoritative context and explain or correct the next step. Access mode controls execution: approval mode queues write-like actions in the visible Run/Reject box and notifies the user; full access runs implemented tools automatically. Use cancip.reviewGate only when the user explicitly wants review or the task is risky vault organization; it creates native Cancip review-panel data, not a prompt-only or external HTML workflow. Plan panel only adds planning/todo behavior and never changes access permission. JS is limited to the Obsidian WebView/API bridge and is not an OS shell.",
+  toolProtocol: "Tool protocol: Choose tools by user intent, not by rigid greeting/simple-chat rules. For read/list/explain/analyze questions, even if they mention plugins, settings, config, folders, GitHub, or commands, use only read-only actions such as read, search, list, status, or help, then answer directly from the tool result; do not create reports or run write-like actions unless the user explicitly asks to create, modify, move, delete, configure, install, execute, or fix something. If an action is genuinely needed, output exactly one fenced block named cancip-action containing JSON like {\"actions\":[{\"title\":\"Keep the plan visible\",\"type\":\"todo\",\"op\":\"set\",\"items\":[{\"text\":\"inspect files\"},{\"text\":\"apply patch\"}]},{\"type\":\"automation\",\"op\":\"add\",\"title\":\"Daily review\",\"prompt\":\"Review open todos\",\"schedule\":\"daily\",\"hour\":9,\"minute\":15,\"sessionMode\":\"new\",\"model\":\"gpt-5\"},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"query\":\"anchor\",\"maxChars\":8000},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"startLine\":120,\"endLine\":180},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"aroundLine\":240,\"maxChars\":4000},{\"type\":\"write\",\"path\":\"Folder/Note.md\",\"content\":\"...\"},{\"type\":\"write\",\"path\":\"Folder/Large.md\",\"chunks\":[\"part 1\",\"part 2\"]},{\"type\":\"move\",\"path\":\"Folder/Old.md\",\"newPath\":\"Folder/New.md\"},{\"type\":\"move\",\"path\":\"Folder/Old.md\",\"newPath\":\"Archive\"},{\"type\":\"delete\",\"path\":\"Folder/Old.md\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"find\":\"old\",\"replace\":\"new\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"regex\":true,\"find\":\"old\\\\s+pattern\",\"replace\":\"new\",\"flags\":\"m\"},{\"type\":\"config\",\"set\":{\"maxToolIterations\":6},\"unset\":[\"oldSetting\"]},{\"type\":\"command\",\"command\":\"cancip.findTarget\",\"args\":{\"query\":\"target or command name\",\"limit\":10}}]}. Supported action types: read, write, append, patch, config, todo, automation, mkdir, rename, move, copy, delete, command. Read supports query, occurrence, startLine, endLine, aroundLine, and maxChars for focused line-numbered snippets from large/minified files; prefer query or line ranges over whole-file reads, and reading a folder returns a direct child listing. Write and append support content or chunks:[\"part1\",\"part2\"]; for large files prefer chunks because Cancip writes/appends sequentially and verifies the result by reading it back. Move is the normal file/folder move action; rename is kept as an alias. If newPath is a folder path, Cancip keeps the original file/folder name under that folder. Delete moves to trash by default; if platform trash is unavailable, Cancip moves the target to Cancip trash; only use permanent:true when the user explicitly asks for permanent deletion. Patch supports exact find/replace or regex:true with optional flags; if patch text is not found, do not retry the same find text, read the current file with a focused query or line range and use a smaller anchored patch. Config safely deep-merges JSON into Cancip config by default, supports optional path, set, unset, replace, writes formatted JSON, and verifies by reading JSON back; use it for large config files instead of fragile string patches. Todo operations are set, add, update, remove, list, clear and update the visible Plan panel. Automation operations are add, update, remove, list, run; schedules are manual, hourly, daily and daily supports hour+minute; sessionMode can be current, new, or session with sessionId, condition stores an optional trigger note, and model selects a task-specific model while empty values follow the current model and its globally bound source. File actions use Vault-relative paths only, including dot folders, Obsidian config, Cancip installed files, and .cancip session JSON. Command actions use a named command bus: cancip.findTarget, cancip.tools.index, obsidian.listCommands, obsidian.execute, obsidian.js.help, obsidian.js.probe, obsidian.eval/js.eval/javascript.eval/browser.eval, obsidian.currentView, obsidian.dom.snapshot, obsidian.dom.click, obsidian.dom.input, obsidian.ui.buttons, obsidian.ui.buttonRules, obsidian.ui.applyButtonRules, obsidian.tags, obsidian.tags.pin, obsidian.tags.unpin, obsidian.tags.deleteUnpinned, obsidian.tabs, obsidian.tabs.pin, obsidian.tabs.unpin, obsidian.tabs.closeUnpinned, obsidian.tabs.closeAll, cancip.reviewGate, cancip.reviewGate.list, cancip.reviewGate.testMarkdown, cancip.sessionEvents, cancip.sessionHistory, cancip.subagents.start/list/status/stop/open, cancip.installedPlugins, cancip.pluginCapabilities, cancip.skills.list, cancip.skills.read, cancip.skills.refresh, cancip.experience.list, cancip.experience.harvest, cancip.attachment.help, cancip.tts.help/probe/voices/status/installLocal/speak/readActive/pause/resume/seek/stop, cancip.externalFiles.help, cancip.automation.templates, cancip.automation.addTemplate, cancip.searchVault, cancip.rebuildIndex, cancip.previewVaultSearch, cancip.localVersionCommit, cancip.importCapabilityPack, cancip.newsBrief, cancip.vaultDailyReport, cancip.automation.list, cancip.automation.add, cancip.automation.update, cancip.automation.addNewsBrief, cancip.automation.addVaultDailyReport, cancip.automation.addVaultCuration, cancip.automation.run, cancip.automation.remove, web.search, web.fetch, github.help, github.status, github.repo, github.issues, github.pulls, github.releases, github.workflowRuns, github.branches, github.file, github.createIssue, github.installObsidianPlugin. Use cancip.findTarget first when the file, folder, attachment, content, or Obsidian command target is unclear; it combines weak filename/path/folder inference, content hits, attachment metadata, and command fuzzy matches. Use cancip.tools.index when the route is unclear; it maps user intent to the right action/help/list command. Use obsidian.js.help/probe for JS bridge capability; use obsidian.eval only for explicit Obsidian app/workspace/vault/plugin API glue, with args.code/script/js/body or args.expression. It exposes app, workspace, vault, metadataCache, activeDocument, window, args, plugins, activeFile, activeLeaf, activeView, and helpers.plugin/api/runCommand/openPath/notice/query/click/input/sleep/snapshot. Use cancip.pluginCapabilities with pluginId/name/query for plugin feature requests; it returns installed plugin matches, Obsidian commands, runtime API surface, plugin files/settings, and command/UI/API/config/web routes. Use cancip.sessionHistory with all:true to list sessions, sessionId to read any saved session, path for .cancip/sessions/*.json, and mode:'full', includeContext:true when exact prior prompts/context are needed. Use cancip.subagents.start/list/status/stop/open to split long work into child sessions; children are visible under their parent in session history. Use obsidian.ui.buttons to inspect active note/PDF/more buttons; use obsidian.ui.applyButtonRules with selector rules to hide/show/order/rename/re-icon buttons and menu items. Use obsidian.tags to inspect right-sidebar tags, obsidian.tags.pin/unpin for fixed tags, and obsidian.tags.deleteUnpinned with dryRun:false only when the user asks to remove non-pinned tags from notes. Use obsidian.tabs to inspect workspace tabs/leaves, obsidian.tabs.pin/unpin to pin pages, obsidian.tabs.closeUnpinned to close non-pinned pages, and obsidian.tabs.closeAll to close all scoped pages without deleting files. Use cancip.skills.list/read/refresh to inspect available Skills when the task asks about capabilities or when a matching Skill is not already injected; use cancip.experience.harvest after repeated successful workflows so future runs can reuse a generated recipe. For settings/UI/plugin/self-fix requests, first inspect the relevant source/config with read/search actions, then patch/write/config and verify. If desktop source is unavailable, use the installed plugin files as the mobile hot-patch implementation surface; do not stop merely because npm build/restart/source sync is unavailable. Installed Cancip plugin file edits require reload/restart before visible effect. Use cancip.findTarget before cancip.searchVault when the target is unclear; use cancip.searchVault only when long-term memory and supplied context are insufficient and content search is the next step; then read only the necessary matched files. Keep action batches small and wait for results. Every action must carry a short model-written \"title\" (2-8 words, action + target + purpose, in the user's language) because the UI shows it on the collapsed tool block; never repeat the raw action type as the title. If a tool fails, use the error as authoritative context and explain or correct the next step. Access mode controls execution: approval mode queues write-like actions in the visible Run/Reject box and notifies the user; full access runs implemented tools automatically. Use cancip.reviewGate only when the user explicitly wants review or the task is risky vault organization; it creates native Cancip review-panel data, not a prompt-only or external HTML workflow. Plan panel only adds planning/todo behavior and never changes access permission. JS is limited to the Obsidian WebView/API bridge and is not an OS shell.",
   actionsNeedApproval: "Action block queued for approval. Nothing has run yet.\n\n{summary}",
   actionsExecuted: "Tool results:\n\n{summary}",
   toolRunsQueued: "{count} tool run(s) queued. Review and tap Approve when ready.",
@@ -3600,6 +3608,7 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     openCancip: "打开 Cancip",
     commandOpenChat: "打开聊天",
     commandNewChat: "新对话",
+    commandOpenCapabilityGuide: "打开能力手册",
     commandCreateInteractiveHtml: "一键写交互 HTML",
     oneClickHtmlRequirement: "描述要制作的交互 HTML",
     oneClickHtmlRequirementPlaceholder: "例如：做一个适合手机使用的流程图，步骤可点击、显示进度、可以重置，并支持明暗主题。",
@@ -4779,7 +4788,7 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     accessPromptFull: "权限：全权。已实现工具可读写 Vault、点开头目录、Obsidian 配置、.cancip、Cancip 已安装文件和授权库外桥接。不要没查索引路线就说不能；小步执行、读回验证。源码构建不可用时，可先做已安装插件热补丁。",
     configWriteFailed: "无法写入 .obsidian/plugins/cancip/data/config.json：{reason}",
     configReadFailed: "无法读取 .obsidian/plugins/cancip/data/config.json：{reason}",
-  toolProtocol: "工具协议：普通问候、测试、身份问题、泛泛聊天不要输出 cancip-action。读取、清单、解释、分析类问题，即使提到插件、设置、配置、文件夹、GitHub 或命令，也只用 read/search/list/status/help 等只读动作，然后根据工具结果直接回答；除非用户明确要求新建、修改、移动、删除、配置、安装、执行或修复，否则不要创建报告或执行写入类动作。确实需要动作时，只输出一个名为 cancip-action 的 fenced block，JSON 形如 {\"actions\":[{\"type\":\"todo\",\"op\":\"set\",\"items\":[{\"text\":\"检查文件\"},{\"text\":\"应用补丁\"}]},{\"type\":\"automation\",\"op\":\"add\",\"title\":\"每日复盘\",\"prompt\":\"复盘未完成待办\",\"schedule\":\"daily\",\"hour\":9,\"minute\":15,\"sessionMode\":\"new\",\"model\":\"gpt-5\"},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"query\":\"锚点\",\"maxChars\":8000},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"startLine\":120,\"endLine\":180},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"aroundLine\":240,\"maxChars\":4000},{\"type\":\"write\",\"path\":\"Folder/Note.md\",\"content\":\"...\"},{\"type\":\"write\",\"path\":\"Folder/Large.md\",\"chunks\":[\"第 1 段\",\"第 2 段\"]},{\"type\":\"move\",\"path\":\"Folder/旧.md\",\"newPath\":\"Folder/新.md\"},{\"type\":\"move\",\"path\":\"Folder/旧.md\",\"newPath\":\"归档\"},{\"type\":\"delete\",\"path\":\"Folder/旧.md\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"find\":\"旧内容\",\"replace\":\"新内容\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"regex\":true,\"find\":\"旧内容\\\\s+模式\",\"replace\":\"新内容\",\"flags\":\"m\"},{\"type\":\"config\",\"set\":{\"maxToolIterations\":6},\"unset\":[\"oldSetting\"]},{\"type\":\"command\",\"command\":\"cancip.searchVault\",\"args\":{\"query\":\"关键词\",\"limit\":8}}]}。支持动作：read、write、append、patch、config、todo、automation、mkdir、rename、move、copy、delete、command。read 支持 query、occurrence、startLine、endLine、aroundLine、maxChars，用来精确读取带行号的大文件/压缩构建文件片段；优先用 query 或行号范围，不要轻易整文件读取；读取文件夹会返回直接子项列表。write/append 支持 content 或 chunks:[\"part1\",\"part2\"]；写大文件优先用 chunks，Cancip 会顺序写入/追加并读回校验。move 是正常移动文件/文件夹动作，rename 保留为别名；如果 newPath 是文件夹路径，工具层会保留原文件/文件夹名放进该文件夹。delete 默认进入回收站；平台回收站不可用时移入 Cancip 回收目录；只有用户明确要求永久删除时才使用 permanent:true。patch 支持精确 find/replace，也支持 regex:true 和可选 flags；如果 patch 提示 find text was not found，绝对不要重复同一个 find，必须先用 query 或行号范围读取当前文件片段，再换更小锚点或正则补丁。config 默认安全深度合并写入 Cancip 配置文件，可选 path、set、unset、replace，会格式化 JSON 并读回校验；改大型配置文件优先用 config，不要靠脆弱字符串 patch。todo 支持 set、add、update、remove、list、clear，并会更新可见 Plan 面板。automation 支持 add、update、remove、list、run；schedule 可用 manual、hourly、daily；daily 支持 hour+minute；sessionMode 可用 current、new、session，session 需要 sessionId，condition 保存额外触发条件说明，model 指定单任务模型，空值沿用当前模型及其全局绑定模型源。文件动作只能使用 Vault 相对路径，包括点开头文件夹、Obsidian 配置、Cancip 已安装文件和 .cancip 会话 JSON。命令动作走命令总线：cancip.tools.index、obsidian.listCommands、obsidian.execute、obsidian.currentView、obsidian.dom.snapshot、obsidian.dom.click、obsidian.dom.input、obsidian.ui.buttons、obsidian.ui.buttonRules、obsidian.ui.applyButtonRules、obsidian.tags、obsidian.tags.pin、obsidian.tags.unpin、obsidian.tags.deleteUnpinned、obsidian.tabs、obsidian.tabs.pin、obsidian.tabs.unpin、obsidian.tabs.closeUnpinned、obsidian.tabs.closeAll、cancip.reviewGate、cancip.reviewGate.list、cancip.reviewGate.testMarkdown、cancip.sessionEvents、cancip.sessionHistory、cancip.subagents.start/list/status/stop/open、cancip.installedPlugins、cancip.skills.list、cancip.skills.read、cancip.skills.refresh、cancip.experience.list、cancip.experience.harvest、cancip.attachment.help、cancip.tts.help/probe/voices/status/installLocal/speak/readActive/pause/resume/seek/stop、cancip.externalFiles.help、cancip.automation.templates、cancip.automation.addTemplate、cancip.searchVault、cancip.rebuildIndex、cancip.previewVaultSearch、cancip.localVersionCommit、cancip.importCapabilityPack、cancip.newsBrief、cancip.vaultDailyReport、cancip.automation.list、cancip.automation.add、cancip.automation.update、cancip.automation.addNewsBrief、cancip.automation.addVaultDailyReport、cancip.automation.addVaultCuration、cancip.automation.run、cancip.automation.remove、web.search、web.fetch、github.help、github.status、github.repo、github.issues、github.pulls、github.releases、github.workflowRuns、github.branches、github.file、github.createIssue、github.installObsidianPlugin。不确定路线时先用 cancip.tools.index，它会把用户意图映射到应该查的 action/help/list 命令。用 cancip.subagents.start/list/status/stop/open 可把长任务拆成子会话；子会话会在父会话历史下默认折叠显示。用 obsidian.ui.buttons 检查当前笔记/PDF/官方更多菜单按钮和菜单项；用 obsidian.ui.applyButtonRules 按 selector 规则显示、隐藏、排序、改名、换图标。可用 obsidian.tabs 查看工作区标签页，obsidian.tabs.pin/unpin 固定/取消固定页，obsidian.tabs.closeUnpinned 关闭非固定页，obsidian.tabs.closeAll 关闭指定范围全部页，均不删除文件。需要读取历史/任意会话时，用 cancip.sessionHistory：all:true 列出会话，sessionId 读取任意保存会话，path 读取 .cancip/sessions/*.json，mode:'full' + includeContext:true 可带原始上下文。需要查看能力或本轮没有注入匹配 Skill 时，用 cancip.skills.list/read/refresh 程序化检查可用 Skill；成功流程可用 cancip.experience.harvest 生成 .cancip/skills/generated 下的经验 Skill。设置/界面/插件/自身修复类任务，先用 read/search 检查相关源码或配置，再 patch/write/config 并验证；若桌面源码不可用，就把已安装插件文件作为手机热补丁实现面，不能仅因 npm build/重启/源码同步不可用就停止。写已安装 Cancip 插件文件后必须说明需要重载/重启才有可见效果。只有长期记忆和已提供上下文不够时才用 cancip.searchVault 搜库，然后只读取必要命中文件。动作批次要小，等待工具结果后继续。工具失败就是权威上下文，必须解释失败或改用更小的下一步。访问模式控制执行：确认模式把写入类动作放进可见 Run/Reject 确认框并通知用户等待；全权模式自动执行已实现工具。只有用户明确要求审核或任务属于高风险 Vault 整理时，才用 cancip.reviewGate 程序化生成 Cancip 原生审核面板数据；它不是提示词，也不是外部 HTML 流程。Plan panel 只增加计划/待办层，不改变访问权限。原始 JavaScript eval 阻止。",
+  toolProtocol: "工具协议：普通问候、测试、身份问题、泛泛聊天不要输出 cancip-action。读取、清单、解释、分析类问题，即使提到插件、设置、配置、文件夹、GitHub 或命令，也只用 read/search/list/status/help 等只读动作，然后根据工具结果直接回答；除非用户明确要求新建、修改、移动、删除、配置、安装、执行或修复，否则不要创建报告或执行写入类动作。确实需要动作时，只输出一个名为 cancip-action 的 fenced block，JSON 形如 {\"actions\":[{\"title\":\"让计划可见\",\"type\":\"todo\",\"op\":\"set\",\"items\":[{\"text\":\"检查文件\"},{\"text\":\"应用补丁\"}]},{\"type\":\"automation\",\"op\":\"add\",\"title\":\"每日复盘\",\"prompt\":\"复盘未完成待办\",\"schedule\":\"daily\",\"hour\":9,\"minute\":15,\"sessionMode\":\"new\",\"model\":\"gpt-5\"},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"query\":\"锚点\",\"maxChars\":8000},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"startLine\":120,\"endLine\":180},{\"type\":\"read\",\"path\":\"Folder/File.md\",\"aroundLine\":240,\"maxChars\":4000},{\"type\":\"write\",\"path\":\"Folder/Note.md\",\"content\":\"...\"},{\"type\":\"write\",\"path\":\"Folder/Large.md\",\"chunks\":[\"第 1 段\",\"第 2 段\"]},{\"type\":\"move\",\"path\":\"Folder/旧.md\",\"newPath\":\"Folder/新.md\"},{\"type\":\"move\",\"path\":\"Folder/旧.md\",\"newPath\":\"归档\"},{\"type\":\"delete\",\"path\":\"Folder/旧.md\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"find\":\"旧内容\",\"replace\":\"新内容\"},{\"type\":\"patch\",\"path\":\"Folder/Note.md\",\"regex\":true,\"find\":\"旧内容\\\\s+模式\",\"replace\":\"新内容\",\"flags\":\"m\"},{\"type\":\"config\",\"set\":{\"maxToolIterations\":6},\"unset\":[\"oldSetting\"]},{\"type\":\"command\",\"command\":\"cancip.searchVault\",\"args\":{\"query\":\"关键词\",\"limit\":8}}]}。支持动作：read、write、append、patch、config、todo、automation、mkdir、rename、move、copy、delete、command。read 支持 query、occurrence、startLine、endLine、aroundLine、maxChars，用来精确读取带行号的大文件/压缩构建文件片段；优先用 query 或行号范围，不要轻易整文件读取；读取文件夹会返回直接子项列表。write/append 支持 content 或 chunks:[\"part1\",\"part2\"]；写大文件优先用 chunks，Cancip 会顺序写入/追加并读回校验。move 是正常移动文件/文件夹动作，rename 保留为别名；如果 newPath 是文件夹路径，工具层会保留原文件/文件夹名放进该文件夹。delete 默认进入回收站；平台回收站不可用时移入 Cancip 回收目录；只有用户明确要求永久删除时才使用 permanent:true。patch 支持精确 find/replace，也支持 regex:true 和可选 flags；如果 patch 提示 find text was not found，绝对不要重复同一个 find，必须先用 query 或行号范围读取当前文件片段，再换更小锚点或正则补丁。config 默认安全深度合并写入 Cancip 配置文件，可选 path、set、unset、replace，会格式化 JSON 并读回校验；改大型配置文件优先用 config，不要靠脆弱字符串 patch。todo 支持 set、add、update、remove、list、clear，并会更新可见 Plan 面板。automation 支持 add、update、remove、list、run；schedule 可用 manual、hourly、daily；daily 支持 hour+minute；sessionMode 可用 current、new、session，session 需要 sessionId，condition 保存额外触发条件说明，model 指定单任务模型，空值沿用当前模型及其全局绑定模型源。文件动作只能使用 Vault 相对路径，包括点开头文件夹、Obsidian 配置、Cancip 已安装文件和 .cancip 会话 JSON。命令动作走命令总线：cancip.tools.index、obsidian.listCommands、obsidian.execute、obsidian.currentView、obsidian.dom.snapshot、obsidian.dom.click、obsidian.dom.input、obsidian.ui.buttons、obsidian.ui.buttonRules、obsidian.ui.applyButtonRules、obsidian.tags、obsidian.tags.pin、obsidian.tags.unpin、obsidian.tags.deleteUnpinned、obsidian.tabs、obsidian.tabs.pin、obsidian.tabs.unpin、obsidian.tabs.closeUnpinned、obsidian.tabs.closeAll、cancip.reviewGate、cancip.reviewGate.list、cancip.reviewGate.testMarkdown、cancip.sessionEvents、cancip.sessionHistory、cancip.subagents.start/list/status/stop/open、cancip.installedPlugins、cancip.skills.list、cancip.skills.read、cancip.skills.refresh、cancip.experience.list、cancip.experience.harvest、cancip.attachment.help、cancip.tts.help/probe/voices/status/installLocal/speak/readActive/pause/resume/seek/stop、cancip.externalFiles.help、cancip.automation.templates、cancip.automation.addTemplate、cancip.searchVault、cancip.rebuildIndex、cancip.previewVaultSearch、cancip.localVersionCommit、cancip.importCapabilityPack、cancip.newsBrief、cancip.vaultDailyReport、cancip.automation.list、cancip.automation.add、cancip.automation.update、cancip.automation.addNewsBrief、cancip.automation.addVaultDailyReport、cancip.automation.addVaultCuration、cancip.automation.run、cancip.automation.remove、web.search、web.fetch、github.help、github.status、github.repo、github.issues、github.pulls、github.releases、github.workflowRuns、github.branches、github.file、github.createIssue、github.installObsidianPlugin。不确定路线时先用 cancip.tools.index，它会把用户意图映射到应该查的 action/help/list 命令。用 cancip.subagents.start/list/status/stop/open 可把长任务拆成子会话；子会话会在父会话历史下默认折叠显示。用 obsidian.ui.buttons 检查当前笔记/PDF/官方更多菜单按钮和菜单项；用 obsidian.ui.applyButtonRules 按 selector 规则显示、隐藏、排序、改名、换图标。可用 obsidian.tabs 查看工作区标签页，obsidian.tabs.pin/unpin 固定/取消固定页，obsidian.tabs.closeUnpinned 关闭非固定页，obsidian.tabs.closeAll 关闭指定范围全部页，均不删除文件。需要读取历史/任意会话时，用 cancip.sessionHistory：all:true 列出会话，sessionId 读取任意保存会话，path 读取 .cancip/sessions/*.json，mode:'full' + includeContext:true 可带原始上下文。需要查看能力或本轮没有注入匹配 Skill 时，用 cancip.skills.list/read/refresh 程序化检查可用 Skill；成功流程可用 cancip.experience.harvest 生成 .cancip/skills/generated 下的经验 Skill。设置/界面/插件/自身修复类任务，先用 read/search 检查相关源码或配置，再 patch/write/config 并验证；若桌面源码不可用，就把已安装插件文件作为手机热补丁实现面，不能仅因 npm build/重启/源码同步不可用就停止。写已安装 Cancip 插件文件后必须说明需要重载/重启才有可见效果。只有长期记忆和已提供上下文不够时才用 cancip.searchVault 搜库，然后只读取必要命中文件。动作批次要小，等待工具结果后继续。每个动作必须带一个模型自己写的短标题 \"title\"（2–8 个词或 20 字以内，动作 + 对象 + 目的，用用户的语言），界面会把折叠后的工具块显示成这个标题；不要把原始动作类型直接当标题。工具失败就是权威上下文，必须解释失败或改用更小的下一步。访问模式控制执行：确认模式把写入类动作放进可见 Run/Reject 确认框并通知用户等待；全权模式自动执行已实现工具。只有用户明确要求审核或任务属于高风险 Vault 整理时，才用 cancip.reviewGate 程序化生成 Cancip 原生审核面板数据；它不是提示词，也不是外部 HTML 流程。Plan panel 只增加计划/待办层，不改变访问权限。原始 JavaScript eval 阻止。",
     actionsNeedApproval: "动作块已进入确认队列，尚未执行。\n\n{summary}",
     actionsExecuted: "工具执行结果：\n\n{summary}",
     toolRunsQueued: "{count} 个工具调用已排队。确认后点批准执行。",
@@ -4849,6 +4858,7 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     openCancip: "開啟 Cancip",
     commandOpenChat: "開啟聊天",
     commandNewChat: "新對話",
+    commandOpenCapabilityGuide: "開啟能力手冊",
     exportSession: "匯出會話",
     exportNoMessages: "沒有可匯出的訊息",
     exportDone: "會話已匯出：{path}",
@@ -8052,6 +8062,35 @@ export default class CancipPlugin extends Plugin {
     await writeTextIfChanged(adapter, CANCIP_PLUGIN_SCHEMA_PATH, schema);
   }
 
+  /** Vault path of the user-facing capability manual. */
+  capabilityGuidePath(): string {
+    return this.memoryPath(CANCIP_CAPABILITY_GUIDE_FILE);
+  }
+
+  /**
+   * Writes the capability manual once per plugin version. The managed version
+   * marker is the ownership handshake: a user who rewrites the file drops it,
+   * and Cancip then never overwrites their copy again.
+   */
+  async ensureCapabilityGuideArtifacts(): Promise<{ path: string; written: boolean }> {
+    const adapter = this.app.vault.adapter;
+    const path = this.capabilityGuidePath();
+    const version = this.manifest.version;
+    const existing = await readTextIfExists(adapter, path, "");
+    if (existing) {
+      const marker = new RegExp(`<!--\\s*${CANCIP_CAPABILITY_GUIDE_MARKER}:\\s*([^\\s>]+)\\s*-->`).exec(existing);
+      if (!marker) return { path, written: false };
+      if (marker[1] === version) return { path, written: false };
+    }
+    const guide = cancipCapabilityGuideMarkdown(
+      isChineseLanguage(this.language()),
+      version,
+      new Date().toISOString().slice(0, 10)
+    );
+    await writeTextIfChanged(adapter, path, guide);
+    return { path, written: true };
+  }
+
   async refreshPluginCompatibility(): Promise<ReturnType<CancipPlugin["pluginCompatibilityGuideInfo"]> & { refreshedViews: number }> {
     await this.ensurePluginCompatibilityArtifacts();
     this.pluginCompatibilityRevision += 1;
@@ -8330,6 +8369,15 @@ export default class CancipPlugin extends Plugin {
       callback: async () => {
         await this.ensurePluginCompatibilityArtifacts();
         await this.app.workspace.openLinkText(CANCIP_PLUGIN_GUIDE_PATH, "", false);
+      }
+    });
+
+    this.addCommand({
+      id: "open-capability-guide",
+      name: this.t("commandOpenCapabilityGuide"),
+      callback: async () => {
+        const guide = await this.ensureCapabilityGuideArtifacts();
+        await this.app.workspace.openLinkText(guide.path, "", false);
       }
     });
 
@@ -15704,6 +15752,7 @@ export default class CancipPlugin extends Plugin {
 
 ## 首选入口
 - 记忆与规则：${memoryLink("CANCIP_INDEX")}、${memoryLink("CANCIP_RULES")}
+- 能力与教程：${memoryLink(CANCIP_CAPABILITY_GUIDE_FILE.replace(/\.md$/i, ""))}
 - 目标不清：\`cancip.findTarget\`；路线不清：\`cancip.tools.index\`；参数不清：对应 \`*.help\` / \`*.list\`
 - 文件：先 \`read\` / \`cancip.searchVault\`，改后读回或 \`cancip.outcome.verify\`；打开用 \`cancip.openFile\` / \`obsidian.openFile\`
 
@@ -48957,11 +49006,13 @@ class CancipView extends ItemView {
   }
 
   private lightweightToolCatalogPrompt(): string {
+    const capabilityGuide = this.plugin.capabilityGuidePath();
     if (this.plugin.language().startsWith("zh")) {
       return [
         "只读能力查询：需要工具时只输出一个 cancip-action JSON；查到结果后直接回答，不执行写入。",
         "入口：目标不清 cancip.findTarget，路线不清 cancip.tools.index；精确文件用 read。Vault 搜索用 command cancip.searchVault，args 为 {query,scope:'filename'|'content'|'both',limit:8}；多个独立查询放在同一个 actions 数组并列执行。参数不清只调用真实的 cancip.tools.help，禁止猜测 CANCIP_TOOLS.md 等帮助文件。",
         "Skills 用 cancip.skills.list/read；插件用 pluginCapabilities；附件/PDF/Office 用 attachment/externalFiles help。",
+        `能力手册（用户可读的完整教程，含能力清单与示例问法）：${capabilityGuide}。用户问"你能做什么/怎么用"时读它或直接给出这个路径。`,
         "其他按需使用 currentView/listCommands、sessionHistory、tts.help、automation.templates/list、github.help。"
       ].join("\n");
     }
@@ -48969,6 +49020,7 @@ class CancipView extends ItemView {
       "Read-only capability query: when a tool is needed, output one cancip-action JSON block; answer from the result and do not write.",
       "Routes: unclear target -> cancip.findTarget; unclear route -> cancip.tools.index; exact file -> read. Search the Vault with command cancip.searchVault and args {query,scope:'filename'|'content'|'both',limit:8}; put independent queries beside each other in one actions array. If parameters are unclear, call the real cancip.tools.help and never invent help files such as CANCIP_TOOLS.md.",
       "Skills -> cancip.skills.list/read; plugins -> pluginCapabilities; PDF/Office -> attachment/externalFiles help.",
+      `Capability manual (the user-facing tutorial with the full capability list and example prompts): ${capabilityGuide}. Read it, or hand over this path, when the user asks what you can do or how to use you.`,
       "As needed use currentView/listCommands, sessionHistory, tts.help, automation.templates/list, or github.help."
     ].join("\n");
   }
@@ -53760,6 +53812,7 @@ class CancipView extends ItemView {
       id: crypto.randomUUID(),
       action,
       summary: this.describeAction(action),
+      title: actionModelTitle(action) || undefined,
       status: "pending",
       createdAt: new Date().toISOString(),
       reviewRequired: this.requiresVaultNoteReview(action) || undefined,
@@ -65375,6 +65428,16 @@ class CancipView extends ItemView {
       text: formatStepElapsed(this.processRecordElapsedMs(items)),
       attr: { title: isChineseLanguage(this.plugin.language()) ? "本轮过程耗时" : "Total process time" }
     });
+    // Cost belongs on the folded summary line: a terse record should answer
+    // "what did this turn cost" without expanding anything.
+    const recordTokens = steps.reduce((sum, step) => sum + (step.rendered.message.modelUsage?.totalTokens ?? 0), 0);
+    if (recordTokens > 0) {
+      processSummary.createSpan({
+        cls: "obcc-process-record-tokens",
+        text: `${recordTokens} tok`,
+        attr: { title: isChineseLanguage(this.plugin.language()) ? "本轮模型 token 合计" : "Total model tokens this turn" }
+      });
+    }
     const body = details.createDiv({ cls: "obcc-process-body" });
     for (const [index, stepInfo] of steps.entries()) {
       const stepFoldKey = `${processFoldKey}:step-${stepInfo.rendered.message.id}`;
@@ -65412,13 +65475,18 @@ class CancipView extends ItemView {
       const conciseReceivedTitle = /^完成\s*[:：]/i.test(generatedTitle)
         ? (stepInfo.reasoningSummary || (isChineseLanguage(this.plugin.language()) ? "模型回复" : "Model response"))
         : generatedTitle;
+      // A single tool action carries its own model-written title, which reads far
+      // better as a step heading than the mechanical "Model response" fallback:
+      // the folded record then reads like a list of what was actually done.
+      const modelRunTitle = stepRuns.length === 1 ? this.toolRunModelTitle(stepRuns[0]) : "";
       const processTitle = stepInfo.overrideTitle
         ? stepInfo.overrideTitle
         : stepInfo.kind === "think"
           ? (isChineseLanguage(this.plugin.language()) ? "思考" : "Thinking")
           : stepInfo.kind === "context"
             ? (isChineseLanguage(this.plugin.language()) ? "准备上下文" : "Prepare context")
-            : conciseReceivedTitle
+            : modelRunTitle
+              || conciseReceivedTitle
               || (stepInfo.rendered.message.modelUsage || stepInfo.rendered.message.modelTiming
                 ? (isChineseLanguage(this.plugin.language()) ? "模型处理中" : "Model processing")
                 : (isChineseLanguage(this.plugin.language()) ? "过程步骤" : "Process step"));
@@ -66399,19 +66467,24 @@ class CancipView extends ItemView {
   private renderToolRuns(parent: HTMLElement, message: ChatMessage, inlineDetails = false): void {
     if (!message.toolRuns?.length) return;
     const wrap = parent.createDiv({ cls: "obcc-tool-runs" });
+    const zh = isChineseLanguage(this.plugin.language());
     for (const group of this.groupToolRunsForDisplay(message.toolRuns)) {
       const run = group.run;
-      const row = wrap.createDiv({ cls: `obcc-tool-run is-${run.status}` });
-      const conciseSummary = `${this.toolActionKindLabel(run.action)} ${this.actionStatusTarget(run.action)}`.trim();
-      const head = inlineDetails ? null : row.createDiv({ cls: "obcc-tool-run-head" });
-      if (head) {
-        head.createSpan({ cls: "obcc-tool-run-status", text: this.toolRunStatusLabelForRun(run) });
-        head.createSpan({ cls: "obcc-tool-run-summary", text: group.count > 1 ? `${conciseSummary} x${group.count}` : conciseSummary });
-      } else {
-        const explanation = row.createDiv({ cls: "obcc-process-tool-explanation" });
-        this.createProcessInlineSectionTitle(explanation, isChineseLanguage(this.plugin.language()) ? "动作" : "Action", "play");
-        explanation.createDiv({ cls: "obcc-process-tool-explanation-text", text: this.toolRunProcessExplanation(run, group.count) });
-      }
+      const fallbackLabel = `${this.toolActionKindLabel(run.action)} ${this.actionStatusTarget(run.action)}`.trim();
+      // The model writes the title for each action. The mechanical action label
+      // is only a fallback for older sessions and for actions that arrived
+      // without a title, so a folded block always says what it is for.
+      const modelTitle = this.toolRunModelTitle(run);
+      const rowTitle = modelTitle
+        || (group.count > 1 ? `${fallbackLabel} x${group.count}` : fallbackLabel);
+      // A pending action holds the Run/Reject controls, so it must stay open.
+      const row = wrap.createEl("details", { cls: `obcc-tool-run is-${run.status}${modelTitle ? " has-model-title" : ""}` });
+      this.wireDetails(row, `tool-run:${message.id}:${run.id}`, run.status === "pending", false, true);
+      const head = row.createEl("summary", { cls: "obcc-tool-run-head" });
+      head.createSpan({ cls: "obcc-tool-run-status", text: this.toolRunStatusLabelForRun(run) });
+      head.createSpan({ cls: "obcc-tool-run-summary", text: rowTitle });
+      const toggleIcon = head.createSpan({ cls: "obcc-tool-run-toggle-icon", attr: { "aria-hidden": "true" } });
+      setIcon(toggleIcon, "chevron-right");
       if (run.status === "pending") {
         row.addClass("is-approval-required");
         const card = row.createDiv({ cls: "obcc-tool-run-approval-card" });
@@ -66435,7 +66508,7 @@ class CancipView extends ItemView {
         rejectButton.addEventListener("click", () => {
           void this.rejectPendingToolRun(message.id, run.id);
         });
-      } else if (run.autoApproved && head) {
+      } else if (run.autoApproved) {
         const controls = head.createDiv({ cls: "obcc-tool-run-actions" });
         const approvedButton = controls.createEl("button", {
           cls: "obcc-tool-run-button is-auto-approved",
@@ -66444,43 +66517,45 @@ class CancipView extends ItemView {
         });
         approvedButton.disabled = true;
       }
+      const body = row.createDiv({ cls: "obcc-tool-run-body" });
+      const explanation = body.createDiv({ cls: "obcc-process-tool-explanation" });
+      this.createProcessInlineSectionTitle(explanation, zh ? "动作" : "Action", "play");
+      explanation.createDiv({ cls: "obcc-process-tool-explanation-text", text: this.toolRunProcessExplanation(run, group.count) });
       const detail = this.toolRunGroupDetail(group);
       if (detail) {
-        if (inlineDetails) {
-          const details = row.createDiv({ cls: "obcc-tool-run-details obcc-process-inline-section" });
-          this.createProcessInlineSectionTitle(details, isChineseLanguage(this.plugin.language()) ? "结果" : "Result", "file-output");
-          const raw = this.createProcessRawBlock(
-            details,
-            detail,
-            `tool-run:${message.id}:${run.id}`,
-            TOOL_RESULT_DETAIL_MAX_CHARS
-          );
-          this.renderWhenProcessStepOpen(details, raw.load);
-        } else {
-          const details = row.createEl("details", { cls: "obcc-tool-run-details" });
-          this.wireDetails(details, `tool-run:${message.id}:${run.id}`, true, false, true);
-          this.createProcessSummary(details, this.t("toolRunResult"), "file-output").addClass("obcc-tool-run-result-label");
-          details.createDiv({ cls: "obcc-process-detail-caption", text: isChineseLanguage(this.plugin.language()) ? "工具返回的原始结果" : "Raw tool result" });
-          const raw = this.createProcessRawBlock(
-            details,
-            detail,
-            `tool-run:${message.id}:${run.id}`,
-            TOOL_RESULT_DETAIL_MAX_CHARS
-          );
-          const load = () => {
-            if (details.open) raw.load();
-          };
-          details.addEventListener("toggle", load);
-          load();
-        }
+        const details = body.createDiv({ cls: "obcc-tool-run-details obcc-process-inline-section" });
+        this.createProcessInlineSectionTitle(details, zh ? "结果" : "Result", "file-output");
+        const raw = this.createProcessRawBlock(
+          details,
+          detail,
+          `tool-run:${message.id}:${run.id}`,
+          TOOL_RESULT_DETAIL_MAX_CHARS
+        );
+        // The row owns the fold, so the raw result is loaded the first time the
+        // row is actually open, instead of on every render.
+        const loadIfOpen = () => {
+          if (!row.open) return;
+          row.removeEventListener("toggle", loadIfOpen);
+          raw.load();
+        };
+        row.addEventListener("toggle", loadIfOpen);
+        loadIfOpen();
       }
       if (!inlineDetails) {
-        this.renderToolRunActionDiffPreview(row, run);
-        this.renderToolRunChangedFiles(row, run);
-        this.renderToolRunEvidencePaths(row, run);
-        if (run.reviewPath) this.renderToolRunReviewFiles(row, run);
+        this.renderToolRunActionDiffPreview(body, run);
+        this.renderToolRunChangedFiles(body, run);
+        this.renderToolRunEvidencePaths(body, run);
+        if (run.reviewPath) this.renderToolRunReviewFiles(body, run);
       }
     }
+  }
+
+  /**
+   * Model-written title for an action. Older sessions and untitled actions
+   * return an empty string so callers fall back to the mechanical label.
+   */
+  private toolRunModelTitle(run: ToolRun): string {
+    return (run.title ?? "").replace(/\s+/g, " ").trim();
   }
 
   private syncHeaderSessionTimer(): void {
@@ -73431,6 +73506,162 @@ function isObsidianExecuteCommandAlias(command: string): boolean {
     || normalized === "obsidian.commands.executeCommandById";
 }
 
+/**
+ * User-facing capability manual. Written once into the memory folder, then
+ * refreshed only while the managed version marker is still present, so a user
+ * who edits it keeps their edits.
+ */
+function cancipCapabilityGuideMarkdown(chinese: boolean, version: string, generatedAt: string): string {
+  if (chinese) {
+    return `# Cancip 能力手册
+
+<!-- ${CANCIP_CAPABILITY_GUIDE_MARKER}: ${version} -->
+
+> 这份手册由 Cancip ${version} 生成于 ${generatedAt}，用来说明"它能做什么、怎么让它做"。
+> 它**不会**自动进入每轮对话；需要时让 Cancip 读它（\`read\` 这个文件），或自己看。
+
+## 一、三种用法
+
+| 用法 | 怎么进 | 适合 |
+| --- | --- | --- |
+| 面板对话 | 右栏 Cancip，直接说人话 | 临时任务、边看边改 |
+| 定时任务 | 说"每天 9:15 汇总未完成待办" | 日报、监控、巡检 |
+| 外部 Agent | \`cancip connect codex\\|claude\` | 让 Codex/Claude 驱动同一个库 |
+
+## 二、提问公式
+
+**动词 + 对象 + 范围或格式**。一句话就能派活：
+
+- 改文件：\`把昨天复盘压成 5 条，写进 日记/2026-09-24.md 的"小结"下面\`
+- 找东西：\`这个库里有多少篇没打标签的笔记？列出前 20 个路径\`
+- 整理库：\`把散在根目录的 PDF 收进 附件/，重名加序号\`
+- 看状态：\`我现在打开了什么？\`、\`这个库这周改了哪些文件？\`
+
+## 三、能力清单
+
+| 用途 | 你可以说 | 实际动作 |
+| --- | --- | --- |
+| 读 / 找 | "读一下 XX"、"搜一下 XX"、"这个库有没有提到 XX" | \`read\`、\`search\`、\`cancip.searchVault\`、\`cancip.findTarget\` |
+| 写 / 改 | "新建 XX"、"把 XX 改成 YY"、"把它拆成两篇" | \`write\`、\`append\`、\`patch\`、\`config\` |
+| 搬 / 清 | "移进 归档/"、"改名加日期"、"删掉这些空笔记" | \`move\`、\`rename\`、\`copy\`、\`mkdir\`、\`delete\`（默认进回收站） |
+| 计划面板 | "列个计划，然后一项项做" | \`todo\`（可见 Plan 面板） |
+| 定时任务 | "每小时看一眼有没有新的 XX，有就提醒我" | \`automation\`（manual / hourly / daily，可绑模型与会话） |
+| Obsidian 本体 | "关掉所有非固定标签页"、"这个按钮太碍眼，隐藏掉" | \`obsidian.tabs.*\`、\`obsidian.ui.buttons\`、\`obsidian.ui.applyButtonRules\`、\`obsidian.listCommands\`、\`obsidian.execute\` |
+| 标签页与标签 | "把 XX 固定到右栏标签"、"清掉没固定的标签" | \`obsidian.tabs.pin/unpin\`、\`obsidian.tags.*\` |
+| 其它插件 | "XX 插件能干嘛？帮我触发它的 YY" | \`cancip.installedPlugins\`、\`cancip.pluginCapabilities\`、\`cancip.pluginRoute\` |
+| 界面自动操作 | "点开设置里的 XX 开关" | \`obsidian.dom.snapshot/click/input\`、\`obsidian.eval\` |
+| 会话与子会话 | "上次那个会话说了什么？"、"拆成三个子任务并行做" | \`cancip.sessionHistory\`、\`cancip.subagents.*\` |
+| 技能与经验 | "有没有相关技能？"、"把这套流程存下来下次复用" | \`cancip.skills.*\`、\`cancip.experience.*\` |
+| 附件与文档 | "把这个 PDF 的内容整理成笔记" | \`cancip.attachment.help\`、\`cancip.externalFiles.help\` |
+| 朗读 | "读一下当前笔记" | \`cancip.tts.*\` |
+| 联网 | "搜一下 XX 的最新情况" | \`web.search\`、\`web.fetch\` |
+| GitHub | "看看某仓库最近的 release / 待办 issue" | \`github.*\` |
+| 自省与自修 | "你现在花了我多少 token？"、"把这个插件的 XX 去掉" | 读自身源码/配置、热补丁、\`cancip.sessionEvents\` |
+
+## 四、过程怎么读
+
+每一轮对话下面有一条**过程记录**，默认折叠，折叠态直接显示 **步数 · 耗时 · token 合计**。
+
+展开后每一步都是一行标题——**标题是模型自己写的动作标题**（例如"读取今日日记并定位计划"），不是机械的动作名。再展开那一行，才看到具体动作、参数和工具的原始返回。
+
+所以阅读顺序是：结论 → 需要时看过程摘要 → 再需要才展开细节。
+
+## 五、访问模式与安全
+
+- **确认模式**：写入类动作会排队，显示 Run / Reject 卡片，点 Run 才执行。
+- **全权模式**：已实现的工具自动执行（设置里切换）。
+- **审核门**：高风险整理（批量移动/删除/重写）会先生成审核面板数据，逐条看。
+- 删除默认进回收站；只有你明确说"永久删除"才不可恢复。
+
+## 六、让它更懂你
+
+- **全局记忆**：\`AI/Cancip/Memory/全局记忆.md\`，全文每轮注入、无截断，写你的长期规则（插件的"鼓励/禁止"类规则都该写这里）。
+- **技能**：把重复流程固化成 Skill，让它自己加载（\`cancip.skills.list\`）。
+- **经验**：跑顺了的流程可以用 \`cancip.experience.harvest\` 沉淀成配方。
+- **能力手册**：就是本文件。改了它，Cancip 就会按新说法办事。
+
+## 七、它不做什么
+
+- 不执行任意系统 shell；JavaScript 只在 Obsidian 的 WebView/API 桥里跑。
+- 不在没有授权的情况下做破坏性动作（删库、覆盖、永久删除）。
+- 不替你决定高风险业务判断（真实交易、正式发布等）。
+- 不会凭空知道你没告诉它的库外信息；需要时它会去读、去搜、去问。
+
+## 八、出问题时
+
+1. 看会话历史：\`cancip.sessionHistory\`（含原始上下文）。
+2. 让它自检：\`cancip doctor\`。
+3. 卡片卡住：确认模式下点 Run；全权模式看过程记录里的失败原因。
+`;
+  }
+  return `# Cancip Capability Manual
+
+<!-- ${CANCIP_CAPABILITY_GUIDE_MARKER}: ${version} -->
+
+> Generated by Cancip ${version} on ${generatedAt}. It explains what Cancip can do and how to ask for it.
+> It is **not** injected into every turn; read it on demand (ask Cancip to \`read\` this file) or open it yourself.
+
+## Three ways to use it
+
+| Way | How | Best for |
+| --- | --- | --- |
+| Panel chat | Right sidebar, write plain language | Ad-hoc tasks, edit-while-watching |
+| Automation | "Summarize open todos every day at 9:15" | Daily reports, monitors, checkups |
+| External agent | \`cancip connect codex\\|claude\` | Let Codex/Claude drive the same Vault |
+
+## Ask with: verb + object + scope
+
+- Change a file: \`Compress yesterday's review into 5 bullets and write it under "Summary" in Journal/2026-09-24.md\`
+- Find things: \`How many notes have no tags? List the first 20 paths\`
+- Curate: \`Move stray PDFs into Attachments/, number the duplicates\`
+- Inspect: \`What do I have open right now?\`
+
+## Capability map
+
+| Purpose | Say | Real action |
+| --- | --- | --- |
+| Read / search | "read X", "search for X" | \`read\`, \`search\`, \`cancip.searchVault\`, \`cancip.findTarget\` |
+| Write / edit | "create X", "change X to Y" | \`write\`, \`append\`, \`patch\`, \`config\` |
+| Move / clean | "move into Archive/", "rename with a date" | \`move\`, \`rename\`, \`copy\`, \`mkdir\`, \`delete\` (trash by default) |
+| Plan panel | "make a plan, then work it" | \`todo\` (visible Plan panel) |
+| Automation | "check every hour and tell me" | \`automation\` (manual / hourly / daily) |
+| Obsidian itself | "close every unpinned tab", "hide that button" | \`obsidian.tabs.*\`, \`obsidian.ui.buttons\`, \`obsidian.listCommands\`, \`obsidian.execute\` |
+| Other plugins | "what can plugin X do? trigger Y" | \`cancip.installedPlugins\`, \`cancip.pluginCapabilities\`, \`cancip.pluginRoute\` |
+| UI automation | "turn on that setting" | \`obsidian.dom.*\`, \`obsidian.eval\` |
+| Sessions | "what did that session say?", "split this in three" | \`cancip.sessionHistory\`, \`cancip.subagents.*\` |
+| Skills / experience | "is there a skill for this?" | \`cancip.skills.*\`, \`cancip.experience.*\` |
+| Attachments | "turn this PDF into notes" | \`cancip.attachment.help\`, \`cancip.externalFiles.help\` |
+| Web / GitHub | "search the web", "recent releases" | \`web.search\`, \`web.fetch\`, \`github.*\` |
+| Self-inspection | "how many tokens did that cost?" | read its own source/config, \`cancip.sessionEvents\` |
+
+## Reading the process
+
+Every exchange carries one **process record**, folded by default, showing **steps · elapsed · total tokens**.
+Expanding it lists one row per step whose heading is the **model-written title of that action**; expanding a
+row reveals the concrete action, its parameters, and the raw tool result.
+
+## Access and safety
+
+- **Confirmation mode**: write-like actions queue in a Run / Reject card.
+- **Full access**: implemented tools run automatically.
+- **Review gate**: risky curation first produces review-panel data.
+- Deletes go to trash unless you explicitly ask for permanent deletion.
+
+## Making it stronger
+
+- **Global memory**: \`全局记忆.md\` is injected whole every turn — put long-lived rules there.
+- **Skills**: freeze repeated workflows with \`cancip.skills.*\`.
+- **Experience**: \`cancip.experience.harvest\` turns a proven workflow into a reusable recipe.
+- **This manual**: edit it and Cancip follows the new wording.
+
+## Limits
+
+- No arbitrary OS shell; JavaScript only runs in the Obsidian WebView/API bridge.
+- No destructive action without authorisation.
+- It will not make high-stakes business calls for you.
+`;
+}
+
 function pluginCompatibilityGuideMarkdown(): string {
   return `# Cancip Plugin Compatibility\n\n<!-- cancip-managed-plugin-compatibility-v1 -->\n\nThis is the stable integration entry for plugins and development agents. Prefer public APIs and Obsidian commands. UI simulation is a verified fallback, not a private-DOM dependency.\n\n## Registration\n\nRegister after both plugins are loaded:\n\n\`\`\`ts\nconst cancip = app.plugins.plugins.cancip?.api?.v1;\nconst handle = cancip?.registerPluginAdapter({\n  schemaVersion: \"1.0\",\n  pluginId: \"example-plugin\",\n  pluginName: \"Example Plugin\",\n  version: \"1.0.0\",\n  keywords: [\"example\", \"示例\"],\n  actions: [{\n    id: \"open\",\n    title: \"Open Example\",\n    description: \"Open the plugin's main view.\",\n    risk: \"effect\",\n    route: { type: \"command\", commandId: \"example-plugin:open\" }\n  }]\n});\nthis.register(() => handle?.unregister());\n\`\`\`\n\nThe stable API is \`app.plugins.plugins.cancip.api.v1\`: \`registerPluginAdapter\`, \`unregisterPluginAdapter\`, \`listPluginAdapters\`, \`getPluginAdapter\`, \`executePluginAction\`, \`refreshPluginCompatibility\`, and \`getIntegrationGuide\`.\n\n## Descriptor file\n\nA plugin that cannot register at runtime may place \`${CANCIP_PLUGIN_DESCRIPTOR_FILE}\` beside its \`manifest.json\`. Validate it against \`${CANCIP_PLUGIN_SCHEMA_PATH}\`. JSON descriptors are declarative and cannot contain callback functions.\n\n## Action routes\n\n- \`command\`: stable Obsidian command ID or an unambiguous command query.\n- \`api\`: public \`runtime.api\` method, or a public runtime method when \`target: \"runtime\"\`.\n- \`ui\`: stable selector or semantic label plus operation. Add a \`verify\` postcondition whenever possible.\n- \`run\`: runtime-only callback registered by the owning plugin.\n\nEach action must declare \`risk\`: \`read\`, \`effect\`, \`write\`, or \`high\`. Effectful actions invoked by Cancip still pass through Cancip confirmation/full-access handling. Direct public API calls do not bypass that boundary.\n\n## Automatic compatibility\n\nWhen no adapter exists, Cancip inspects in this order: registered adapter, descriptor file, public runtime descriptor, Obsidian commands, public API methods, visible semantic UI, plugin settings/data, then local or web documentation. UI fallback follows **observe -> act -> verify**. Ambiguous controls are never clicked automatically. Cancip does not continuously scan the DOM or run an LLM over every plugin at startup.\n\n## UI requirements\n\nExpose stable \`aria-label\`, \`title\`, \`data-*\`, command IDs, and observable completion state. Avoid coupling to private Cancip controllers or copying another plugin's internal implementation. Use a public plugin API for complex or background actions; use UI routes for actions a user can visibly perform.\n`;
 }
@@ -77407,6 +77638,9 @@ function normalizeToolRuns(raw: unknown): ToolRun[] {
         id: typeof item.id === "string" && item.id ? item.id : crypto.randomUUID(),
         action,
         summary: typeof item.summary === "string" && item.summary ? item.summary : action.type,
+        title: typeof item.title === "string" && item.title.replace(/\s+/g, " ").trim()
+          ? item.title.replace(/\s+/g, " ").trim()
+          : actionModelTitle(action) || undefined,
         status,
         createdAt: typeof item.createdAt === "string" ? item.createdAt : new Date().toISOString(),
         startedAt: typeof item.startedAt === "string" ? item.startedAt : undefined,
@@ -77798,8 +78032,42 @@ function extractCancipActionsFromJson(raw: string): CancipAction[] {
   const parsed = parseCancipActionJson(body);
   if (!parsed.ok) return [];
   return cancipActionCandidates(parsed.value)
-    .map((candidate) => parseCancipAction(candidate))
+    .map((candidate) => {
+      const action = parseCancipAction(candidate);
+      if (!action) return null;
+      const title = modelActionTitle(candidate);
+      // The title is a display label, not part of the action contract, so it
+      // rides along as an extra optional property instead of widening every
+      // action variant. Folded tool blocks read it back through actionModelTitle.
+      return title ? ({ ...action, title } as CancipAction) : action;
+    })
     .filter((action): action is CancipAction => action !== null);
+}
+
+/**
+ * Reads the model-written title for an action. Models put it on the action
+ * record, occasionally one level down when they wrap it ({action:{…},title}) or
+ * name it "label"; all three shapes are accepted so a titled action is never
+ * silently downgraded to the mechanical label.
+ */
+function modelActionTitle(input: unknown): string {
+  if (!isRecord(input)) return "";
+  const direct = typeof input.title === "string" ? input.title : typeof input.label === "string" ? input.label : "";
+  const trimmed = direct.replace(/\s+/g, " ").trim();
+  if (trimmed) return trimmed;
+  for (const nested of [input.action, input.tool, input.function]) {
+    if (isRecord(nested)) {
+      const title = modelActionTitle(nested);
+      if (title) return title;
+    }
+  }
+  return "";
+}
+
+/** Title carried on an already-parsed action, if the model supplied one. */
+function actionModelTitle(action: CancipAction): string {
+  const raw = (action as { title?: unknown }).title;
+  return typeof raw === "string" ? raw.replace(/\s+/g, " ").trim() : "";
 }
 
 /**
