@@ -2197,9 +2197,13 @@ export function workspaceLeafArea(leaf: WorkspaceLeaf): WorkspaceTabInfo["area"]
     if (container.closest(".mod-left-split, .workspace-split.mod-left-split, .workspace-drawer.mod-left, .workspace-drawer-left, .workspace-drawer.is-left, .workspace-drawer.mod-sidedock.mod-left")) return "left";
     if (container.closest(".workspace-popout, .mod-popout")) return "floating";
   }
-  const haystack = candidates.map((container) => `${container.className ?? ""} ${container.getAttribute("aria-label") ?? ""}`).join(" ").toLowerCase();
-  if (/\bright\b|右侧|右側|右边|右邊/.test(haystack)) return "right";
-  if (/\bleft\b|左侧|左側|左边|左邊/.test(haystack)) return "left";
+  // Token-exact fallback. A substring regex over the class string matched
+  // "mod-top-left-space" (a main-editor class) and reported notes as living in
+  // the left sidebar, which also leaked into area-scoped tab commands.
+  const tokens = new Set(candidates.flatMap((container) => Array.from(container.classList)));
+  const labels = candidates.map((container) => container.getAttribute("aria-label") ?? "").join(" ");
+  if (tokens.has("mod-right-split") || tokens.has("mod-right") || /右侧|右側|右边|右邊/.test(labels)) return "right";
+  if (tokens.has("mod-left-split") || tokens.has("mod-left") || /左侧|左側|左边|左邊/.test(labels)) return "left";
   if (candidates.some((container) => container.closest(".workspace-tabs, .workspace-leaf"))) return "root";
   return "unknown";
 }

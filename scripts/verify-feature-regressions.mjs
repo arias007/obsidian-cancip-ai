@@ -714,7 +714,8 @@ const checks = [
   ["the workspace snapshot separates the focused tab from the most recent file", source.includes("this.workspaceTabInfos({ scope: \"all\" })") && source.includes('const mark = tab.leaf === activeLeaf ? "*" : "";') && source.includes('"工作区当前状态"') && source.includes("this.app.workspace.getActiveFile()") && source.includes("[${areaLabel(tab.area)}") && source.includes('"焦点标签"') && source.includes('"最近编辑文件"')],
   ["an answer that describes the open workspace is not discarded as a tool preface", openWorkspaceAnswers.every((text) => !answerFilterApi.isToolPrefaceOnlyAnswer(text))],
   ["a reply that only announces the next tool step is still treated as a preface", toolPrefaces.every((text) => answerFilterApi.isToolPrefaceOnlyAnswer(text))],
-  ["prose approval requests are still recognised as approval requests", approvalRequests.every((text) => answerFilterApi.isProseApprovalRequestAnswer(text)) && openWorkspaceAnswers.every((text) => !answerFilterApi.isProseApprovalRequestAnswer(text))]
+  ["prose approval requests are still recognised as approval requests", approvalRequests.every((text) => answerFilterApi.isProseApprovalRequestAnswer(text)) && openWorkspaceAnswers.every((text) => !answerFilterApi.isProseApprovalRequestAnswer(text))],
+  ["sidebar area detection matches exact class tokens instead of a substring", source.includes('tokens.has("mod-left-split")') && source.includes('tokens.has("mod-right-split")') && !source.includes("const haystack = candidates.map") && !/\\bleft\\b\|左侧/.test(source)]
 ];
 
 const failed = checks.filter(([, passed]) => !passed).map(([name]) => name);
