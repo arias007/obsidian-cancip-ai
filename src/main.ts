@@ -50494,20 +50494,28 @@ class CancipView extends ItemView {
     const shortTitle = (title: string): string =>
       title.length > WORKSPACE_STATE_TITLE_MAX_CHARS ? `${title.slice(0, WORKSPACE_STATE_TITLE_MAX_CHARS)}…` : title;
     const lines: string[] = [`## ${zh ? "工作区当前状态" : "Workspace state"}`];
-    const activeArea = areaLabel(active?.area ?? "unknown");
-    // Keep path, view type, and area on separate labelled lines: a parenthetical
-    // after the path gets misread as the tab's own area.
-    if (activeFile) {
-      lines.push(`${zh ? "活动文件" : "Active file"}：${activeFile.path}`);
-      if (activeType) lines.push(`${zh ? "活动视图" : "Active view"}：${activeType}（${activeArea}）`);
+    // "Focused tab" and "most recent file" are two different things and must be
+    // labelled as such: clicking into the Cancip panel makes the panel the
+    // focused leaf while getActiveFile() still returns the note the user was
+    // last editing. Merging them produced "the file is in the right sidebar as
+    // cancip-view", which is false.
+    if (active) {
+      const activePath = active.path ? `，${active.path}` : "";
+      lines.push(`${zh ? "焦点标签" : "Focused tab"}：${shortTitle(active.title)}（${active.viewType || activeType}，${areaLabel(active.area)}${activePath}）`);
     } else {
-      lines.push(`${zh ? "活动文件" : "Active file"}：${zh ? "无" : "none"}`);
-      if (activeType) lines.push(`${zh ? "活动视图" : "Active view"}：${activeType}（${activeArea}）`);
+      lines.push(`${zh ? "焦点标签" : "Focused tab"}：${zh ? "无" : "none"}${activeType ? `（${activeType}）` : ""}`);
+    }
+    if (activeFile) {
+      const fileTab = tabs.find((tab) => tab.path === activeFile.path) ?? null;
+      lines.push(`${zh ? "最近编辑文件" : "Most recent file"}：${activeFile.path}${fileTab ? `（${areaLabel(fileTab.area)}）` : ""}`);
+    } else {
+      lines.push(`${zh ? "最近编辑文件" : "Most recent file"}：${zh ? "无" : "none"}`);
     }
     if (tabs.length) {
       const listed = tabs.slice(0, WORKSPACE_STATE_MAX_TABS).map((tab) => {
         const mark = tab.leaf === activeLeaf ? "*" : "";
-        return `${mark}${shortTitle(tab.title)}[${areaLabel(tab.area)}${tab.pinned ? (zh ? "|已锁定" : "|pinned") : ""}]`;
+        const path = tab.path && tab.path !== activeFile?.path ? `，${tab.path}` : "";
+        return `${mark}${shortTitle(tab.title)}[${areaLabel(tab.area)}${tab.pinned ? (zh ? "|已锁定" : "|pinned") : ""}${path}]`;
       });
       const hidden = tabs.length - listed.length;
       const more = hidden > 0 ? (zh ? ` …另有 ${hidden} 个` : ` …${hidden} more`) : "";
