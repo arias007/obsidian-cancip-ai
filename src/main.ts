@@ -73605,9 +73605,10 @@ function cancipCapabilityGuideMarkdown(chinese: boolean, version: string, genera
 
 ## 八、出问题时
 
-1. 看会话历史：\`cancip.sessionHistory\`（含原始上下文）。
-2. 让它自检：\`cancip doctor\`。
+1. 先看过程记录：结论下面那一条，展开就能看到每一步的标题、耗时和 token；卡在哪一步一目了然。
+2. 让它自检：直接问"你现在连得上模型吗""模型返回的动作是不是没被接受"，它会读会话审计里的原始收发内容。
 3. 卡片卡住：确认模式下点 Run；全权模式看过程记录里的失败原因。
+4. 只有桥（CLI / Codex / Claude 那一侧）不通才需要命令行：\`node .obsidian/plugins/cancip/cli/cancip-cli.mjs doctor\`。面板对话本身不走桥。
 `;
   }
   return `# Cancip Capability Manual
@@ -73675,6 +73676,13 @@ row reveals the concrete action, its parameters, and the raw tool result.
 - No arbitrary OS shell; JavaScript only runs in the Obsidian WebView/API bridge.
 - No destructive action without authorisation.
 - It will not make high-stakes business calls for you.
+
+## Troubleshooting
+
+1. Read the process record first: the folded line under each answer opens into per-step titles, elapsed time, and tokens.
+2. Ask it to self-check: "are you connected to the model?", "was the action the model returned rejected?". It reads the raw request/response audit of the session.
+3. A stuck card means confirmation mode is waiting: press Run. In full access, the process record names the failing step.
+4. The command line is only for the **bridge** (CLI / Codex / Claude): \`node .obsidian/plugins/cancip/cli/cancip-cli.mjs doctor\`. A panel conversation never goes through the bridge.
 `;
 }
 
