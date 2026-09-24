@@ -332,8 +332,76 @@ async function runTests() {
       const result = runCli(["--transport", "queue", "--wait-ms", "1200", "ping"]);
       const elapsed = Date.now() - started;
       assert.notEqual(result.status, 0);
-      assert.match(result.stderr, /did not answer within/);
+      // The command is still sitting in the queue, so the CLI can say exactly
+      // that instead of a generic "did not answer".
+      assert.match(result.stderr, /has not picked up/);
       assert.ok(elapsed < 20_000, `the CLI should give up near the timeout, took ${elapsed}ms`);
+    });
+
+    await check("a foreground-only op held by a hidden plugin says so instead of timing out", async () => {
+      // The plugin deliberately does not run ops that need a visible window while
+      // Obsidian sits in the background. The CLI must not report that as a plain
+      // timeout: the command is queued and healthy, it just has not run yet, and
+      // the fix is to bring Obsidian forward rather than to retry blindly.
+      resetTransport();
+      const path = join(bridgeDir, "heartbeat.json");
+      const saved = readFileSync(path, "utf8");
+      writeFileSync(
+        path,
+        JSON.stringify({
+          ts: Date.now(),
+          bridge: "Cancip Queue Bridge",
+          protocol: 1,
+          replyProtocol: 2,
+          v: pluginVersion,
+          dir: bridgeDir,
+          foreground: false,
+          opCatalog: [
+            { op: "ping", group: "file", requiresForeground: false, enabled: true },
+            { op: "notice", group: "file", requiresForeground: true, enabled: true }
+          ]
+        })
+      );
+      try {
+        const started = Date.now();
+        const result = runCli(["--transport", "queue", "--wait-ms", "1200", "notice", "held probe"]);
+        const elapsed = Date.now() - started;
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /needs Obsidian in the foreground/);
+        assert.match(result.stderr, /has not run/);
+        assert.ok(elapsed < 20_000, `the CLI should give up near the timeout, took ${elapsed}ms`);
+      } finally {
+        writeFileSync(path, saved);
+      }
+    });
+
+    await check("an op that does not need a window is not reported as held", async () => {
+      // Same hidden heartbeat as above, but `ping` is marked as not needing the
+      // window, so the hold diagnosis must not be applied to it.
+      resetTransport();
+      const path = join(bridgeDir, "heartbeat.json");
+      const saved = readFileSync(path, "utf8");
+      writeFileSync(
+        path,
+        JSON.stringify({
+          ts: Date.now(),
+          bridge: "Cancip Queue Bridge",
+          protocol: 1,
+          replyProtocol: 2,
+          v: pluginVersion,
+          dir: bridgeDir,
+          foreground: false,
+          opCatalog: [{ op: "ping", group: "file", requiresForeground: false, enabled: true }]
+        })
+      );
+      try {
+        const result = runCli(["--transport", "queue", "--wait-ms", "1200", "ping"]);
+        assert.notEqual(result.status, 0);
+        assert.doesNotMatch(result.stderr, /needs Obsidian in the foreground/);
+        assert.match(result.stderr, /has not picked up/);
+      } finally {
+        writeFileSync(path, saved);
+      }
     });
 
     await check("doctor reports both legs and names the queue directory", async () => {

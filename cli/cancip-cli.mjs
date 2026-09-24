@@ -330,6 +330,28 @@ function findQueueResult(dir, id, legacyScan = true) {
 }
 
 /**
+ * Whether the queue still holds this command, which means it has not run at all.
+ *
+ * Distinguishes "waiting its turn" from "left the queue and is being executed":
+ * the plugin only removes a command once it has been picked up.
+ */
+function queueHoldsId(dir, id) {
+  try {
+    const raw = readFileSync(join(dir, QUEUE_FILE), "utf8");
+    return raw.split("\n").some((line) => {
+      if (!line.trim()) return false;
+      try {
+        return JSON.parse(line).id === id;
+      } catch {
+        return false;
+      }
+    });
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Send one command through the file queue and wait for its result.
  *
  * The heartbeat is checked first so a caller gets "Cancip is not running"
@@ -375,6 +397,30 @@ async function queueRequest(context, op, payload, options) {
       throw error;
     }
     await sleep(QUEUE_POLL_MS);
+  }
+  // A timeout has three very different causes and the caller cannot act without
+  // knowing which one it is. The one this bridge creates itself: an op that needs
+  // a visible window is deliberately held while Obsidian sits in the background,
+  // so the command is queued and healthy, just not run yet.
+  if (queueHoldsId(dir, id)) {
+    const info = Array.isArray(heartbeat.opCatalog)
+      ? heartbeat.opCatalog.find((entry) => entry && entry.op === op)
+      : null;
+    if (info && info.requiresForeground && heartbeat.foreground === false) {
+      const error = new Error(
+        `${op} needs Obsidian in the foreground, and Obsidian is in the background, so the command is ` +
+          `still queued and has not run. Bring Obsidian to the front and it will run within about a second. ` +
+          `Verbs that do not need the window (read, view, ls, stat, write, search, …) work right now.`
+      );
+      error.code = "HELD_FOREGROUND";
+      throw error;
+    }
+    const error = new Error(
+      `Cancip has not picked up the ${op} command after ${waitMs}ms: it is still in ${join(dir, QUEUE_FILE)}. ` +
+        "Either the plugin's poll timer is frozen (Obsidian in the background on some platforms) or the channel is off."
+    );
+    error.code = "QUEUED_NOT_RUN";
+    throw error;
   }
   throw new Error(
     `Cancip did not answer within ${waitMs}ms. The command may still be running; ` +
@@ -785,7 +831,10 @@ Channel options:
          answering while Obsidian sits in the background.
   queue  appends to bridge/queue.jsonl inside the vault; works on mobile and in
          sandboxes that can only reach the vault directory. Operation names and
-         file formats match arias007/minis-bridge.
+         file formats match arias007/minis-bridge. Verbs that need a visible
+         window (open, notice, cmd, sync) are held while Obsidian is in the
+         background and run when it comes forward; every other verb runs right
+         away. A held command is reported as held, not as a failure.
 
 The CLI discovers the open Obsidian Vault and never prints the bridge token.`;
 }
