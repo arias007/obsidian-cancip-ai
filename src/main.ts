@@ -78249,6 +78249,16 @@ function parseCancipAction(input: unknown): CancipAction | null {
   }
   if (isRecord(input.action)) return parseCancipAction(input.action);
   if (isRecord(input.tool)) return parseCancipAction(input.tool);
+  if (isRecord(input.args)) {
+    // Only command actions carry args; a model that generalises the shape to
+    // {"type":"read","args":{"path":"…"}} used to lose the whole turn to
+    // "action does not match the executable protocol". Lift those fields so the
+    // declared intent is honoured, while the action's own keys keep winning.
+    input = { ...input.args, ...input };
+  }
+  // Re-narrow: assigning to an `unknown` parameter drops the earlier guard, so the
+  // rest of the parser needs the record type stated again.
+  if (!isRecord(input)) return null;
   if (isRecord(input.function)) {
     const functionName = typeof input.function.name === "string" ? input.function.name.trim() : "";
     if (functionName) {
