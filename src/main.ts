@@ -19909,9 +19909,17 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     if (header.closest(".workspace-popout, .mod-popout")) return "floating";
     let current: HTMLElement | null = header;
     for (let depth = 0; current && depth < 8; depth += 1, current = current.parentElement) {
-      const text = `${current.className ?? ""} ${current.getAttribute("aria-label") ?? ""}`.toLowerCase();
-      if (/\bright\b|右/.test(text)) return "right";
-      if (/\bleft\b|左/.test(text)) return "left";
+      // Class names are matched as exact tokens. Scanning the raw class string
+      // also matched "mod-top-left-space" — a main-editor class — so a tab living
+      // in the root split was reported as a sidebar tab: the header menu then
+      // showed another tab's name and offered "close sidebar tabs" for it.
+      const tokens = current.classList;
+      if (tokens.contains("mod-right-split") || tokens.contains("mod-right")) return "right";
+      if (tokens.contains("mod-left-split") || tokens.contains("mod-left")) return "left";
+      // Aria labels are human text, so a word match is safe there.
+      const label = (current.getAttribute("aria-label") ?? "").toLowerCase();
+      if (/\bright\b|右侧|右側|右边|右邊/.test(label)) return "right";
+      if (/\bleft\b|左侧|左側|左边|左邊/.test(label)) return "left";
     }
     const rect = header.getBoundingClientRect();
     const width = activeDocument.defaultView?.innerWidth ?? window.innerWidth;

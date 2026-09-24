@@ -26,6 +26,8 @@ const aiOverviewSource = span("private renderAiOverview", "private renderMessage
 const settingsModuleSource = span("const SETTINGS_PAGE_KEYS", "private displayCommonSettings", "settings module");
 const tabThumbnailInstallSource = span("private installWorkspaceTabThumbnailSupport", "private scheduleWorkspaceTabThumbnailRefresh", "workspace tab thumbnail install");
 const tabThumbnailCaptureSource = span("private async captureActiveWorkspaceTabThumbnail", "private workspaceTabThumbnailKey", "workspace tab thumbnail capture");
+const workspaceLeafAreaSource = span("export function workspaceLeafArea", "export function workspaceLeafPinned", "workspace leaf area");
+const workspaceTabHeaderAreaSource = span("private workspaceTabAreaForHeader", "private workspaceTabInfoForHeader", "workspace tab header area");
 
 const parsedSource = ts.createSourceFile("main.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
 const settingsModuleCoveragePassed = (() => {
@@ -715,7 +717,8 @@ const checks = [
   ["an answer that describes the open workspace is not discarded as a tool preface", openWorkspaceAnswers.every((text) => !answerFilterApi.isToolPrefaceOnlyAnswer(text))],
   ["a reply that only announces the next tool step is still treated as a preface", toolPrefaces.every((text) => answerFilterApi.isToolPrefaceOnlyAnswer(text))],
   ["prose approval requests are still recognised as approval requests", approvalRequests.every((text) => answerFilterApi.isProseApprovalRequestAnswer(text)) && openWorkspaceAnswers.every((text) => !answerFilterApi.isProseApprovalRequestAnswer(text))],
-  ["sidebar area detection matches exact class tokens instead of a substring", source.includes('tokens.has("mod-left-split")') && source.includes('tokens.has("mod-right-split")') && !source.includes("const haystack = candidates.map") && !/\\bleft\\b\|左侧/.test(source)]
+  ["leaf area detection matches exact class tokens instead of a class-name substring", workspaceLeafAreaSource.includes('tokens.has("mod-left-split")') && workspaceLeafAreaSource.includes('tokens.has("mod-right-split")') && !workspaceLeafAreaSource.includes("className") && workspaceLeafAreaSource.includes('getAttribute("aria-label")')],
+  ["tab-header area detection matches exact class tokens too, so a main-area tab never reports as a sidebar tab", workspaceTabHeaderAreaSource.includes("current.classList") && workspaceTabHeaderAreaSource.includes('tokens.contains("mod-left-split")') && workspaceTabHeaderAreaSource.includes('tokens.contains("mod-right-split")') && !workspaceTabHeaderAreaSource.includes("current.className")]
 ];
 
 const failed = checks.filter(([, passed]) => !passed).map(([name]) => name);
