@@ -8230,7 +8230,11 @@ export default class CancipPlugin extends Plugin {
       const cancelStartupArtifacts = scheduleIdleWork(() => {
         void Promise.all([
           this.ensurePluginCompatibilityArtifacts(),
-          this.ensureCancipNavigationFiles()
+          this.ensureCancipNavigationFiles(),
+          // The capability manual is a first-class artifact, not something the user
+          // has to find a command for: keep it present and current, while the version
+          // marker still guarantees a hand-edited copy is never overwritten.
+          this.ensureCapabilityGuideArtifacts()
         ]).catch((error) => {
           const reason = error instanceof Error ? error.message : String(error);
           this.devErrors.push(`deferred startup artifacts failed: ${reason}`);
