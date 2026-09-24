@@ -1422,9 +1422,18 @@ export function isToolPrefaceOnlyAnswer(text: string): boolean {
   const compact = visible.replace(/\s+/g, "").toLowerCase();
   if (!compact) return false;
   if (/(已完成|已读取|已读完|已检查|已修改|已写入|已验证|改动的文件|读取的文件|结果和提醒|done|completed|changedfiles|verification|result)/i.test(compact)) return false;
-  const hasPrefaceVerb = /(我先|先|接下来|下一步|现在|马上|随后|稍后|将会|我会|我将|先来|先去|i'?ll|iwill|i’mgoingto|goingto|nexti|letme)/i.test(compact);
-  const hasToolVerb = /(读取|读一下|查看|看看|检查|检索|搜索|查找|打开|分析|随后|然后|再|写回|修改|美化|排版|read|inspect|check|search|open|analy[sz]e|then|afterthat|writeback|modify|format)/i.test(compact);
-  return hasPrefaceVerb && hasToolVerb;
+  // A preface announces this turn's next step, so its cue has to lead the
+  // reply (a short acknowledgement may precede it). Weak words like 现在/然后/再
+  // also occur inside ordinary descriptions of the current state — "你现在打开
+  // 的是…" is a real answer, and treating it as a preface discarded it.
+  const lead = compact.replace(/^(?:好的|好嘞|好|明白|收到|嗯|ok|gotit)[，,。!！?？:：、]*/, "").slice(0, 12);
+  const hasPrefaceVerb = /^(?:我先|先|接下来|下一步|马上|随后|稍后|将会|我会|我将|先来|先去|i'?ll|iwill|letme|goingto)/i.test(lead);
+  if (!hasPrefaceVerb) return false;
+  const hasToolVerb = /(读取|读一下|查看|看看|检查|检索|搜索|查找|打开|分析|写回|修改|美化|排版|read|inspect|check|search|open|analy[sz]e|writeback|modify|format)/i.test(compact);
+  if (!hasToolVerb) return false;
+  // Describing what is open right now is the answer, not a preface to acting.
+  const describesState = /(打开的是|当前(?:打开|有|共)|目前(?:打开|有|共)|共有|合计|活动文件|焦点标签|最近编辑)|\d+\s*个(?:标签|文件|笔记|视图)/i.test(compact);
+  return !describesState;
 }
 
 export function isProseApprovalRequestAnswer(text: string, taskGoal = ""): boolean {

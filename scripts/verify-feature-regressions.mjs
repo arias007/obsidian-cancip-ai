@@ -376,6 +376,41 @@ const finalFailureModule = ts.transpileModule([
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 }
 }).outputText;
 const finalFailureApi = await import(`data:text/javascript;base64,${Buffer.from(finalFailureModule).toString("base64")}`);
+const answerFilterModule = ts.transpileModule([
+  functionSource("stripStructuredChoices"),
+  functionSource("isChoiceCueLine"),
+  functionSource("listedChoiceText"),
+  functionSource("normalizeChoiceText"),
+  functionSource("isChoiceSectionTrailingMeta"),
+  functionSource("stripTailChoiceSection"),
+  functionSource("hasFinalConclusion"),
+  functionSource("isOnlyRunStatsText"),
+  functionSource("isModelRunStatsLine"),
+  functionSource("stripModelRunStatsLines"),
+  functionSource("isToolPrefaceOnlyAnswer"),
+  functionSource("isProseApprovalRequestAnswer"),
+  "export { isToolPrefaceOnlyAnswer, isProseApprovalRequestAnswer };"
+].join("\n\n"), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 }
+}).outputText;
+const answerFilterApi = await import(`data:text/javascript;base64,${Buffer.from(answerFilterModule).toString("base64")}`);
+// Real replies about the open workspace. These must survive the preface filter:
+// discarding them made the panel report "the model twice asked for confirmation"
+// after it had already answered correctly.
+const openWorkspaceAnswers = [
+  "你现在打开的是右栏的 Cancip 视图（焦点）和一个 Cancip 标签，加上左栏的 SKILLS.md（最近编辑）、文件列表、搜索、书签、新标签页，共 7 个标签。",
+  "你现在焦点在右栏的 Cancip 视图，左栏最近编辑 AI/Cancip/Memory/SKILLS.md，当前打开 7 个标签。",
+  "当前打开的标签有：SKILLS（左栏）、Cancip（右栏），合计 2 个标签。"
+];
+const toolPrefaces = [
+  "我先读取一下 README.md，然后再回答。",
+  "好的，接下来我会检查配置。",
+  "Let me read the file first."
+];
+const approvalRequests = [
+  "需要执行这条命令，请确认。",
+  "是否执行这个操作？"
+];
 const failedMultiAgentPrompt = "请用两个子 Agent 分别独立计算 12+30 并互相核对，最终只回答结果，并给出3个与本题直接相关的推荐项。";
 const failedMultiAgentFallback = finalFailureApi.concreteFailedFinalFallback(
   failedMultiAgentPrompt,
@@ -676,7 +711,10 @@ const checks = [
   ["workspace tab thumbnail support is visible-only, bounded, and low-frequency", source.includes("visibleWorkspaceTabThumbnailHosts") && source.includes("workspaceTabThumbnailCache.size > 12") && source.includes("previous.capturedAt < 30000") && source.includes("workspaceTabThumbnailLastCaptureAt < 2000") && source.includes("visited < 160") && source.includes("const inTabList = !host.matches") && !tabThumbnailInstallSource.includes('on("active-leaf-change", scheduleCapture)') && !tabThumbnailInstallSource.includes("MutationObserver") && !tabThumbnailInstallSource.includes("registerInterval") && !tabThumbnailCaptureSource.includes("html2canvas") && source.includes("clearWorkspaceTabThumbnailDom")],
   ["the per-turn context always carries a live workspace snapshot instead of depending on the model calling a tool", source.includes("private buildWorkspaceStateContext(): string {") && source.includes("const workspaceState = this.buildWorkspaceStateContext();") && source.includes("if (workspaceState) parts.push(workspaceState);")],
   ["the workspace snapshot is bounded so a busy workspace cannot inflate the payload", source.includes("const WORKSPACE_STATE_MAX_TABS = 8;") && source.includes("const WORKSPACE_STATE_TITLE_MAX_CHARS = 36;") && source.includes("const WORKSPACE_STATE_MAX_CHARS = 600;") && source.includes("tabs.slice(0, WORKSPACE_STATE_MAX_TABS)") && source.includes("trimContext(lines.join(\"\\n\"), WORKSPACE_STATE_MAX_CHARS)")],
-  ["the workspace snapshot separates the focused tab from the most recent file", source.includes("this.workspaceTabInfos({ scope: \"all\" })") && source.includes('const mark = tab.leaf === activeLeaf ? "*" : "";') && source.includes('"工作区当前状态"') && source.includes("this.app.workspace.getActiveFile()") && source.includes("[${areaLabel(tab.area)}") && source.includes('"焦点标签"') && source.includes('"最近编辑文件"')]
+  ["the workspace snapshot separates the focused tab from the most recent file", source.includes("this.workspaceTabInfos({ scope: \"all\" })") && source.includes('const mark = tab.leaf === activeLeaf ? "*" : "";') && source.includes('"工作区当前状态"') && source.includes("this.app.workspace.getActiveFile()") && source.includes("[${areaLabel(tab.area)}") && source.includes('"焦点标签"') && source.includes('"最近编辑文件"')],
+  ["an answer that describes the open workspace is not discarded as a tool preface", openWorkspaceAnswers.every((text) => !answerFilterApi.isToolPrefaceOnlyAnswer(text))],
+  ["a reply that only announces the next tool step is still treated as a preface", toolPrefaces.every((text) => answerFilterApi.isToolPrefaceOnlyAnswer(text))],
+  ["prose approval requests are still recognised as approval requests", approvalRequests.every((text) => answerFilterApi.isProseApprovalRequestAnswer(text)) && openWorkspaceAnswers.every((text) => !answerFilterApi.isProseApprovalRequestAnswer(text))]
 ];
 
 const failed = checks.filter(([, passed]) => !passed).map(([name]) => name);
