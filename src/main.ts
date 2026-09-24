@@ -191,6 +191,8 @@ const VERY_LARGE_LIVE_SESSION_BYTES = 4 * 1024 * 1024;
 const MAX_TOOL_ACTIONS_PER_BATCH = 8;
 const MAX_TOOL_ACTIONS_PER_TASK = 12;
 const MAX_AUTOMATION_TOOL_ACTIONS_PER_TASK = 18;
+/** File reads the review baseline may have in flight at once (see primeAiVaultMutationCaptureReviewScope). */
+const AI_MUTATION_PRIME_CONCURRENCY = 12;
 const STARTUP_MAINTENANCE_IDLE_TIMEOUT_MS = 12000;
 const TTS_CAPTURE_MAX_CHARS = 120000;
 const TTS_FILE_CAPTURE_MAX_CHARS = Number.MAX_SAFE_INTEGER;
@@ -26442,20 +26444,32 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       maxFiles
     );
     let captured = 0;
-    for (const path of paths) {
-      if (Date.now() - startedAt > timeBudgetMs) break;
-      const normalized = normalizePath(path);
-      if (!normalized || state.before.has(normalized) || !isReviewableVaultContentPath(normalized, this.obsidianConfigDir(), this.settings.memoryFolder)) continue;
-      try {
-        const stat = await adapter.stat(normalized);
-        if (stat?.type !== "file") continue;
-        const text = await readTextIfExists(adapter, normalized, "");
-        state.before.set(normalized, { path: normalized, text, exists: true });
-        captured += 1;
-      } catch {
-        // A file can disappear while a command is starting; the later event capture handles real mutations.
+    const pending = [...paths];
+    const primeOne = async (): Promise<void> => {
+      while (Date.now() - startedAt <= timeBudgetMs) {
+        const path = pending.shift();
+        if (path === undefined) return;
+        const normalized = normalizePath(path);
+        if (!normalized || state.before.has(normalized) || !isReviewableVaultContentPath(normalized, this.obsidianConfigDir(), this.settings.memoryFolder)) continue;
+        try {
+          const stat = await adapter.stat(normalized);
+          if (stat?.type !== "file") continue;
+          const text = await readTextIfExists(adapter, normalized, "");
+          state.before.set(normalized, { path: normalized, text, exists: true });
+          captured += 1;
+        } catch {
+          // A file can disappear while a command is starting; the later event capture handles real mutations.
+        }
       }
-    }
+    };
+    // This snapshot is the diff baseline the review panel needs for a command
+    // whose target cannot be predicted (obsidian.eval, execute, click), so it
+    // cannot be skipped — but it was read one file at a time, which measured
+    // 1.5 s of every such action on a ~2 800 file vault. Overlap the same reads
+    // with a small fixed pool: same time budget, same partial-snapshot
+    // semantics, only the wall-clock changes.
+    const poolSize = Math.min(AI_MUTATION_PRIME_CONCURRENCY, pending.length);
+    await Promise.all(Array.from({ length: poolSize }, () => primeOne()));
     return captured;
   }
 
