@@ -2354,6 +2354,12 @@ const EN = {
   commandOpenChat: "Open chat",
   commandNewChat: "New chat",
   commandOpenCapabilityGuide: "Open capability manual",
+  // The one sentence that makes the folded tool block readable. Kept as its own
+  // key because every tool-prompt branch (the full protocol, the surgical file
+  // prompts, and the lightweight catalogue) has to carry it verbatim; the text
+  // below must stay identical to the copy inside toolProtocol so the central
+  // append in buildContext can detect and skip the duplicate.
+  actionTitleRule: "Every action must carry a short model-written \"title\" (2-8 words, action + target + purpose, in the user's language) because the UI shows it on the collapsed tool block; never repeat the raw action type as the title.",
   commandCreateInteractiveHtml: "One-click interactive HTML",
   oneClickHtmlRequirement: "Describe the interactive HTML",
   oneClickHtmlRequirementPlaceholder: "Example: a mobile-friendly flowchart with clickable steps, progress, reset, and a polished light/dark interface.",
@@ -3609,6 +3615,7 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     commandOpenChat: "打开聊天",
     commandNewChat: "新对话",
     commandOpenCapabilityGuide: "打开能力手册",
+    actionTitleRule: "每个动作必须带一个模型自己写的短标题 \"title\"（2–8 个词或 20 字以内，动作 + 对象 + 目的，用用户的语言），界面会把折叠后的工具块显示成这个标题；不要把原始动作类型直接当标题。",
     commandCreateInteractiveHtml: "一键写交互 HTML",
     oneClickHtmlRequirement: "描述要制作的交互 HTML",
     oneClickHtmlRequirementPlaceholder: "例如：做一个适合手机使用的流程图，步骤可点击、显示进度、可以重置，并支持明暗主题。",
@@ -4859,6 +4866,7 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     commandOpenChat: "開啟聊天",
     commandNewChat: "新對話",
     commandOpenCapabilityGuide: "開啟能力手冊",
+    actionTitleRule: "每個動作必須帶一個模型自己寫的短標題 \"title\"（2–8 個詞或 20 字以內，動作 + 對象 + 目的，用使用者的語言），介面會把收合後的工具塊顯示成這個標題；不要把原始動作類型直接當標題。",
     exportSession: "匯出會話",
     exportNoMessages: "沒有可匯出的訊息",
     exportDone: "會話已匯出：{path}",
@@ -48917,9 +48925,17 @@ class CancipView extends ItemView {
       : policy.includeToolCatalog && !policy.includeToolProtocol
       ? this.lightweightToolCatalogPrompt()
       : this.toolPromptForPolicy(policy);
+    // Every tool-prompt branch has to ask for a model-written action title: the
+    // folded tool block shows it instead of the mechanical action name, and the
+    // surgical file prompts and the lightweight catalogue never carried the full
+    // protocol. The rule is appended once here unless the branch already states it.
+    const actionTitleRule = this.t("actionTitleRule");
+    const routedWithTitleRule = actionTitleRule && !routedToolPrompt.includes(actionTitleRule)
+      ? `${routedToolPrompt}\n${actionTitleRule}`
+      : routedToolPrompt;
     const toolPrompt = this.plugin.settings.commandBusEnabled
-      ? routedToolPrompt
-      : `${routedToolPrompt}\n\n${this.t("commandBusDisabledPrompt")}`;
+      ? routedWithTitleRule
+      : `${routedWithTitleRule}\n\n${this.t("commandBusDisabledPrompt")}`;
     const modeInstruction = this.mode === "search"
       ? this.t("modePromptSearch")
       : this.mode === "edit"
@@ -78055,7 +78071,9 @@ function modelActionTitle(input: unknown): string {
   const direct = typeof input.title === "string" ? input.title : typeof input.label === "string" ? input.label : "";
   const trimmed = direct.replace(/\s+/g, " ").trim();
   if (trimmed) return trimmed;
-  for (const nested of [input.action, input.tool, input.function]) {
+  // Models that wrap the whole action in {"type":"read","args":{…}} also tend to
+  // put the title beside the path, so look one level inside the argument bag too.
+  for (const nested of [input.action, input.tool, input.function, input.args, input.params, input.arguments]) {
     if (isRecord(nested)) {
       const title = modelActionTitle(nested);
       if (title) return title;
