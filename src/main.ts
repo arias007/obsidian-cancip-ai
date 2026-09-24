@@ -42900,7 +42900,7 @@ class CancipView extends ItemView {
     return { sessionId: this.sessionId, status: this.currentSessionStatus, answer };
   }
 
-  async submitBridgeRawActions(rawActions: unknown[]): Promise<AgentBridgeActionResponse> {
+  async submitBridgeRawActions(rawActions: unknown[], options: { external?: boolean } = {}): Promise<AgentBridgeActionResponse> {
     if (!Array.isArray(rawActions) || !rawActions.length) throw new Error("action or actions is required");
     if (rawActions.length > 20) throw new Error("A bridge action batch is limited to 20 actions.");
     if (rawActions.some((action) => !isRecord(action))) throw new Error("Every bridge action must be a JSON object.");
@@ -42909,13 +42909,13 @@ class CancipView extends ItemView {
     if (actions.length !== rawActions.length) {
       throw new Error(cancipActionProtocolIssue(source) || "One or more bridge actions are invalid.");
     }
-    return await this.submitBridgeActions(actions);
+    return await this.submitBridgeActions(actions, options);
   }
 
-  async submitBridgeActions(actions: CancipAction[]): Promise<AgentBridgeActionResponse> {
+  async submitBridgeActions(actions: CancipAction[], options: { external?: boolean } = {}): Promise<AgentBridgeActionResponse> {
     if (!actions.length) throw new Error("At least one Cancip action is required.");
     const source = `\`\`\`cancip-action\n${JSON.stringify({ actions })}\n\`\`\``;
-    const handling = await this.handleActionBlocks(source);
+    const handling = await this.handleActionBlocks(source, undefined, { external: options.external !== false });
     if (!handling) throw new Error(cancipActionProtocolIssue(source) || "Cancip could not accept the bridge actions.");
     this.addActionReportMessage(handling);
     this.renderMessagesAfterMutation();
@@ -52672,8 +52672,8 @@ class CancipView extends ItemView {
       return null;
     }
 
-    actions = this.currentActionExecutionStage(actions);
-    const runs = this.createBudgetedToolRuns(actions);
+    actions = this.currentActionExecutionStage(actions, options.external === true);
+    const runs = this.createBudgetedToolRuns(actions, { external: options.external === true });
     if (options.readOnlyOnly) {
       const executable = runs.filter((run) => run.status === "pending" && canExecuteWithoutApproval(run.action));
       const blocked = runs.filter((run) => run.status === "blocked" || (run.status === "pending" && !canExecuteWithoutApproval(run.action)));
@@ -52767,9 +52767,9 @@ class CancipView extends ItemView {
     };
   }
 
-  private currentActionExecutionStage(actions: CancipAction[]): CancipAction[] {
+  private currentActionExecutionStage(actions: CancipAction[], external = false): CancipAction[] {
     const originalPrompt = this.previousActionableUserPrompt();
-    const taskRuns = this.currentTaskToolRuns();
+    const taskRuns = external ? [] : this.currentTaskToolRuns();
     const buttonCommands = actions.filter((action): action is Extract<CancipAction, { type: "command" }> =>
       action.type === "command"
       && [
@@ -52823,8 +52823,12 @@ class CancipView extends ItemView {
     return staged;
   }
 
-  private createBudgetedToolRuns(actions: CancipAction[]): ToolRun[] {
-    const taskRuns = this.currentTaskToolRuns();
+  private createBudgetedToolRuns(actions: CancipAction[], options: { external?: boolean } = {}): ToolRun[] {
+    // An external batch (CLI / Agent Bridge) is judged on its own: the caller
+    // already decided what to do, and the chat session's earlier runs are a
+    // different task. Without this, a second identical CLI call was refused as
+    // "重复动作已合并" — which made every repeated CLI verb useless.
+    const taskRuns = options.external ? [] : this.currentTaskToolRuns();
     const buttonDirective = this.uiButtonWorkflowDirective(taskRuns, this.previousActionableUserPrompt());
     actions = uniqueCancipActions(actions.map((action) => this.prepareUiButtonWorkflowAction(action, buttonDirective)));
     const previous = taskRuns.filter((run) => run.status !== "rejected" && run.status !== "blocked");

@@ -2316,6 +2316,14 @@ export type ActionHandlingOptions = {
   readOnlyOnly?: boolean;
   forceApproval?: boolean;
   silentApproval?: boolean;
+  /**
+   * Set when the batch comes from outside the chat turn that is on screen —
+   * the CLI and the Agent Bridge drive Cancip this way. An outside caller is
+   * its own task, so the batch must not be measured against (or collapsed
+   * into) the chat session's previous tool runs: two identical `cancip eval`
+   * invocations are two intentions, not one retry. Approval gates still apply.
+   */
+  external?: boolean;
 };
 
 export type ActionReportSection = {

@@ -76,6 +76,7 @@ assert.match(cliSource, /mcpConnectionState/);
 // exists: no Node HTTP runtime, minis-bridge compatible wire names, and one
 // shared handler set behind both transports.
 const queueBridgeSource = bundle.fileTextFor("class CancipQueueBridge").text;
+const vaultOpsSource = bundle.fileTextFor("export async function executeVaultOp(").text;
 // Match real imports, not the explanatory comment that names node:http as the
 // thing this transport exists to avoid.
 assert.doesNotMatch(queueBridgeSource, /^\s*import\s[^\n]*from\s+"node:/m, "the queue bridge must not import a Node builtin (that is why mobile can run it)");
@@ -131,6 +132,16 @@ assert.doesNotMatch(cliSource, /needs the file-queue channel/, "no verb may stay
 assert.match(source, /executeVaultOp\(input, op, \{/, "the HTTP handler must run the shared vault-op executor");
 assert.match(source, /const handlers: QueueBridgeHandlers = \{/, "one handler set must serve both transports");
 assert.match(source, /op: async \(op, input\) => await executeVaultOp/, "the handler set must expose the generic op leg");
+// An outside caller is its own task. Bridge batches used to be measured against
+// the chat session's earlier tool runs, so a second identical `cancip eval`
+// came back as "重复动作已合并" instead of running.
+assert.match(source, /const taskRuns = options\.external \? \[\] : this\.currentTaskToolRuns\(\)/, "an external batch must not inherit the chat task's tool runs");
+assert.match(source, /createBudgetedToolRuns\(actions, \{ external: options\.external === true \}\)/, "handleActionBlocks must forward the external flag into the budget gate");
+assert.match(source, /this\.handleActionBlocks\(source, undefined, \{ external: options\.external !== false \}\)/, "bridge batches must be marked external by default");
+assert.match(source, /currentActionExecutionStage\(actions, options\.external === true\)/, "the execution stage must see the same task scope");
+// The verb is routing metadata on the generic HTTP leg; it must never reach a
+// handler as an argument (it used to be stored as `{"op":"eval",…}`).
+assert.match(vaultOpsSource, /const command: Record<string, unknown> = \{ \.\.\.rawCommand \};\s*\n\s*delete command\.op;/, "executeVaultOp must drop the routing `op` key before handlers see the args");
 assert.match(cliSource, /async function queueRequest\(/);
 assert.match(cliSource, /--transport auto\|http\|queue/);
 for (const op of ["ping", "list", "stat", "write", "mkdir", "mv", "rm", "cmds", "cmd", "sync", "notice", "eval"]) {

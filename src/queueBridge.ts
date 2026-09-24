@@ -357,7 +357,13 @@ export type VaultOpsContext = {
   stats(): Record<string, unknown>;
 };
 
-export async function executeVaultOp(command: Record<string, unknown>, op: string, ctx: VaultOpsContext): Promise<unknown> {
+export async function executeVaultOp(rawCommand: Record<string, unknown>, op: string, ctx: VaultOpsContext): Promise<unknown> {
+  // The generic HTTP leg addresses operations as `{op, ...payload}`, so the
+  // verb rides along inside the body. It is routing metadata, never an
+  // argument: drop it here so handlers (and the actions they build) only ever
+  // see real inputs. It used to leak into stored actions as `{"op":"eval",…}`.
+  const command: Record<string, unknown> = { ...rawCommand };
+  delete command.op;
   const vault = ctx.app.vault;
   const adapter = vault.adapter;
   switch (op) {
