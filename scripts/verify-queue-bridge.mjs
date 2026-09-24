@@ -662,6 +662,21 @@ await checkAsync("a missing required argument fails with a clear message and a c
   assert.match(result.error, /requires a path/);
 });
 
+await checkAsync("an argument error names the op, not the word 'command'", async () => {
+  // The verb is stripped from the body before the executor sees it, so reading
+  // it back from there answered "command requires a path" for every op.
+  const stat = await runOne("stat", {});
+  assert.match(stat.result.error, /^stat requires a path\.$/);
+  const move = await runOne("move", { from: "A.md" });
+  assert.match(move.result.error, /^move requires a to\.$/);
+});
+
+await checkAsync("move reports NOT_FOUND for a path that is not in the vault", async () => {
+  const { result } = await runOne("move", { from: "Gone.md", to: "X.md" });
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "NOT_FOUND");
+});
+
 // -------------------------------------------------------- queue semantics
 await checkAsync("the queue is cleared before execution so a command never replays", async () => {
   const harness = createHarness();

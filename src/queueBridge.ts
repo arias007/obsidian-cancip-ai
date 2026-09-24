@@ -320,10 +320,13 @@ function commandString(value: unknown, max = 200_000): string {
   return typeof value === "string" ? value.slice(0, max) : "";
 }
 
-function requirePath(command: Record<string, unknown>, key = "path"): string {
+function requirePath(command: Record<string, unknown>, op: string, key = "path"): string {
   const value = commandString(command[key]).trim();
   if (!value) {
-    throw new QueueBridgeOpError("MISSING_ARGUMENT", `${commandString(command.op) || "command"} requires a ${key}.`);
+    // Names the op rather than the body: the verb is stripped from `command`
+    // before the executor sees it, so reading it back from there produced
+    // "command requires a path" for every op.
+    throw new QueueBridgeOpError("MISSING_ARGUMENT", `${op || "command"} requires a ${key}.`);
   }
   return value;
 }
@@ -697,6 +700,8 @@ export async function executeVaultOp(rawCommand: Record<string, unknown>, op: st
   // see real inputs. It used to leak into stored actions as `{"op":"eval",…}`.
   const command: Record<string, unknown> = { ...rawCommand };
   delete command.op;
+  // Argument checks name the op, which is only in scope here.
+  const requireArg = (key = "path"): string => requirePath(command, op, key);
   const vault = ctx.app.vault;
   const adapter = vault.adapter;
   switch (op) {
@@ -732,7 +737,7 @@ export async function executeVaultOp(rawCommand: Record<string, unknown>, op: st
     }
 
     case "stat": {
-      const path = requirePath(command);
+      const path = requireArg();
       const file = vault.getAbstractFileByPath(path);
       if (!file) return { exists: false, path };
       return {
@@ -745,7 +750,7 @@ export async function executeVaultOp(rawCommand: Record<string, unknown>, op: st
     }
 
     case "read": {
-      const path = requirePath(command);
+      const path = requireArg();
       const out = commandString(command.out);
       if (out) {
         if (!(await adapter.exists(path))) return { missing: path };
@@ -766,7 +771,7 @@ export async function executeVaultOp(rawCommand: Record<string, unknown>, op: st
     }
 
     case "write": {
-      const path = requirePath(command);
+      const path = requireArg();
       const data = typeof command.data === "string" ? command.data : "";
       if (await adapter.exists(path)) await adapter.write(path, data);
       else {
@@ -780,13 +785,13 @@ export async function executeVaultOp(rawCommand: Record<string, unknown>, op: st
     }
 
     case "mkdir": {
-      const path = requirePath(command);
+      const path = requireArg();
       if (!(await adapter.exists(path))) await vault.createFolder(path);
       return { dir: path };
     }
 
     case "move": {
-      const from = requirePath(command, "from");
+      const from = requireArg("from");
       const to = commandString(command.to).trim();
       if (!to) throw new QueueBridgeOpError("MISSING_ARGUMENT", "move requires a to.");
       const source = vault.getAbstractFileByPath(from);
@@ -866,7 +871,7 @@ export async function executeVaultOp(rawCommand: Record<string, unknown>, op: st
     }
 
     case "open": {
-      const path = requirePath(command);
+      const path = requireArg();
       return await ctx.handlers.open({
         path,
         query: commandString(command.query),
