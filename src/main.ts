@@ -193,10 +193,6 @@ const MAX_TOOL_ACTIONS_PER_TASK = 12;
 const MAX_AUTOMATION_TOOL_ACTIONS_PER_TASK = 18;
 /** File reads the review baseline may have in flight at once (see primeAiVaultMutationCaptureReviewScope). */
 const AI_MUTATION_PRIME_CONCURRENCY = 12;
-/** Caps for the per-turn workspace snapshot (see buildWorkspaceStateContext). */
-const WORKSPACE_STATE_MAX_TABS = 8;
-const WORKSPACE_STATE_TITLE_MAX_CHARS = 36;
-const WORKSPACE_STATE_MAX_CHARS = 600;
 const STARTUP_MAINTENANCE_IDLE_TIMEOUT_MS = 12000;
 const TTS_CAPTURE_MAX_CHARS = 120000;
 const TTS_FILE_CAPTURE_MAX_CHARS = Number.MAX_SAFE_INTEGER;
@@ -48650,12 +48646,13 @@ class CancipView extends ItemView {
       }
     }
 
-    // A tiny, deterministic workspace snapshot ships every turn as part of the
-    // base context. "What is open right now" is then answerable by reading the
-    // payload, instead of depending on the model choosing to run a tool (which
-    // a fresh session has no example for) or on file content being enabled.
-    const workspaceState = this.buildWorkspaceStateContext();
-    if (workspaceState) parts.push(workspaceState);
+    // The workspace snapshot is NOT injected any more. Pre-computing "what is
+    // open right now" every turn cost tokens on every message and only answered
+    // the phrasings the injected block happened to cover; a differently worded
+    // question fell back to "I cannot know". The same live state is already
+    // reachable through the real tools (command obsidian.tabs for every tab and
+    // its area, obsidian.currentView for the focused view), and the base
+    // capability block below tells the model to query them for any phrasing.
 
     if ((diaryWriting || settings.includeCurrentFile) && this.includeCurrentFileForSession && (diaryWriting || policy.includeCurrentFile)) {
       const current = await currentFilePromise;
@@ -48960,6 +48957,20 @@ class CancipView extends ItemView {
       if (!directVaultFileTask && !boundedUiButtonWorkflow) sections.push(this.t("vaultNoteReviewPrompt"));
     }
     if (policy.includeToolProtocol || policy.includeToolCatalog) sections.push(toolPrompt);
+    // Base capability. Turns that receive no tool catalogue at all still have to
+    // know that live Obsidian state is reachable: otherwise any question whose
+    // wording the payload did not anticipate ("what do I have open", "which panes
+    // are sitting there") can only be answered with "I cannot see that". This is
+    // the smallest block that lets the model derive the rest by calling a tool,
+    // and it replaces the per-turn workspace snapshot, so the payload gets
+    // smaller while the answering surface gets wider. It names command routes, so
+    // it is skipped when the user turned the command bus off.
+    if (this.plugin.settings.commandBusEnabled
+      && policy.intent !== "trivial"
+      && !policy.includeToolProtocol
+      && !policy.includeToolCatalog) {
+      sections.push(this.baseCapabilityPrompt());
+    }
     if (/(?:自动化|定时|通知|新文件触发|automation|schedule|notification|new.?file)/i.test(prompt)) sections.push(this.automationAgentPolicyPrompt());
     if (!directVaultFileTask && policy.intent === "implementation" && (policy.includeAutoSkills || promptNeedsSkillExperienceRoute(prompt))) sections.push(this.skillRoutePolicyPrompt());
     if (!directVaultFileTask && (policy.includeToolProtocol || (policy.intent === "implementation" && policy.includeWorkingState))) {
@@ -49043,6 +49054,31 @@ class CancipView extends ItemView {
       `Capability manual (the user-facing tutorial with the full capability list and example prompts): ${capabilityGuide}. Read it, or hand over this path, when the user asks what you can do or how to use you.`,
       "As needed use currentView/listCommands, sessionHistory, tts.help, automation.templates/list, or github.help."
     ].join("\n");
+  }
+
+  // The smallest block that keeps every phrasing answerable without shipping a
+  // pre-computed workspace snapshot on every turn. It is only sent when the turn
+  // carries no tool catalogue at all, so a differently worded "what do I have
+  // open" still has a real route instead of falling back to "I cannot see that".
+  // Deliberately tiny: one live-state route plus the literal JSON shape that a
+  // fresh session cannot invent on its own.
+  private baseCapabilityPrompt(): string {
+    // This branch never goes through toolPrompt, so it has to carry the title rule
+    // itself: actions taken here were showing up with no model-written title and
+    // fell back to the mechanical action name in the folded tool block.
+    const titleRule = this.t("actionTitleRule");
+    if (this.plugin.language().startsWith("zh")) {
+      return [
+        "基础能力：Obsidian 现状（打开了什么、在哪个视图或区域、有哪些标签、命令、插件、文件）不猜、也不回答“看不到”，自己用真实工具查一次再答。",
+        "查法：只输出 <cancip-action>{\"actions\":[{\"type\":\"command\",\"command\":\"obsidian.tabs\",\"args\":{\"scope\":\"all\"}}]}</cancip-action> 拿全部标签与所在区域（active 是焦点标签，最近编辑文件另算）；当前视图用 command obsidian.currentView；不确定有什么工具先 command cancip.tools.index；精确路径用 type read。",
+        titleRule
+      ].filter(Boolean).join("\n");
+    }
+    return [
+      "Base capability: never guess Obsidian's live state (what is open, which view or area, which tabs, commands, plugins, or files) and never answer that you cannot see it — query it with a real tool first, then answer.",
+      "How: output exactly <cancip-action>{\"actions\":[{\"type\":\"command\",\"command\":\"obsidian.tabs\",\"args\":{\"scope\":\"all\"}}]}</cancip-action> for every tab and its area (active marks the focused tab; the most recently edited file is separate); use command obsidian.currentView for the current view, command cancip.tools.index when the route is unclear, and type read for an exact path.",
+      titleRule
+    ].filter(Boolean).join("\n");
   }
 
   private skillRoutePolicyPrompt(): string {
@@ -50546,62 +50582,6 @@ class CancipView extends ItemView {
     if (!force && this.hiddenContextKeys.has(contextChipKey("current", file.path))) return null;
     const content = await this.app.vault.cachedRead(file);
     return `${file.path}\n${trimContext(content, Math.min(this.plugin.settings.maxFileContextChars, 6000))}`;
-  }
-
-  // A compact, always-on workspace snapshot. It is read from live workspace
-  // state (never guessed), needs no tool call, and is capped so a busy
-  // workspace cannot inflate the payload. This is what makes "what do I have
-  // open right now" answerable on a fresh session with any model.
-  private buildWorkspaceStateContext(): string {
-    const zh = isChineseLanguage(this.plugin.language());
-    const activeLeaf = this.app.workspace.activeLeaf;
-    const activeView = activeLeaf?.view as unknown as { getViewType?: () => string } | undefined;
-    const activeType = activeView?.getViewType?.() ?? "";
-    const activeFile = this.app.workspace.getActiveFile();
-    const tabs = this.workspaceTabInfos({ scope: "all" });
-    const active = tabs.find((tab) => tab.leaf === activeLeaf) ?? null;
-    const areaLabel = (area: WorkspaceTabInfo["area"]): string => {
-      switch (area) {
-        case "left": return zh ? "左栏" : "left";
-        case "right": return zh ? "右栏" : "right";
-        case "floating": return zh ? "浮动" : "floating";
-        case "root": return zh ? "主区" : "main";
-        default: return zh ? "未知" : "unknown";
-      }
-    };
-    const shortTitle = (title: string): string =>
-      title.length > WORKSPACE_STATE_TITLE_MAX_CHARS ? `${title.slice(0, WORKSPACE_STATE_TITLE_MAX_CHARS)}…` : title;
-    const lines: string[] = [`## ${zh ? "工作区当前状态" : "Workspace state"}`];
-    // "Focused tab" and "most recent file" are two different things and must be
-    // labelled as such: clicking into the Cancip panel makes the panel the
-    // focused leaf while getActiveFile() still returns the note the user was
-    // last editing. Merging them produced "the file is in the right sidebar as
-    // cancip-view", which is false.
-    if (active) {
-      const activePath = active.path ? `，${active.path}` : "";
-      lines.push(`${zh ? "焦点标签" : "Focused tab"}：${shortTitle(active.title)}（${active.viewType || activeType}，${areaLabel(active.area)}${activePath}）`);
-    } else {
-      lines.push(`${zh ? "焦点标签" : "Focused tab"}：${zh ? "无" : "none"}${activeType ? `（${activeType}）` : ""}`);
-    }
-    if (activeFile) {
-      const fileTab = tabs.find((tab) => tab.path === activeFile.path) ?? null;
-      lines.push(`${zh ? "最近编辑文件" : "Most recent file"}：${activeFile.path}${fileTab ? `（${areaLabel(fileTab.area)}）` : ""}`);
-    } else {
-      lines.push(`${zh ? "最近编辑文件" : "Most recent file"}：${zh ? "无" : "none"}`);
-    }
-    if (tabs.length) {
-      const listed = tabs.slice(0, WORKSPACE_STATE_MAX_TABS).map((tab) => {
-        const mark = tab.leaf === activeLeaf ? "*" : "";
-        const path = tab.path && tab.path !== activeFile?.path ? `，${tab.path}` : "";
-        return `${mark}${shortTitle(tab.title)}[${areaLabel(tab.area)}${tab.pinned ? (zh ? "|已锁定" : "|pinned") : ""}${path}]`;
-      });
-      const hidden = tabs.length - listed.length;
-      const more = hidden > 0 ? (zh ? ` …另有 ${hidden} 个` : ` …${hidden} more`) : "";
-      lines.push(`${zh ? "打开标签" : "Open tabs"} ${tabs.length}${zh ? " 个" : ""}：${listed.join(" | ")}${more}`);
-    } else {
-      lines.push(zh ? "打开标签：无" : "Open tabs: none");
-    }
-    return trimContext(lines.join("\n"), WORKSPACE_STATE_MAX_CHARS);
   }
 
   private async addCurrentFileContext(): Promise<void> {
@@ -65168,8 +65148,13 @@ class CancipView extends ItemView {
       blocks: [...blockMap.values()],
       auditSections: [...auditMap.values()],
       hasDetail: left.hasDetail || right.hasDetail,
-      count: Math.max(left.count, right.count),
-      elapsedMs: Math.max(left.elapsedMs, right.elapsedMs)
+      count: Math.max(left.count, right.count)
+      // elapsedMs deliberately keeps `left.elapsedMs`, i.e. the row whose title,
+      // brief, and status survive the merge. Taking Math.max(left, right) made a
+      // folded model row hand its wall-clock to the actionable row it was folded
+      // into, so a 19ms `obsidian.currentView` run displayed 2.1s under a title
+      // that said the run succeeded. The widened span is still covered by the
+      // record total, which measures every message in the turn.
     };
   }
 
@@ -65445,8 +65430,16 @@ class CancipView extends ItemView {
     processSummary.createSpan({ cls: "obcc-process-summary-label", text: processLabel });
     processSummary.createSpan({
       cls: "obcc-process-record-timer",
-      text: formatStepElapsed(this.processRecordElapsedMs(items)),
-      attr: { title: isChineseLanguage(this.plugin.language()) ? "本轮过程耗时" : "Total process time" }
+      text: formatStepElapsed(this.processRecordElapsedMs(items, liveProcessRecord)),
+      // The folded line is refreshed in place, so it needs a handle plus the exact
+      // message set it measured: a record without them could only ever show the
+      // value captured at render time, and recomputing from the visible step rows
+      // alone would under-count a turn whose rows were coalesced away.
+      attr: {
+        title: isChineseLanguage(this.plugin.language()) ? "本轮过程耗时" : "Total process time",
+        "data-process-record-timer-key": processFoldKey,
+        "data-process-record-message-ids": items.map((info) => info.message.id).join(",")
+      }
     });
     // Cost belongs on the folded summary line: a terse record should answer
     // "what did this turn cost" without expanding anything.
@@ -65514,6 +65507,22 @@ class CancipView extends ItemView {
         cls: "obcc-process-step-title-text",
         text: stepInfo.count > 1 ? `${processTitle} x${stepInfo.count}` : processTitle
       });
+      // The folded row has to answer "what actually ran and how did it end". The
+      // model title states the intent; this chip states the concrete action and
+      // its outcome, so opening the record alone is enough to audit the turn —
+      // the raw result stays where it was, one disclosure further in. When the
+      // fallback title already spells the action out, the chip would only repeat
+      // it, so it is skipped instead of doubling the row.
+      const primaryRun = stepRuns.length ? stepRuns[stepRuns.length - 1] : null;
+      const primaryActionText = primaryRun ? describeActionPlain(primaryRun.action) : "";
+      if (primaryRun && !processTitle.includes(primaryActionText)) {
+        const actionChip = stepTitle.createSpan({
+          cls: `obcc-process-step-action is-${primaryRun.status}`,
+          attr: { title: `${primaryActionText} · ${this.toolRunStatusLabelForRun(primaryRun)}` }
+        });
+        actionChip.createSpan({ cls: "obcc-process-step-action-text", text: primaryActionText });
+        actionChip.createSpan({ cls: "obcc-process-step-action-status", text: this.toolRunStatusLabelForRun(primaryRun) });
+      }
       if (stepInfo.reasoningSummary) {
         stepTitle.createSpan({
           cls: "obcc-process-step-summary",
@@ -65705,13 +65714,12 @@ class CancipView extends ItemView {
     return this.progressStepTimers.has(message.id) ? Math.max(0, Date.now() - message.createdAt) : 0;
   }
 
-  private processRecordElapsedMs(items: RenderedMessage[]): number {
+  private processRecordElapsedMs(items: Array<{ message: ChatMessage }>, running = Boolean(this.activeRequest)): number {
     const messages = items.map((item) => item.message).filter(Boolean);
     const starts = messages.map((message) => message.modelTiming?.startedAt ?? message.createdAt).filter((value) => Number.isFinite(value));
     const ends = messages.map((message) => message.modelTiming?.completedAt ?? message.createdAt).filter((value) => Number.isFinite(value));
     if (!starts.length) return 0;
     const start = Math.min(...starts);
-    const running = Boolean(this.activeRequest);
     const end = running ? Date.now() : Math.max(...ends, start);
     return Math.max(0, end - start);
   }
@@ -66484,6 +66492,25 @@ class CancipView extends ItemView {
       .join("\n\n---\n\n");
   }
 
+  /**
+   * One collapsed-safe line of a tool run's outcome. Without it the raw result is
+   * only reachable through the step fold and then the tool-run fold, which is how
+   * "what did it actually return" became invisible on a folded record. The leading
+   * echo of the action itself is skipped: the command is already on the row.
+   */
+  private toolRunResultPreview(run: ToolRun): string {
+    const source = run.result || run.error || "";
+    if (!source.trim()) return "";
+    const echo = describeActionPlain(run.action);
+    const isEcho = (part: string): boolean =>
+      part === echo || (part.length <= echo.length + 24 && part.includes(echo));
+    const line = source
+      .split(/\r?\n/)
+      .map((part) => part.replace(/\s+/g, " ").trim())
+      .find((part) => part && !/^#\d+\s/.test(part) && !isEcho(part)) ?? "";
+    return trimContext(line, 90);
+  }
+
   private renderToolRuns(parent: HTMLElement, message: ChatMessage, inlineDetails = false): void {
     if (!message.toolRuns?.length) return;
     const wrap = parent.createDiv({ cls: "obcc-tool-runs" });
@@ -66503,6 +66530,13 @@ class CancipView extends ItemView {
       const head = row.createEl("summary", { cls: "obcc-tool-run-head" });
       head.createSpan({ cls: "obcc-tool-run-status", text: this.toolRunStatusLabelForRun(run) });
       head.createSpan({ cls: "obcc-tool-run-summary", text: rowTitle });
+      // The outcome belongs on the folded row too: a run that only says what it
+      // intended is not auditable without two more expansions.
+      const resultPreview = this.toolRunResultPreview(run);
+      if (resultPreview) {
+        const preview = head.createSpan({ cls: "obcc-tool-run-result-preview", text: resultPreview });
+        preview.setAttribute("title", resultPreview);
+      }
       const toggleIcon = head.createSpan({ cls: "obcc-tool-run-toggle-icon", attr: { "aria-hidden": "true" } });
       setIcon(toggleIcon, "chevron-right");
       if (run.status === "pending") {
@@ -66579,6 +66613,12 @@ class CancipView extends ItemView {
   }
 
   private syncHeaderSessionTimer(): void {
+    // Timers have to be written once more on the way down. The 100ms live loop is
+    // the only other writer, and it is cleared the moment the turn settles, so
+    // without this pass a folded record keeps whatever live value the last tick
+    // happened to write (measured: a folded step stuck at 1m45s for a run that
+    // really took 378ms, and a turn total stuck at 1m48s for 3.0s of real work).
+    this.refreshProcessStepTimerDom();
     const running = this.headerSessionTimerRunning();
     if (!running) {
       this.stopHeaderSessionTimer();
@@ -66761,6 +66801,26 @@ class CancipView extends ItemView {
       const message = this.messages.find((item) => item.id === timer.dataset.processStepTimerMessageId);
       if (!message) continue;
       timer.setText(formatStepElapsed(this.processRecordStepElapsedMs(message)));
+    }
+    // The folded record line used to have no refresh path at all, so it could only
+    // ever display the value captured during a live render. Recompute it from the
+    // message set the render actually measured, recorded on the element itself:
+    // deriving it from the visible step rows would drop every coalesced row and
+    // report a smaller turn than the one the user just watched.
+    for (const timer of Array.from(this.messagesEl.querySelectorAll<HTMLElement>("[data-process-record-timer-key]"))) {
+      const record = timer.closest<HTMLDetailsElement>("details.obcc-process-record-details");
+      if (!record) continue;
+      const items = (timer.dataset.processRecordMessageIds ?? "")
+        .split(",")
+        .filter(Boolean)
+        .map((id) => this.messages.find((message) => message.id === id))
+        .filter((message): message is ChatMessage => Boolean(message))
+        .map((message) => ({ message }));
+      if (!items.length) continue;
+      // Only the record that belongs to the running turn keeps counting; a settled
+      // record must stay frozen even while a later turn is active.
+      const running = record.hasClass("is-live-process-record") && Boolean(this.activeRequest);
+      timer.setText(formatStepElapsed(this.processRecordElapsedMs(items, running)));
     }
   }
 
@@ -73582,9 +73642,11 @@ function cancipCapabilityGuideMarkdown(chinese: boolean, version: string, genera
 
 每一轮对话下面有一条**过程记录**，默认折叠，折叠态直接显示 **步数 · 耗时 · token 合计**。
 
-展开后每一步都是一行标题——**标题是模型自己写的动作标题**（例如"读取今日日记并定位计划"），不是机械的动作名。再展开那一行，才看到具体动作、参数和工具的原始返回。
+展开后每一步都是一行：**模型自己写的动作标题**（例如"读取今日日记并定位计划"），紧跟一个小的动作标记——**真实执行了什么**（如 \`command obsidian.tabs\`）+ **结果状态**（已执行 / 失败 / 待批准）。所以只展开这一层，就能看清这轮到底跑了什么命令、成没成。
 
-所以阅读顺序是：结论 → 需要时看过程摘要 → 再需要才展开细节。
+再展开某一步，才看到参数、说明和工具的原始返回；工具块自己也折叠，折叠态带一行**结果预览**。
+
+所以阅读顺序是：结论 → 展开过程记录看"跑了什么、成没成" → 再需要才展开细节。
 
 ## 五、访问模式与安全
 
@@ -73658,8 +73720,10 @@ function cancipCapabilityGuideMarkdown(chinese: boolean, version: string, genera
 ## Reading the process
 
 Every exchange carries one **process record**, folded by default, showing **steps · elapsed · total tokens**.
-Expanding it lists one row per step whose heading is the **model-written title of that action**; expanding a
-row reveals the concrete action, its parameters, and the raw tool result.
+Expanding it lists one row per step: the **model-written title of that action** followed by a small chip with the
+**real action that ran** (for example \`command obsidian.tabs\`) and **how it ended** (executed / failed / awaiting
+approval), so one expansion answers "what actually ran, and did it work". Expanding the row reveals parameters,
+the explanation, and the raw tool result; tool blocks fold too and preview their outcome.
 
 ## Access and safety
 

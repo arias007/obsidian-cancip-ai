@@ -39,6 +39,10 @@ if (runtimeMethods.size < RUNTIME_METHOD_FLOOR) {
 const intentionallyRemovedRuntimeMethods = new Set([
   "applyPersonalizedDiaryButtons",
   "activateNativeNoteDrawSurface",
+  // Dropped on purpose: the per-turn workspace snapshot was replaced by the base
+  // capability block plus on-demand obsidian.tabs / obsidian.currentView calls.
+  // Keeping the snapshot method would re-create the payload it was removed for.
+  "buildWorkspaceStateContext",
   "callChoiceSuggestionModel",
   "clearPersonalizedDiaryButtons",
   "close",
