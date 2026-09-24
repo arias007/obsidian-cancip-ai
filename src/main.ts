@@ -44207,6 +44207,15 @@ class CancipView extends ItemView {
       const resolvedSummary = this.resolveProgressStepSummary(summary);
       current.content = this.formatProgressStep(resolvedSummary, detail, status, now - current.createdAt);
       current.processBrief = this.progressStepBrief(resolvedSummary, detail, status);
+      // The step's on-screen seconds must follow the same source this tick just
+      // wrote, not a separate 100ms header loop. That loop only exists while the
+      // header considers the session running, and it is throttled hard whenever
+      // the window is hidden or occluded, so the number users watched had no
+      // writer at all in those states and simply froze. Writing it here keeps the
+      // display correct for exactly as long as the step is actually live, and
+      // using processRecordStepElapsedMs (the refresh path's own function) means
+      // both paths agree by construction instead of drifting apart.
+      this.writeLiveStepTimerText(current.id, this.processRecordStepElapsedMs(current));
       const signature = stableTextHash(`${resolvedSummary}\n${detail}\n${status}`);
       if (signature !== renderedSignature && now >= nextRenderAt) {
         renderedSignature = signature;
@@ -44296,6 +44305,24 @@ class CancipView extends ItemView {
     const timer = this.progressStepTimers.get(messageId);
     if (timer !== undefined) window.clearInterval(timer);
     this.progressStepTimers.delete(messageId);
+  }
+
+  /**
+   * Writes one live step's elapsed text straight into the step row that is on
+   * screen. Called from the step's own tick, so the number stops depending on the
+   * header's 100ms loop being alive: that loop is dropped the moment the header
+   * stops calling the session "running", and Chromium throttles it to roughly one
+   * wake-up per minute while the window is hidden — which is exactly the state in
+   * which a frozen step timer was reported. No-op when the row is not mounted.
+   */
+  private writeLiveStepTimerText(messageId: string, elapsedMs: number): void {
+    if (!this.messagesEl) return;
+    const timer = this.messagesEl.querySelector<HTMLElement>(
+      `[data-process-step-timer-message-id="${CSS.escape(messageId)}"]`
+    );
+    if (!timer) return;
+    const next = formatStepElapsed(elapsedMs);
+    if (timer.textContent !== next) timer.setText(next);
   }
 
   private clearLiveTimers(): void {
@@ -48934,9 +48961,22 @@ class CancipView extends ItemView {
     const routedWithTitleRule = actionTitleRule && !routedToolPrompt.includes(actionTitleRule)
       ? `${routedToolPrompt}\n${actionTitleRule}`
       : routedToolPrompt;
+    // The live-state rule has to ride along with every tool-prompt branch, not
+    // just the turns that carry no tool catalogue at all. The surgical file
+    // prompts, the lightweight catalogue, and the routed protocol all used to
+    // carry no statement that Obsidian's own state is reachable on demand, so a
+    // question the payload did not anticipate ("what do I have open", "which
+    // panes are sitting there") had nothing to route it to a real query and fell
+    // back to "I cannot see that". Re-derived per phrasing instead of pre-injected
+    // every turn, which is what keeps the payload small while widening what can be
+    // answered. Skipped when a branch already states it, so it is never doubled.
+    const liveStateRule = this.liveStateRulePrompt();
+    const routedWithRules = liveStateRule && !this.toolPromptCarriesLiveStateRule(routedWithTitleRule)
+      ? `${routedWithTitleRule}\n${liveStateRule}`
+      : routedWithTitleRule;
     const toolPrompt = this.plugin.settings.commandBusEnabled
-      ? routedWithTitleRule
-      : `${routedWithTitleRule}\n\n${this.t("commandBusDisabledPrompt")}`;
+      ? routedWithRules
+      : `${routedWithRules}\n\n${this.t("commandBusDisabledPrompt")}`;
     const modeInstruction = this.mode === "search"
       ? this.t("modePromptSearch")
       : this.mode === "edit"
@@ -50596,6 +50636,30 @@ class CancipView extends ItemView {
     void this.saveCurrentSession();
   }
 
+  /**
+   * The one rule that keeps Obsidian's own state answerable without shipping a
+   * pre-computed snapshot on every turn. It is short on purpose and is appended
+   * to every tool prompt branch, so the phrasing of the question never decides
+   * whether the model knows it can look.
+   */
+  private liveStateRulePrompt(): string {
+    if (!this.plugin.settings.commandBusEnabled) return "";
+    if (this.plugin.language().startsWith("zh")) {
+      return "Obsidian 现状（打开了什么、当前视图、焦点标签、标签页、选区、光标、活动文件、打开了哪些面板）不预注入、不猜测：任何问法都先用 obsidian.tabs / obsidian.currentView / read 实际查一次再答；不得回答“看不到”，也不得用记忆里的旧状态替答。";
+    }
+    return "Obsidian's live state (what is open, the current view, focused tab, tabs, selection, cursor, active file, which panels are open) is never pre-injected and must never be guessed: for any phrasing, query it with obsidian.tabs / obsidian.currentView / read first, then answer. Never reply that you cannot see it, and never substitute a remembered older state.";
+  }
+
+  /**
+   * True when a tool prompt already states the live-state rule, so the caller
+   * appends it at most once per turn. Matched on wording rather than identity
+   * because the route index and the standalone rule are separate strings.
+   */
+  private toolPromptCarriesLiveStateRule(prompt: string): boolean {
+    if (!prompt) return false;
+    return /不预注入|不预注入也不许猜|never pre-injected/.test(prompt);
+  }
+
   private toolPromptForPolicy(policy: PromptPayloadPolicy): string {
     const routeIndex = policy.includeDetailedToolProtocol ? this.actionRouteIndexPrompt() : this.compactActionRouteIndexPrompt();
     const responseContract = isChineseLanguage(this.plugin.language())
@@ -50620,6 +50684,7 @@ class CancipView extends ItemView {
         "- 命令优先级：先用 Obsidian 原生命令和已装插件命令/API/UI，再用 Cancip 原生能力，现有能力确实不能完成才写 JS；不重复造轮子。",
         "- 最小闭环：读最小相关片段 -> 执行动作 -> 读回验证（cancip.outcome.verify）；目标不清 cancip.findTarget；路线不清 cancip.capability.resolve 或 cancip.tools.index；参数不清 cancip.tools.help。",
         "- 高频入口：Vault 搜索 cancip.searchVault（args:{query,scope,limit}）；Obsidian 命令 obsidian.listCommands/resolveCommand/execute。",
+        "- Obsidian 现状（打开了什么、当前视图、焦点标签、标签页、选区、光标、活动文件）不预注入也不许猜：任何问法都先用 obsidian.tabs / obsidian.currentView / read 实际查一次再答，禁止回答“看不到”或用记忆里的旧状态替答。",
         `- 全量命令目录不随轮注入：按需读 ${navigationPath} 中当前任务对应小节（只取相关链接，不要整页展开），或用 cancip.tools.help 查单条命令参数。`
       ].join("\n");
     }
@@ -50628,6 +50693,7 @@ class CancipView extends ItemView {
       "- Command priority: Obsidian native commands and installed plugin commands/APIs/UI first, then native Cancip capabilities; write JS only when existing capabilities cannot do the work. Do not reinvent wheels.",
       "- Minimal loop: read the smallest relevant snippet -> act -> verify by reading state back (cancip.outcome.verify); unclear target -> cancip.findTarget; unclear route -> cancip.capability.resolve or cancip.tools.index; unclear parameters -> cancip.tools.help.",
       "- High-frequency entries: Vault search cancip.searchVault (args:{query,scope,limit}); Obsidian commands obsidian.listCommands/resolveCommand/execute.",
+      "- Obsidian's live state (what is open, the current view, focused tab, tabs, selection, cursor, active file) is never pre-injected and must never be guessed: for any phrasing, query it with obsidian.tabs / obsidian.currentView / read first, then answer. Never reply that you cannot see it, and never substitute a remembered older state.",
       `- The full command catalog is not injected per turn: read only the section of ${navigationPath} relevant to the current task (follow targeted links, never expand the whole page), or call cancip.tools.help for a single command's parameters.`
     ].join("\n");
   }
@@ -65428,6 +65494,22 @@ class CancipView extends ItemView {
     const processSummary = this.createProcessSummary(details, processLabel, "list-tree");
     processSummary.addClass("obcc-process-record-summary");
     processSummary.createSpan({ cls: "obcc-process-summary-label", text: processLabel });
+    // What actually ran belongs on the folded line too. The step rows carry the
+    // concrete action, but reaching them means opening the record first, and the
+    // tool-run rows sit one disclosure deeper still — which is how "what commands
+    // did this turn run" stayed invisible on a collapsed record. Listing the
+    // distinct actions here answers it without expanding anything, and sitting
+    // before the right-aligned timer keeps the label/commands pair on the left.
+    const commandSummary = this.processRecordCommandSummary(steps);
+    if (commandSummary) {
+      processSummary.createSpan({
+        cls: "obcc-process-record-commands",
+        text: commandSummary,
+        attr: {
+          title: isChineseLanguage(this.plugin.language()) ? "本轮实际执行的命令/动作" : "Commands and actions actually run this turn"
+        }
+      });
+    }
     processSummary.createSpan({
       cls: "obcc-process-record-timer",
       text: formatStepElapsed(this.processRecordElapsedMs(items, liveProcessRecord)),
@@ -65699,6 +65781,37 @@ class CancipView extends ItemView {
       labelEl.createSpan({ text: label });
       row.createDiv({ cls: "obcc-process-step-brief-value", text: trimContext(value.replace(/\s+/g, " ").trim(), 240) });
     }
+  }
+
+  /**
+   * Distinct commands/actions a turn actually ran, for the folded record line.
+   * Deduplicated in first-seen order and capped so a long turn cannot turn the
+   * collapsed summary into a wall of text; the remainder is reported as a count.
+   */
+  private processRecordCommandSummary(steps: Array<{ rendered: { message: ChatMessage } }>): string {
+    const seen = new Set<string>();
+    const labels: string[] = [];
+    for (const step of steps) {
+      const runs = uniqueToolRunsById([
+        ...(step.rendered.message.toolRuns ?? []),
+        ...(step.rendered.message.changedFileRuns ?? [])
+      ]);
+      for (const run of runs) {
+        let label = "";
+        try {
+          label = describeActionPlain(run.action).replace(/\s+/g, " ").trim();
+        } catch {
+          label = "";
+        }
+        if (!label || seen.has(label)) continue;
+        seen.add(label);
+        labels.push(label);
+      }
+    }
+    if (!labels.length) return "";
+    const shown = labels.slice(0, 3);
+    const hidden = labels.length - shown.length;
+    return hidden > 0 ? `${shown.join(" · ")} +${hidden}` : shown.join(" · ");
   }
 
   private processRecordStepElapsedMs(message: ChatMessage): number {
