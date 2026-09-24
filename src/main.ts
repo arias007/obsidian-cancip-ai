@@ -8196,16 +8196,26 @@ export default class CancipPlugin extends Plugin {
       }, 900);
       this.register(cancelWorkbenchWarmup);
       if (!Platform.isMobileApp) {
-        // CLI checks, bridge startup and local-model discovery all touch the
-        // filesystem or network. Keep them out of Obsidian's first-paint path.
+        // Bind the HTTP bridge on a plain timer instead of the idle helper. It
+        // costs one port bind and no I/O, while the CLI reaches Cancip through
+        // it for every verb — and the idle helper's own racing timer is itself
+        // throttled in a hidden window, so a reload with Obsidian behind
+        // another window left the bridge (and therefore the whole CLI) dead for
+        // up to a minute. The queue bridge below is started directly for the
+        // same reason.
+        const agentBridgeStartTimer = window.setTimeout(() => {
+          void this.startAgentBridge().catch((error) => {
+            this.agentBridgeLastError = error instanceof Error ? error.message : String(error);
+            console.warn("Cancip Agent Bridge start failed", error);
+          });
+        }, 1200);
+        this.register(() => window.clearTimeout(agentBridgeStartTimer));
+        // The CLI install and the local-model catalog really do touch the
+        // filesystem and the network, so they stay on the deferred path.
         const cancelAgentStartup = scheduleIdleWork(() => {
           void this.ensureAgentCliInstalled().catch((error) => {
             this.agentBridgeLastError = error instanceof Error ? error.message : String(error);
             console.warn("Cancip CLI install skipped", error);
-          });
-          void this.startAgentBridge().catch((error) => {
-            this.agentBridgeLastError = error instanceof Error ? error.message : String(error);
-            console.warn("Cancip Agent Bridge start failed", error);
           });
         }, 12000);
         this.register(cancelAgentStartup);
