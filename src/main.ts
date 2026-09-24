@@ -26470,7 +26470,18 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     const quietFor = Math.max(50, postMutationQuietMs);
     const waitLimit = Math.max(initialGrace, maxWaitMs);
     const initial = this.aiVaultMutationCaptureStack.find((item) => item.id === handle.id);
-    if (initial && (initial.operations.size || initial.structure.length)) {
+    if (!initial) return;
+    // The grace period below is there to catch a write the action scheduled but
+    // did not await, and it can only do that by polling. A hidden Obsidian window
+    // throttles timers to roughly one wake-up per minute, so a plain
+    // `await sleep(25)` inside the loop overshoots by tens of seconds: one
+    // obsidian.eval measured 191 s of dead time, and even the 8 s best case was
+    // pure waiting. Nothing captured means nothing to settle, and every write the
+    // action awaited is already recorded, so skip the wait while hidden rather
+    // than pay an unbounded one.
+    const capturedBeforeWait = initial.operations.size > 0 || initial.structure.length > 0;
+    if (!capturedBeforeWait && activeDocument.visibilityState === "hidden") return;
+    if (capturedBeforeWait) {
       initial.lastMutationAt = Math.max(initial.lastMutationAt, startedAt);
     }
     while (Date.now() - startedAt < waitLimit) {
