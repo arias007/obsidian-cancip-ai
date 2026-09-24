@@ -26454,7 +26454,12 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
         try {
           const stat = await adapter.stat(normalized);
           if (stat?.type !== "file") continue;
-          const text = await readTextIfExists(adapter, normalized, "");
+          // `stat` already proved the file is there, so read it directly:
+          // readTextIfExists would repeat the existence check and cost one more
+          // adapter round trip per file (3 440 of them on this vault per action).
+          // A file that vanishes in between lands in the catch below, exactly as
+          // the event capture expects.
+          const text = await adapter.read(normalized);
           state.before.set(normalized, { path: normalized, text, exists: true });
           captured += 1;
         } catch {
