@@ -8196,22 +8196,10 @@ export default class CancipPlugin extends Plugin {
       }, 900);
       this.register(cancelWorkbenchWarmup);
       if (!Platform.isMobileApp) {
-        // Bind the HTTP bridge on a plain timer instead of the idle helper. It
-        // costs one port bind and no I/O, while the CLI reaches Cancip through
-        // it for every verb — and the idle helper's own racing timer is itself
-        // throttled in a hidden window, so a reload with Obsidian behind
-        // another window left the bridge (and therefore the whole CLI) dead for
-        // up to a minute. The queue bridge below is started directly for the
-        // same reason.
-        const agentBridgeStartTimer = window.setTimeout(() => {
-          void this.startAgentBridge().catch((error) => {
-            this.agentBridgeLastError = error instanceof Error ? error.message : String(error);
-            console.warn("Cancip Agent Bridge start failed", error);
-          });
-        }, 1200);
-        this.register(() => window.clearTimeout(agentBridgeStartTimer));
-        // The CLI install and the local-model catalog really do touch the
-        // filesystem and the network, so they stay on the deferred path.
+        // Whatever is left here really does touch the filesystem or the network
+        // (the CLI install and the local-model catalog), so it keeps the
+        // deferred path. The bridge itself is bound directly at the bottom of
+        // onload — see the queue-bridge start for why.
         const cancelAgentStartup = scheduleIdleWork(() => {
           void this.ensureAgentCliInstalled().catch((error) => {
             this.agentBridgeLastError = error instanceof Error ? error.message : String(error);
@@ -8235,6 +8223,16 @@ export default class CancipPlugin extends Plugin {
     // once. It shares the HTTP bridge's handler set, which keeps one operation
     // surface across both legs.
     this.startQueueBridge();
+    // The HTTP bridge is bound from load for the same reason, and the reason is
+    // measurable: binding one port costs milliseconds and touches no file or
+    // socket other than its own listener, while every CLI verb prefers this leg.
+    // No timer-based deferral survives a hidden window — Chromium throttles a
+    // hidden page's timers to roughly one wake-up per minute, which measured as
+    // 68 s between `plugin:reload` and the bridge answering again.
+    void this.startAgentBridge().catch((error) => {
+      this.agentBridgeLastError = error instanceof Error ? error.message : String(error);
+      console.warn("Cancip Agent Bridge start failed", error);
+    });
     this.registerEditorExtension(createCancipEditorAutocompleteExtension(this));
     this.registerEditorExtension(createContextEditEditorPreviewExtension(this));
     this.registerMarkdownPostProcessor((element, context) => this.processMarkdownWorkbenchEmbeds(element, context));
