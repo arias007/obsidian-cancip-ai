@@ -193,6 +193,10 @@ const MAX_TOOL_ACTIONS_PER_TASK = 12;
 const MAX_AUTOMATION_TOOL_ACTIONS_PER_TASK = 18;
 /** File reads the review baseline may have in flight at once (see primeAiVaultMutationCaptureReviewScope). */
 const AI_MUTATION_PRIME_CONCURRENCY = 12;
+/** Caps for the per-turn workspace snapshot (see buildWorkspaceStateContext). */
+const WORKSPACE_STATE_MAX_TABS = 8;
+const WORKSPACE_STATE_TITLE_MAX_CHARS = 36;
+const WORKSPACE_STATE_MAX_CHARS = 600;
 const STARTUP_MAINTENANCE_IDLE_TIMEOUT_MS = 12000;
 const TTS_CAPTURE_MAX_CHARS = 120000;
 const TTS_FILE_CAPTURE_MAX_CHARS = Number.MAX_SAFE_INTEGER;
@@ -48579,6 +48583,13 @@ class CancipView extends ItemView {
       }
     }
 
+    // A tiny, deterministic workspace snapshot ships every turn as part of the
+    // base context. "What is open right now" is then answerable by reading the
+    // payload, instead of depending on the model choosing to run a tool (which
+    // a fresh session has no example for) or on file content being enabled.
+    const workspaceState = this.buildWorkspaceStateContext();
+    if (workspaceState) parts.push(workspaceState);
+
     if ((diaryWriting || settings.includeCurrentFile) && this.includeCurrentFileForSession && (diaryWriting || policy.includeCurrentFile)) {
       const current = await currentFilePromise;
       if (current) parts.push(`## ${this.t("currentFile")}\n${current}`);
@@ -50457,6 +50468,50 @@ class CancipView extends ItemView {
     if (!force && this.hiddenContextKeys.has(contextChipKey("current", file.path))) return null;
     const content = await this.app.vault.cachedRead(file);
     return `${file.path}\n${trimContext(content, Math.min(this.plugin.settings.maxFileContextChars, 6000))}`;
+  }
+
+  // A compact, always-on workspace snapshot. It is read from live workspace
+  // state (never guessed), needs no tool call, and is capped so a busy
+  // workspace cannot inflate the payload. This is what makes "what do I have
+  // open right now" answerable on a fresh session with any model.
+  private buildWorkspaceStateContext(): string {
+    const zh = isChineseLanguage(this.plugin.language());
+    const activeLeaf = this.app.workspace.activeLeaf;
+    const activeView = activeLeaf?.view as unknown as { getViewType?: () => string } | undefined;
+    const activeType = activeView?.getViewType?.() ?? "";
+    const activeFile = this.app.workspace.getActiveFile();
+    const tabs = this.workspaceTabInfos({ scope: "all" });
+    const active = tabs.find((tab) => tab.leaf === activeLeaf) ?? null;
+    const areaLabel = (area: WorkspaceTabInfo["area"]): string => {
+      switch (area) {
+        case "left": return zh ? "左栏" : "left";
+        case "right": return zh ? "右栏" : "right";
+        case "floating": return zh ? "浮动" : "floating";
+        case "root": return zh ? "主区" : "main";
+        default: return zh ? "未知" : "unknown";
+      }
+    };
+    const shortTitle = (title: string): string =>
+      title.length > WORKSPACE_STATE_TITLE_MAX_CHARS ? `${title.slice(0, WORKSPACE_STATE_TITLE_MAX_CHARS)}…` : title;
+    const lines: string[] = [`## ${zh ? "工作区当前状态" : "Workspace state"}`];
+    const activeArea = areaLabel(active?.area ?? "unknown");
+    if (activeFile) {
+      lines.push(`${zh ? "活动文件" : "Active file"}：${activeFile.path}${activeType ? `（${activeType}，${activeArea}）` : ""}`);
+    } else {
+      lines.push(`${zh ? "活动文件" : "Active file"}：${zh ? "无" : "none"}${activeType ? `${zh ? "；活动视图" : "; active view"}：${activeType}（${activeArea}）` : ""}`);
+    }
+    if (tabs.length) {
+      const listed = tabs.slice(0, WORKSPACE_STATE_MAX_TABS).map((tab) => {
+        const mark = tab.leaf === activeLeaf ? "*" : "";
+        return `${mark}${shortTitle(tab.title)}（${areaLabel(tab.area)}${tab.pinned ? (zh ? "，已锁定" : ", pinned") : ""}）`;
+      });
+      const hidden = tabs.length - listed.length;
+      const more = hidden > 0 ? (zh ? ` …另有 ${hidden} 个` : ` …${hidden} more`) : "";
+      lines.push(`${zh ? "打开标签" : "Open tabs"} ${tabs.length}${zh ? " 个" : ""}：${listed.join(" | ")}${more}`);
+    } else {
+      lines.push(zh ? "打开标签：无" : "Open tabs: none");
+    }
+    return trimContext(lines.join("\n"), WORKSPACE_STATE_MAX_CHARS);
   }
 
   private async addCurrentFileContext(): Promise<void> {

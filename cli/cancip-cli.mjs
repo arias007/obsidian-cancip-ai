@@ -28,7 +28,7 @@ import { basename, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 
-const CLI_VERSION = "3.5.27";
+const CLI_VERSION = "3.5.28";
 const BRIDGE_PORT = 43172;
 const PORT_FALLBACK_COUNT = 8;
 const REQUEST_TIMEOUT_MS = 10 * 60_000;
