@@ -19921,12 +19921,10 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       if (/\bright\b|右侧|右側|右边|右邊/.test(label)) return "right";
       if (/\bleft\b|左侧|左側|左边|左邊/.test(label)) return "left";
     }
-    const rect = header.getBoundingClientRect();
-    const width = activeDocument.defaultView?.innerWidth ?? window.innerWidth;
-    if (Number.isFinite(rect.left) && width > 0) {
-      if (rect.left > width * 0.58) return "right";
-      if (rect.right < width * 0.42) return "left";
-    }
+    // Falling through means the header sits in the root split. Guessing from the
+    // header rectangle used to override that: with the left sidebar collapsed the
+    // main area starts ~50px from the window edge, so a 200px-wide main-area tab
+    // strip looked like a left-sidebar strip and was reported as "left".
     return "root";
   }
 

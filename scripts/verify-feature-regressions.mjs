@@ -718,7 +718,7 @@ const checks = [
   ["a reply that only announces the next tool step is still treated as a preface", toolPrefaces.every((text) => answerFilterApi.isToolPrefaceOnlyAnswer(text))],
   ["prose approval requests are still recognised as approval requests", approvalRequests.every((text) => answerFilterApi.isProseApprovalRequestAnswer(text)) && openWorkspaceAnswers.every((text) => !answerFilterApi.isProseApprovalRequestAnswer(text))],
   ["leaf area detection matches exact class tokens instead of a class-name substring", workspaceLeafAreaSource.includes('tokens.has("mod-left-split")') && workspaceLeafAreaSource.includes('tokens.has("mod-right-split")') && !workspaceLeafAreaSource.includes("className") && workspaceLeafAreaSource.includes('getAttribute("aria-label")')],
-  ["tab-header area detection matches exact class tokens too, so a main-area tab never reports as a sidebar tab", workspaceTabHeaderAreaSource.includes("current.classList") && workspaceTabHeaderAreaSource.includes('tokens.contains("mod-left-split")') && workspaceTabHeaderAreaSource.includes('tokens.contains("mod-right-split")') && !workspaceTabHeaderAreaSource.includes("current.className")]
+  ["tab-header area detection matches exact class tokens too, so a main-area tab never reports as a sidebar tab", workspaceTabHeaderAreaSource.includes("current.classList") && workspaceTabHeaderAreaSource.includes('tokens.contains("mod-left-split")') && workspaceTabHeaderAreaSource.includes('tokens.contains("mod-right-split")') && !workspaceTabHeaderAreaSource.includes("current.className") && !workspaceTabHeaderAreaSource.includes("getBoundingClientRect")]
 ];
 
 const failed = checks.filter(([, passed]) => !passed).map(([name]) => name);
