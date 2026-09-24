@@ -59,8 +59,10 @@ import {
   QUEUE_BRIDGE_HEARTBEAT_MS,
   QUEUE_BRIDGE_POLL_MS,
   executeVaultOp,
+  queueBridgeOpCatalog,
   type QueueBridgeAppLike,
-  type QueueBridgeHandlers
+  type QueueBridgeHandlers,
+  type QueueBridgeViewSnapshot
 } from "./queueBridge";
 import { PRIME_TTS_WORKER_GZIP_BASE64, PRIME_TTS_WORKER_VERSION } from "./generated/primeTtsWorkerSource";
 import supportCodeOneDataUrl from "./support/code-1.png";
@@ -11205,6 +11207,19 @@ export default class CancipPlugin extends Plugin {
         command: "obsidian.eval",
         args: { ...args, code }
       }]),
+      // Structured live-view answer for the bridge's `view` op. The same question
+      // asked through `action` came back as a rendered markdown report, so a
+      // caller had to regex fields out of it — and an empty `selection` followed
+      // by another field has no delimiting marker, which is what made that one
+      // unparseable rather than merely awkward.
+      view: async (): Promise<QueueBridgeViewSnapshot> => this.agentBridgeViewSnapshot(),
+      // Whether a window is actually on screen. The queue bridge uses this to run
+      // everything that does not need one, and to hold the rest until Obsidian
+      // comes back instead of driving a hidden window.
+      isForeground: () => this.bridgeWindowIsForeground(),
+      // Reported in the op catalogue so callers can see that `eval` is refused
+      // rather than inferring it from a rejection.
+      evalEnabled: () => this.settings.commandBusEnabled,
       // Generic operation leg shared by both transports: HTTP calls it through
       // /v1/op, the queue bridge calls it through its own op dispatch. Keeping
       // one executor means every CLI verb works on whichever leg is reachable.
@@ -11303,8 +11318,12 @@ export default class CancipPlugin extends Plugin {
     return {
       protocolVersion: 1,
       accessMode: this.settings.accessMode,
-      routes: ["status", "capabilities", "search", "read", "open", "prompt", "action", "agent.run"],
+      routes: ["status", "capabilities", "search", "read", "open", "view", "prompt", "action", "agent.run"],
       actionTypes: ["read", "write", "append", "patch", "config", "todo", "automation", "mkdir", "rename", "move", "copy", "delete", "command"],
+      // The same op catalogue heartbeat.json publishes, so the queue's verbs and
+      // the semantic routes can no longer disagree about what exists or about
+      // which of them a policy currently refuses.
+      queueOps: queueBridgeOpCatalog({ evalEnabled: this.settings.commandBusEnabled }),
       approval: this.settings.accessMode === "full-access"
         ? "Write-like actions execute and are registered in Cancip Review."
         : "Write-like actions are queued in Cancip for explicit approval.",
@@ -11327,6 +11346,74 @@ export default class CancipPlugin extends Plugin {
         tools: ["cancip_status", "cancip_search", "cancip_read", "cancip_open", "cancip_send", "cancip_action"]
       }
     };
+  }
+
+  /**
+   * Structured snapshot of what is actually on screen, for the bridge's `view`
+   * op. Read from live workspace state and returned as fields, never guessed and
+   * never rendered into a report a caller would have to parse.
+   */
+  private agentBridgeViewSnapshot(): QueueBridgeViewSnapshot {
+    const leaf = this.app.workspace.activeLeaf;
+    const view = leaf?.view as unknown as {
+      getViewType?: () => string;
+      getDisplayText?: () => string;
+      file?: TFile;
+      editor?: { getSelection?: () => string; getValue?: () => string };
+    } | undefined;
+    const read = <T>(run: () => T, fallback: T): T => {
+      try {
+        return run();
+      } catch {
+        return fallback;
+      }
+    };
+    const leafState = read(
+      () => (leaf?.getViewState?.()?.state ?? undefined) as Record<string, unknown> | undefined,
+      undefined
+    );
+    const tabs: QueueBridgeViewSnapshot["tabs"] = [];
+    read(() => {
+      this.app.workspace.iterateAllLeaves((each) => {
+        const eachView = each.view as unknown as {
+          getViewType?: () => string;
+          getDisplayText?: () => string;
+          file?: TFile;
+        };
+        const file = eachView.file instanceof TFile ? eachView.file : null;
+        tabs.push({
+          title: eachView.getDisplayText?.() || file?.basename || eachView.getViewType?.() || "tab",
+          viewType: eachView.getViewType?.() || "",
+          area: workspaceLeafArea(each),
+          path: file?.path ?? null,
+          pinned: read(() => workspaceLeafPinned(each), false),
+          active: each === leaf
+        });
+      });
+      return true;
+    }, true);
+    return {
+      activeFile: read(() => this.app.workspace.getActiveFile()?.path ?? null, null),
+      viewType: read(() => view?.getViewType?.() ?? "", ""),
+      displayText: read(() => trimContext(view?.editor?.getValue?.() ?? "", 4000), ""),
+      selection: read(() => view?.editor?.getSelection?.() ?? "", ""),
+      mode: typeof leafState?.mode === "string" ? leafState.mode : "",
+      area: read(() => (leaf ? workspaceLeafArea(leaf) : "unknown"), "unknown"),
+      tabs
+    };
+  }
+
+  /**
+   * Whether Obsidian owns a visible window right now. Deliberately fails open: if
+   * visibility cannot be read, work is allowed rather than held behind a check
+   * that never answers.
+   */
+  private bridgeWindowIsForeground(): boolean {
+    try {
+      return typeof document === "undefined" ? true : document.visibilityState === "visible";
+    } catch {
+      return true;
+    }
   }
 
   private async agentBridgeView(): Promise<CancipView> {

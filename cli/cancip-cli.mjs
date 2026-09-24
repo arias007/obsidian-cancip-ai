@@ -28,7 +28,7 @@ import { basename, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 
-const CLI_VERSION = "3.5.32";
+const CLI_VERSION = "3.5.33";
 const BRIDGE_PORT = 43172;
 const PORT_FALLBACK_COUNT = 8;
 const REQUEST_TIMEOUT_MS = 10 * 60_000;
@@ -39,6 +39,14 @@ const MCP_PROTOCOL_VERSION = "2024-11-05";
 const QUEUE_SUBDIR = "bridge";
 const QUEUE_FILE = "queue.jsonl";
 const QUEUE_RESULT_FILE = "result.jsonl";
+/** One file per identified result, named by the command id. Reply protocol 2+. */
+const QUEUE_RESULT_DIR = "result";
+/**
+ * Reply-protocol version at which results moved out of the single log. Read from
+ * `heartbeat.replyProtocol`, which the plugin keeps separate from `protocol` so
+ * the minis-bridge wire number stays at 1 while the reply channel can advance.
+ */
+const QUEUE_FILED_RESULT_PROTOCOL = 2;
 const QUEUE_HEARTBEAT_FILE = "heartbeat.json";
 const QUEUE_POLL_MS = 120;
 const QUEUE_DEFAULT_WAIT_MS = 90_000;
@@ -279,8 +287,28 @@ function appendQueueLine(dir, line) {
   appendFileSync(join(dir, QUEUE_FILE), line, "utf8");
 }
 
-/** Scan result.jsonl for the answer whose `id` matches ours. */
-function findQueueResult(dir, id) {
+/** File name the plugin files one identified result under. Same rule as its side. */
+function filedResultName(id) {
+  const safe = String(id).replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 120);
+  return `${safe || "result"}.json`;
+}
+
+/**
+ * Read this command's own answer.
+ *
+ * Plugin protocol 2 files each identified result under `result/<id>.json`, so the
+ * normal path is one small read. `legacyScan` is only true against an older
+ * plugin; without it the growing result log is never opened, which is what kept
+ * every poll proportional to the number of calls ever made.
+ */
+function findQueueResult(dir, id, legacyScan = true) {
+  try {
+    const filed = JSON.parse(readFileSync(join(dir, QUEUE_RESULT_DIR, filedResultName(id)), "utf8"));
+    if (filed && filed.id === id) return filed;
+  } catch {
+    // Not filed yet (still in flight), or an older plugin. Fall through.
+  }
+  if (!legacyScan) return null;
   let raw = "";
   try {
     raw = readFileSync(join(dir, QUEUE_RESULT_FILE), "utf8");
@@ -330,12 +358,20 @@ async function queueRequest(context, op, payload, options) {
   appendQueueLine(dir, `${JSON.stringify({ ...payload, id, op })}\n`);
   const waitMs = asInt(options["wait-ms"], QUEUE_DEFAULT_WAIT_MS, 1000, 600_000);
   const deadline = Date.now() + waitMs;
+  // Only an older plugin needs the growing shared log searched; from reply
+  // protocol 2 the answer is filed under its own id and the log is never opened.
+  // `replyProtocol` is the dedicated field; `protocol` is the fallback so a build
+  // that folded both into one number still reads correctly.
+  const replyProtocol = Number(heartbeat.replyProtocol ?? heartbeat.protocol ?? 1);
+  const legacyScan = !(Number.isFinite(replyProtocol) && replyProtocol >= QUEUE_FILED_RESULT_PROTOCOL);
   while (Date.now() < deadline) {
-    const result = findQueueResult(dir, id);
+    const result = findQueueResult(dir, id, legacyScan);
     if (result) {
       if (result.ok === true) return result.result ?? null;
       const error = new Error(result.error || "Cancip queue command failed.");
-      error.code = "queue_command_failed";
+      // Keep the plugin's own cause. Flattening every failure into one code is
+      // what made "command does not exist" indistinguishable from a refusal.
+      error.code = result.code || "queue_command_failed";
       throw error;
     }
     await sleep(QUEUE_POLL_MS);
@@ -729,6 +765,7 @@ Usage:
   cancip cmd <command-id>
   cancip sync [command-id]
   cancip open <vault-path>
+  cancip view                          structured live view (file, mode, selection, tabs)
   cancip notice <text>
   cancip eval <code>
   cancip send <prompt>
@@ -881,6 +918,13 @@ async function main() {
     const path = positionals.join(" ").trim() || String(options.path || "").trim();
     if (!path) throw new Error("open requires a Vault-relative path.");
     output(await callCancip(context, "open", { path }, options), options);
+    return;
+  }
+  if (command === "view" || command === "currentView" || command === "current-view") {
+    // Structured live-view answer: activeFile / viewType / displayText /
+    // selection / mode / area / tabs. Asking through `action` returned a rendered
+    // report with those fields buried in markdown.
+    output(await callCancip(context, "view", {}, options), options);
     return;
   }
   if (command === "notice") {

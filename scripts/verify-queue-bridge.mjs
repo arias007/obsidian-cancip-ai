@@ -79,7 +79,7 @@ const RESULT_PATH = `${DIR}/result.jsonl`;
 const HEARTBEAT_PATH = `${DIR}/heartbeat.json`;
 
 /** An in-memory stand-in for the vault: a flat store plus an abstract-file tree. */
-function createHarness(settingsOverride = {}) {
+function createHarness(settingsOverride = {}, options = {}) {
   const store = new Map();
   const folders = new Set();
   const commandsRun = [];
@@ -87,6 +87,11 @@ function createHarness(settingsOverride = {}) {
   const trashCalls = [];
   const notices = [];
   const settings = { enabled: true, dir: DIR, ...settingsOverride };
+  // Whether the host reports a visible window. Left unset by default exercises
+  // the "host never taught to report visibility" path, which must behave as
+  // foreground so nothing is ever held forever. Mutable so a test can model
+  // Obsidian coming back to the front.
+  const state = { foreground: options.foreground };
 
   const adapter = {
     async exists(path) {
@@ -110,6 +115,26 @@ function createHarness(settingsOverride = {}) {
       for (const key of [...folders]) if (key === path || key.startsWith(`${path}/`)) folders.delete(key);
     }
   };
+
+  // Obsidian's desktop adapter has rename/list/stat; the portable WebView one may
+  // not. Both shapes are worth driving, so they are opt-in rather than assumed.
+  if (options.rename) {
+    adapter.rename = async (from, to) => {
+      if (!store.has(from)) throw new Error(`no such file: ${from}`);
+      store.set(to, store.get(from));
+      store.delete(from);
+      renameCalls.push([from, to]);
+    };
+  }
+  if (options.list) {
+    adapter.list = async (path) => {
+      const prefix = `${path}/`;
+      const files = [...store.keys()].filter((key) => key.startsWith(prefix));
+      const dirs = [...folders].filter((key) => key.startsWith(prefix));
+      return { files, folders: dirs };
+    };
+    adapter.stat = async (path) => (store.has(path) ? { size: String(store.get(path)).length, mtime: 1000, type: "file" } : null);
+  }
 
   const files = [
     { path: "A.md", stat: { size: 2, mtime: 1000 } },
@@ -173,8 +198,28 @@ function createHarness(settingsOverride = {}) {
     },
     evalCode: async (code) => ({ evaluated: code })
   };
+  // Only attached when the caller asks, so the default harness is a host whose
+  // capabilities are exactly the pre-existing ones.
+  if (state.foreground !== undefined) handlers.isForeground = () => state.foreground;
+  if (options.view !== false && options.withView) {
+    handlers.view = async () => ({
+      activeFile: "A.md",
+      viewType: "markdown",
+      displayText: "body text",
+      selection: "",
+      mode: "source",
+      area: "main",
+      tabs: [{ title: "A", viewType: "markdown", area: "main", path: "A.md", pinned: false, active: true }]
+    });
+  }
 
-  return { store, folders, commandsRun, renameCalls, trashCalls, notices, settings, app, handlers };
+  return { store, folders, commandsRun, renameCalls, trashCalls, notices, settings, app, handlers, state };
+}
+
+/** Read one filed result: the O(1) channel a protocol-2 caller uses. */
+function readFiledResult(harness, id) {
+  const raw = harness.store.get(`${DIR}/result/${id}.json`);
+  return raw === undefined ? null : JSON.parse(raw);
 }
 
 function makeBridge(harness) {
@@ -191,8 +236,8 @@ function readResults(harness) {
 }
 
 /** Run one command through a fresh queue entry and return its result envelope. */
-async function runOne(op, payload = {}, settingsOverride = {}) {
-  const harness = createHarness(settingsOverride);
+async function runOne(op, payload = {}, settingsOverride = {}, harnessOptions = {}) {
+  const harness = createHarness(settingsOverride, harnessOptions);
   const bridge = makeBridge(harness);
   await enqueue(harness, [{ id: "t-1", op, ...payload }]);
   await bridge.tick();
@@ -325,16 +370,28 @@ await checkAsync("cmds lists and filters real Obsidian command ids", async () =>
   assert.deepEqual(filtered.result.result.ids, ["workspace:split"]);
 });
 
-await checkAsync("cmd executes a command and reports whether it existed", async () => {
+await checkAsync("cmd executes a registered command and reports the id it ran", async () => {
   const hit = await runOne("cmd", { command: "app:reload" });
+  assert.equal(hit.result.ok, true);
   assert.equal(hit.result.result.executed, true);
+  assert.equal(hit.result.result.command, "app:reload");
   assert.deepEqual(hit.harness.commandsRun, ["app:reload"]);
-  const miss = await runOne("cmd", { command: "nope:missing" });
-  assert.equal(miss.result.result.executed, false);
 });
 
-await checkAsync("sync defaults to the Remotely Save sync command", async () => {
+await checkAsync("an unregistered cmd fails loudly instead of reporting executed:false", async () => {
+  // This used to answer `{ok:true, result:{executed:false}}`, which made a typo,
+  // a missing plugin and a real success indistinguishable from the outside.
+  const miss = await runOne("cmd", { command: "nope:missing" });
+  assert.equal(miss.result.ok, false);
+  assert.equal(miss.result.code, "UNKNOWN_COMMAND");
+  assert.match(miss.result.error, /nope:missing/);
+});
+
+await checkAsync("sync reports an unregistered default sync command as UNKNOWN_COMMAND", async () => {
+  // 'remotely-save:start-sync' is registered in the harness, so this covers the
+  // happy path; the failure path is shared with `cmd` above.
   const { result, harness } = await runOne("sync");
+  assert.equal(result.ok, true);
   assert.equal(result.result.command, "remotely-save:start-sync");
   assert.deepEqual(harness.commandsRun, ["remotely-save:start-sync"]);
 });
@@ -379,6 +436,197 @@ await checkAsync("capabilities is served from the shared handler", async () => {
   assert.equal(result.result.protocolVersion, 1);
 });
 
+// ------------------------------------------------- reply delivery (protocol 2)
+await checkAsync("an identified result is filed under result/<id>.json for O(1) pickup", async () => {
+  const { harness } = await runOne("ping");
+  // The whole point of the change: the caller stats one small file it names
+  // itself, instead of reading and splitting a log of everything ever answered.
+  const filed = readFiledResult(harness, "t-1");
+  assert.ok(filed, "result/t-1.json must exist");
+  assert.equal(filed.id, "t-1");
+  assert.equal(filed.ok, true);
+});
+
+await checkAsync("the legacy result.jsonl is still written so protocol-1 callers keep working", async () => {
+  const { harness } = await runOne("ping");
+  const legacy = readResults(harness);
+  assert.equal(legacy.length, 1);
+  assert.equal(legacy[0].id, "t-1");
+  // Dual delivery, not a replacement: both channels must agree.
+  assert.deepEqual(readFiledResult(harness, "t-1"), legacy[0]);
+});
+
+await checkAsync("a batch keeps arrival order in the legacy log even when ids are mixed", async () => {
+  const harness = createHarness();
+  const bridge = makeBridge(harness);
+  harness.store.set(
+    QUEUE_PATH,
+    `{bad json\n${JSON.stringify({ id: "two", op: "ping" })}\n${JSON.stringify({ op: "ping" })}\n`
+  );
+  await bridge.tick();
+  const ids = readResults(harness).map((entry) => entry.id);
+  // The old caller reads this file positionally, so a malformed first line must
+  // not be shuffled behind the identified ones.
+  assert.deepEqual(ids, [null, "two", null]);
+});
+
+await checkAsync("a path-hostile id still files under a safe name", async () => {
+  const harness = createHarness();
+  const bridge = makeBridge(harness);
+  await enqueue(harness, [{ id: "../escape/../x", op: "ping" }]);
+  await bridge.tick();
+  assert.equal(harness.store.has(`${DIR}/result/.._escape_.._x.json`), true);
+  assert.equal(readResults(harness)[0].id, "../escape/../x");
+});
+
+await checkAsync("only the newest result files are kept", async () => {
+  const harness = createHarness({}, { list: true });
+  const bridge = makeBridge(harness);
+  const batch = [];
+  for (let index = 0; index < 130; index += 1) batch.push({ id: `r-${index}`, op: "ping" });
+  await enqueue(harness, batch);
+  await bridge.tick();
+  const filed = [...harness.store.keys()].filter((key) => key.startsWith(`${DIR}/result/`) && key.endsWith(".json"));
+  assert.equal(filed.length <= 100, true, `expected retention to trim, saw ${filed.length}`);
+  assert.equal(filed.length > 0, true);
+});
+
+// --------------------------------------------------------------- op catalogue
+await checkAsync("heartbeat advertises the reply protocol and the op catalogue", async () => {
+  const harness = createHarness();
+  const bridge = makeBridge(harness);
+  await bridge.beat();
+  const heartbeat = JSON.parse(harness.store.get(HEARTBEAT_PATH));
+  // The minis-bridge wire number is untouched; the new capability rides beside it.
+  assert.equal(heartbeat.protocol, 1);
+  assert.equal(heartbeat.replyProtocol, 2);
+  assert.equal(heartbeat.resultDir, "result");
+  assert.equal(Array.isArray(heartbeat.opCatalog), true);
+  assert.equal(heartbeat.opCatalog.length, [...QUEUE_BRIDGE_OPS].length);
+});
+
+await checkAsync("every op in the catalogue names a group and whether it needs foreground", async () => {
+  const harness = createHarness();
+  const bridge = makeBridge(harness);
+  await bridge.beat();
+  const { opCatalog } = JSON.parse(harness.store.get(HEARTBEAT_PATH));
+  for (const entry of opCatalog) {
+    assert.equal(typeof entry.op, "string");
+    assert.equal(entry.group === "file" || entry.group === "semantic", true, `bad group for ${entry.op}`);
+    assert.equal(typeof entry.requiresForeground, "boolean");
+    assert.equal(typeof entry.enabled, "boolean");
+    if (!entry.enabled) assert.equal(typeof entry.reason, "string", `${entry.op} must say why it is disabled`);
+  }
+  // The three lists used to disagree; the catalogue must agree with QUEUE_BRIDGE_OPS.
+  assert.deepEqual(opCatalog.map((entry) => entry.op), [...QUEUE_BRIDGE_OPS]);
+});
+
+await checkAsync("a host without a live view reports op=view as disabled with a reason", async () => {
+  const harness = createHarness();
+  const bridge = makeBridge(harness);
+  await bridge.beat();
+  const view = JSON.parse(harness.store.get(HEARTBEAT_PATH)).opCatalog.find((entry) => entry.op === "view");
+  assert.equal(view.enabled, false);
+  assert.match(view.reason, /live view/);
+});
+
+await checkAsync("op=view returns structured fields instead of a markdown report", async () => {
+  const { result } = await runOne("view", {}, {}, { withView: true });
+  assert.equal(result.ok, true);
+  assert.equal(result.result.activeFile, "A.md");
+  assert.equal(result.result.viewType, "markdown");
+  // An empty selection is the case the markdown report could not express: the
+  // next key followed immediately, so a line-based parse read the wrong value.
+  assert.equal(result.result.selection, "");
+  assert.equal(result.result.displayText, "body text");
+  assert.equal(Array.isArray(result.result.tabs), true);
+});
+
+await checkAsync("op=view fails with a machine-readable code when the host has none", async () => {
+  const { result } = await runOne("view");
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "UNSUPPORTED_OP");
+});
+
+// ------------------------------------------------------- foreground scheduling
+await checkAsync("off-foreground a file op still runs while a visible-only op is held", async () => {
+  const harness = createHarness({}, { foreground: false });
+  const bridge = makeBridge(harness);
+  await enqueue(harness, [
+    { id: "held", op: "cmd", command: "app:reload" },
+    { id: "runs", op: "ping" }
+  ]);
+  await bridge.tick();
+  const ids = readResults(harness).map((entry) => entry.id);
+  assert.deepEqual(ids, ["runs"], "only the op that does not need a window may run");
+  assert.deepEqual(harness.commandsRun, [], "a visible-only command must not fire against a hidden window");
+  // It is not dropped: it goes back to the queue for when Obsidian returns.
+  assert.match(harness.store.get(QUEUE_PATH), /"id":"held"/);
+});
+
+await checkAsync("a held command runs once Obsidian comes back to the front", async () => {
+  const harness = createHarness({}, { foreground: false });
+  const bridge = makeBridge(harness);
+  await enqueue(harness, [{ id: "held", op: "notice", text: "later" }]);
+  await bridge.tick();
+  assert.deepEqual(harness.notices, []);
+  harness.state.foreground = true;
+  await bridge.tick();
+  assert.deepEqual(harness.notices, ["later"]);
+  const ids = readResults(harness).map((entry) => entry.id);
+  assert.deepEqual(ids, ["held"], "the held command must execute exactly once, when it can");
+});
+
+await checkAsync("held work keeps its place ahead of commands that arrived later", async () => {
+  const harness = createHarness({}, { foreground: false });
+  const bridge = makeBridge(harness);
+  await enqueue(harness, [{ id: "old", op: "cmd", command: "app:reload" }]);
+  await bridge.tick();
+  harness.store.set(QUEUE_PATH, `${harness.store.get(QUEUE_PATH)}${JSON.stringify({ id: "new", op: "ping" })}\n`);
+  harness.state.foreground = true;
+  await bridge.tick();
+  const ids = readResults(harness).map((entry) => entry.id);
+  assert.deepEqual(ids, ["old", "new"], "the older held command must not be starved by the newer one");
+});
+
+await checkAsync("a host that never reports visibility behaves as foreground", async () => {
+  // No isForeground handler at all: this is the pre-existing host shape, and
+  // holding work forever on it would be a regression, not a feature.
+  const { result } = await runOne("notice", { text: "no visibility hook" });
+  assert.equal(result.ok, true);
+  assert.equal(result.result.shown, true);
+});
+
+// ------------------------------------------------------------ queue durability
+await checkAsync("the queue is swapped aside rather than cleared in place", async () => {
+  const harness = createHarness({}, { rename: true });
+  const bridge = makeBridge(harness);
+  await enqueue(harness, [{ id: "once", op: "ping" }]);
+  await bridge.tick();
+  assert.deepEqual(harness.renameCalls, [[QUEUE_PATH, `${DIR}/queue.processing.jsonl`]]);
+  // The batch is finished, so the processing file is gone again.
+  assert.equal(harness.store.has(`${DIR}/queue.processing.jsonl`), false);
+});
+
+await checkAsync("a batch left behind by a crash is replayed on the next tick", async () => {
+  const harness = createHarness({}, { rename: true });
+  const bridge = makeBridge(harness);
+  // Model a plugin that died mid-batch: the swapped-aside batch is still there.
+  harness.store.set(`${DIR}/queue.processing.jsonl`, `${JSON.stringify({ id: "survivor", op: "ping" })}\n`);
+  await bridge.tick();
+  const ids = readResults(harness).map((entry) => entry.id);
+  assert.deepEqual(ids, ["survivor"], "work that survived a crash must still be answered");
+});
+
+await checkAsync("an adapter without rename still clears the queue without losing work", async () => {
+  const harness = createHarness();
+  const bridge = makeBridge(harness);
+  await enqueue(harness, [{ id: "once", op: "ping" }]);
+  await bridge.tick();
+  assert.equal(harness.store.get(QUEUE_PATH), "");
+  assert.equal(readResults(harness).length, 1);
+});
+
 // -------------------------------------------------------------- error handling
 await checkAsync("an unknown op fails the one command without killing the batch", async () => {
   const harness = createHarness();
@@ -390,6 +638,7 @@ await checkAsync("an unknown op fails the one command without killing the batch"
   await bridge.tick();
   const [first, second] = readResults(harness);
   assert.equal(first.ok, false);
+  assert.equal(first.code, "UNKNOWN_OP");
   assert.match(first.error, /unknown op/);
   assert.equal(second.ok, true, "a failed command must not stop the ones after it");
 });
@@ -406,9 +655,10 @@ await checkAsync("a malformed line is reported and the good lines still run", as
   assert.equal(second.ok, true);
 });
 
-await checkAsync("a missing required argument fails with a clear message", async () => {
+await checkAsync("a missing required argument fails with a clear message and a code", async () => {
   const { result } = await runOne("write", {});
   assert.equal(result.ok, false);
+  assert.equal(result.code, "MISSING_ARGUMENT");
   assert.match(result.error, /requires a path/);
 });
 
