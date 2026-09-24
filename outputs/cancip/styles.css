@@ -2254,6 +2254,48 @@ details.obcc-process-step {
   font-style: italic;
 }
 
+/* The real action and its outcome ride on the folded step row, so one expansion
+   (the record) is enough to audit what a turn actually ran. */
+.obcc-process-step-action {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  max-width: 58%;
+  margin-left: 6px;
+  padding: 0 5px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  line-height: 1.35;
+  vertical-align: baseline;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.obcc-process-step-action-text {
+  min-width: 0;
+  font-family: var(--font-monospace);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.obcc-process-step-action-status {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+}
+
+.obcc-process-step-action.is-failed,
+.obcc-process-step-action.is-blocked {
+  border-color: var(--text-error);
+  color: var(--text-error);
+}
+
+.obcc-process-step-action.is-pending,
+.obcc-process-step-action.is-executing {
+  border-color: var(--text-warning);
+}
+
 .obcc-process-reasoning {
   margin: 0 0 8px;
   padding: 7px 9px;
@@ -2738,6 +2780,17 @@ details.obcc-process-step {
 
 .obcc-tool-run.has-model-title > summary .obcc-tool-run-summary {
   font-weight: 600;
+}
+
+/* Outcome line on the folded tool row: what the run returned, in one line. */
+.obcc-tool-run-result-preview {
+  flex: 1 1 100%;
+  min-width: 0;
+  color: var(--text-faint);
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .obcc-tool-run-body {
