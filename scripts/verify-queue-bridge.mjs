@@ -618,6 +618,40 @@ await checkAsync("a batch left behind by a crash is replayed on the next tick", 
   assert.deepEqual(ids, ["survivor"], "work that survived a crash must still be answered");
 });
 
+await checkAsync("replay does not repeat a command whose result was already filed", async () => {
+  // A plugin reload mid-batch leaves the processing file behind, and reloads are
+  // routine (a settings toggle does one). Re-running an answered `write` or
+  // `delete` is a duplicate side effect, not a harmless retry.
+  const harness = createHarness({}, { rename: true });
+  const bridge = makeBridge(harness);
+  const answered = { id: "done", op: "write", path: "A.md", data: "from the first run" };
+  const unanswered = { id: "todo", op: "ping" };
+  harness.store.set(`${DIR}/queue.processing.jsonl`, `${JSON.stringify(answered)}\n${JSON.stringify(unanswered)}\n`);
+  harness.store.set(`${DIR}/result/done.json`, JSON.stringify({ id: "done", op: "write", ok: true }));
+  harness.store.set("A.md", "from a later edit");
+  await bridge.tick();
+  const ids = readResults(harness).map((entry) => entry.id);
+  assert.deepEqual(ids, ["todo"], "only the unanswered command may run again");
+  assert.equal(harness.store.get("A.md"), "from a later edit", "the answered command must not re-run and clobber the file");
+});
+
+await checkAsync("replay keeps the residue order when only some lines are filtered", async () => {
+  const harness = createHarness({}, { rename: true });
+  const bridge = makeBridge(harness);
+  harness.store.set(
+    `${DIR}/queue.processing.jsonl`,
+    `${JSON.stringify({ id: "skip1", op: "ping" })}\n` +
+      `${JSON.stringify({ id: "keep1", op: "ping" })}\n` +
+      `${JSON.stringify({ id: "skip2", op: "ping" })}\n` +
+      `${JSON.stringify({ id: "keep2", op: "ping" })}\n`
+  );
+  harness.store.set(`${DIR}/result/skip1.json`, JSON.stringify({ id: "skip1", op: "ping", ok: true }));
+  harness.store.set(`${DIR}/result/skip2.json`, JSON.stringify({ id: "skip2", op: "ping", ok: true }));
+  await bridge.tick();
+  const ids = readResults(harness).map((entry) => entry.id);
+  assert.deepEqual(ids, ["keep1", "keep2"]);
+});
+
 await checkAsync("an adapter without rename still clears the queue without losing work", async () => {
   const harness = createHarness();
   const bridge = makeBridge(harness);

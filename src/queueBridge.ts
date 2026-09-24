@@ -518,9 +518,20 @@ export class CancipQueueBridge {
   }
 
   /**
-   * Replay a batch left behind by a crash, once per plugin start. The residue is
-   * prepended so the older commands keep their original order ahead of anything
-   * that arrived since.
+   * Replay a batch left behind by a crash or a reload, once per plugin start.
+   *
+   * The processing file survives whenever Obsidian unloads the plugin mid-batch
+   * — which a settings toggle or a plugin reload does routinely — so without this
+   * the work would sit there forever.
+   *
+   * Replay is *filtered*, never blind. A command whose `result/<id>.json` already
+   * exists has been answered, so re-running it would be a duplicate: for `write`
+   * or `delete` that is a real defect, not a wasted cycle. Dropping those turns
+   * the recovery from at-least-once into effectively-once for every command that
+   * carries an id: answered work is not repeated, unanswered work is not lost.
+   *
+   * Residue is prepended, so older commands keep their original order ahead of
+   * anything that arrived since.
    */
   private async replayResidue(queuePath: string, processingPath: string): Promise<void> {
     const adapter = this.app.vault.adapter;
@@ -528,13 +539,50 @@ export class CancipQueueBridge {
       if (!(await adapter.exists(processingPath))) return;
       const residue = await adapter.read(processingPath);
       if (residue.trim()) {
-        const pending = (await adapter.exists(queuePath)) ? await adapter.read(queuePath) : "";
-        await adapter.write(queuePath, `${residue.trimEnd()}\n${pending.replace(/^\s+/, "")}`);
+        const pending = await this.pendingResidueLines(residue);
+        if (pending.length) {
+          const existing = (await adapter.exists(queuePath)) ? await adapter.read(queuePath) : "";
+          await adapter.write(queuePath, `${pending.join("\n")}\n${existing.replace(/^\s+/, "")}`);
+        }
       }
       await adapter.remove(processingPath);
     } catch {
       // Recovery is best effort; the next start tries again.
     }
+  }
+
+  /** Drop residue lines whose result was already filed, keeping order. */
+  private async pendingResidueLines(residue: string): Promise<string[]> {
+    const adapter = this.app.vault.adapter;
+    const dir = this.filePath(QUEUE_BRIDGE_RESULT_DIR);
+    const lines = residue
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const kept: string[] = [];
+    for (const line of lines) {
+      let id = "";
+      try {
+        const parsed = JSON.parse(line) as Record<string, unknown> | null;
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          id = typeof parsed.id === "string" ? parsed.id : "";
+        }
+      } catch {
+        // A malformed line is still replayed: runParsed reports it as bad json,
+        // which is more useful to the caller than silently dropping it.
+      }
+      if (!id) {
+        kept.push(line);
+        continue;
+      }
+      try {
+        if (await adapter.exists(`${dir}/${resultFileName(id)}`)) continue;
+      } catch {
+        // If the check itself fails, keep the line rather than lose the command.
+      }
+      kept.push(line);
+    }
+    return kept;
   }
 
   /**
