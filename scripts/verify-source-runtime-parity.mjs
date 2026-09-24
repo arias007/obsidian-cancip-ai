@@ -39,6 +39,24 @@ if (runtimeMethods.size < RUNTIME_METHOD_FLOOR) {
 const intentionallyRemovedRuntimeMethods = new Set([
   "applyPersonalizedDiaryButtons",
   "activateNativeNoteDrawSurface",
+  // Dropped on purpose: capability must come from calling Obsidian's commands and
+  // reading/writing files, not from predicting the prompt and pre-running the reads
+  // it "probably" wants. This family matched the wording, built an action list and
+  // executed it before the model had a say. Guards in verify-source-bundle-guards.mjs
+  // stop it from being reintroduced.
+  "answerInformationTaskFromToolRuns",
+  "executeProgrammaticReadOnlyActions",
+  "forceReadOnlyCapabilityDiscovery",
+  "programmaticImplementationActionsForPrompt",
+  "programmaticImplementationRouteDetail",
+  "programmaticReadOnlyActionsForPrompt",
+  "programmaticSimpleVaultTargetAction",
+  "programmaticVaultOpenSelectionFollowupAction",
+  "readActiveFileFromCurrentViewIfUseful",
+  "readOnlyActionStatus",
+  "readOnlyCapabilityDiscoveryActions",
+  "recentVaultOpenSelectionContext",
+  "runProgrammaticImplementationFallback",
   // Dropped on purpose: the per-turn workspace snapshot was replaced by the base
   // capability block plus on-demand obsidian.tabs / obsidian.currentView calls.
   // Keeping the snapshot method would re-create the payload it was removed for.

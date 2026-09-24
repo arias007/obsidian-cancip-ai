@@ -171,6 +171,150 @@ check("declarationSourceText keeps leading comments and blank lines attached", (
   if (/\bexport\b/.test(stripped)) throw new Error(`export survived: ${JSON.stringify(stripped)}`);
 });
 
+// ------------------------------------------- prompt policy must not pre-match
+// The prompt assembler used to decide *which policy sections to send* by
+// pattern-matching the user's own wording: the runtime-version line sat behind
+// /cancip.{0,20}(version|版本)/, the automation block behind
+// /自动化|定时|通知|automation|schedule|notification/, and the skill block behind a
+// skill keyword. Any rephrasing silently dropped the policy, which is exactly why
+// "换个问法就不会了". The rule now is: the model is given the ability to call tools
+// and read/write files and decides what applies - the assembler must not predict.
+//
+// Text matching is not enough for the conditionality checks: the first draft used
+// /if\s*\([^)]*\)\s*\{?\s*sections\.push\(/ against the old source, and `[^)]*`
+// cannot span the `)` that closes `.test(prompt)`, so the check passed on code it
+// was written to reject. Ancestors are read from the AST instead.
+function methodPushes(source, methodName) {
+  const sf = createSourceFile(source);
+  let method = null;
+  const visitMethods = (node) => {
+    if (ts.isMethodDeclaration(node) && node.name && node.name.getText(sf) === methodName) method = node;
+    ts.forEachChild(node, visitMethods);
+  };
+  visitMethods(sf);
+  if (!method) throw new Error(`no method named ${methodName} in the bundle`);
+  const pushes = [];
+  const visitPushes = (node) => {
+    if (ts.isCallExpression(node)
+      && ts.isPropertyAccessExpression(node.expression)
+      && ts.isIdentifier(node.expression.expression)
+      && node.expression.expression.text === "sections"
+      && node.expression.name.getText(sf) === "push") {
+      pushes.push(node);
+    }
+    ts.forEachChild(node, visitPushes);
+  };
+  visitPushes(method);
+  return { sf, method, pushes };
+}
+
+function conditionalAncestor(node, stopAt) {
+  let ancestor = node.parent;
+  while (ancestor && ancestor !== stopAt) {
+    if (ts.isIfStatement(ancestor) || ts.isConditionalExpression(ancestor) || ts.isCaseClause(ancestor)) return ancestor;
+    ancestor = ancestor.parent;
+  }
+  return null;
+}
+
+const modePrompt = methodPushes(main, "modePrompt");
+
+check("modePrompt does not select policy sections by pattern-matching the prompt", () => {
+  const body = modePrompt.method.getText(modePrompt.sf);
+  if (/\.test\(\s*prompt\s*\)/.test(body)) {
+    throw new Error("modePrompt tests the raw prompt again - section selection must not depend on wording");
+  }
+  const gates = body.match(/\/[^/\n]{6,160}\/i?\.test\(/g) || [];
+  if (gates.length) throw new Error(`modePrompt regained keyword gate(s): ${gates.join(" | ")}`);
+});
+
+check("the Cancip runtime version line is pushed unconditionally", () => {
+  const push = modePrompt.pushes.find((call) => call.arguments.length === 1
+    && call.arguments[0].getText(modePrompt.sf).startsWith("`Cancip runtime version:"));
+  if (!push) throw new Error("the runtime version line is missing, so '你几版了' and other phrasings get nothing");
+  const gate = conditionalAncestor(push, modePrompt.method);
+  if (gate) throw new Error(`the runtime version line is conditional again (line ${modePrompt.sf.getLineAndCharacterOfPosition(gate.getStart(modePrompt.sf)).line + 1})`);
+});
+
+check("automation and skill policy are pushed from the same block", () => {
+  const find = (needle) => modePrompt.pushes.find((call) => call.getText(modePrompt.sf).includes(needle));
+  const automation = find("automationAgentPolicyPrompt");
+  const skill = find("skillRoutePolicyPrompt");
+  if (!automation) throw new Error("automationAgentPolicyPrompt is no longer pushed");
+  if (!skill) throw new Error("skillRoutePolicyPrompt is no longer pushed");
+  // call -> ExpressionStatement -> enclosing statement list. Comparing the call's
+  // direct parent would compare two different ExpressionStatements and always fail.
+  const owner = (call) => call.parent && call.parent.parent;
+  if (owner(automation) !== owner(skill)) {
+    throw new Error("the two policies no longer share one block, so wording can gate one off without the other");
+  }
+  const block = owner(automation);
+  // The block must be gated on "is this a real request" (intent), because the
+  // router-only gate left the hole this change closed: classifyPromptIntent(
+  // "帮我每天八点跑一次") is "informational" and no router fires, so that phrasing
+  // lost the policy while a differently worded equivalent kept it.
+  const ifStatement = block && block.parent;
+  if (!ifStatement || ifStatement.kind !== ts.SyntaxKind.IfStatement) {
+    throw new Error("the automation/skill pushes are no longer guarded by an if statement");
+  }
+  const condition = ifStatement.expression.getText(modePrompt.sf);
+  // The gate is written as `... && baseCapabilityTurn`, a local that holds the
+  // real predicate. Expanding one level of local initializers means the check reads
+  // what the code actually computes instead of the name someone chose for it.
+  const locals = new Map();
+  const collectLocals = (node) => {
+    if (ts.isVariableDeclaration(node) && node.name && ts.isIdentifier(node.name) && node.initializer) {
+      locals.set(node.name.getText(modePrompt.sf), node.initializer.getText(modePrompt.sf));
+    }
+    ts.forEachChild(node, collectLocals);
+  };
+  collectLocals(modePrompt.method);
+  let expanded = condition;
+  for (const name of new Set(condition.match(/\b[A-Za-z_$][\w$]*\b/g) || [])) {
+    if (locals.has(name)) expanded += ` || ${locals.get(name)}`;
+  }
+  if (!/intent\s*!==\s*"trivial"/.test(expanded)) {
+    throw new Error(`the gate no longer keys off policy.intent, so a rephrased request can lose the policy: if (${condition})`);
+  }
+});
+
+// ------------------------------------------- pre-match capability machinery
+// The plugin must reach capability by calling Obsidian's commands and reading and
+// writing files, not by predicting from the prompt which reads to run. That family
+// derived actions straight from the wording and pre-executed them; it is removed
+// and must not come back. `bestSimpleVaultTargetCandidate`,
+// `simpleVaultTargetHasAmbiguousExactMatches`,
+// `shouldAnswerDirectlyFromProgrammaticReadOnly` and `programmaticMemoryReadActions`
+// stay: they run only on actions that already executed, or resolve an
+// obsidian.execute call from the args the model itself supplied.
+const REMOVED_PREMATCH_METHODS = [
+  "forceReadOnlyCapabilityDiscovery",
+  "runProgrammaticImplementationFallback",
+  "programmaticImplementationActionsForPrompt",
+  "programmaticVaultOpenSelectionFollowupAction",
+  "programmaticSimpleVaultTargetAction",
+  "programmaticImplementationRouteDetail",
+  "programmaticReadOnlyActionsForPrompt",
+  "executeProgrammaticReadOnlyActions",
+  "readOnlyCapabilityDiscoveryActions",
+  "readOnlyActionStatus",
+  "answerInformationTaskFromToolRuns",
+  "readActiveFileFromCurrentViewIfUseful",
+  "recentVaultOpenSelectionContext"
+];
+
+check("the prompt-pre-matching capability family has not been reintroduced", () => {
+  const back = REMOVED_PREMATCH_METHODS.filter((name) => main.text.includes(name));
+  if (back.length) throw new Error(`pre-match machinery is back: ${back.join(", ")}`);
+});
+
+check("the removed pre-match family is not advertised through the runtime test api", () => {
+  const api = methodPushes(main, "installRuntimeTestApi");
+  const body = api.method.getText(api.sf);
+  const leaks = REMOVED_PREMATCH_METHODS.filter((name) => body.includes(name));
+  if (leaks.length) throw new Error(`installRuntimeTestApi still binds: ${leaks.join(", ")}`);
+});
+
 for (const [status, name] of results) {
   if (status === "FAIL") console.error(`${status}  ${name}`);
   else console.log(`${status}  ${name}`);

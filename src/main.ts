@@ -35862,7 +35862,6 @@ class CancipView extends ItemView {
   private installRuntimeTestApi(): void {
     const target = this as unknown as Record<string, unknown>;
     const promptPayloadPolicy = this.promptPayloadPolicy.bind(this);
-    const programmaticReadOnlyActionsForPrompt = this.programmaticReadOnlyActionsForPrompt.bind(this);
     const modePrompt = this.modePrompt.bind(this);
     const informationalAnswerSystemPrompt = this.informationalAnswerSystemPrompt.bind(this);
     const buildContext = this.buildContext.bind(this);
@@ -35877,7 +35876,6 @@ class CancipView extends ItemView {
     const todoElapsedMs = this.todoElapsedMs.bind(this);
     Object.defineProperties(target, {
       "promptPayloadPolicy": { configurable: true, value: promptPayloadPolicy },
-      "programmaticReadOnlyActionsForPrompt": { configurable: true, value: programmaticReadOnlyActionsForPrompt },
       "modePrompt": { configurable: true, value: modePrompt },
       "informationalAnswerSystemPrompt": { configurable: true, value: informationalAnswerSystemPrompt },
       "buildContext": { configurable: true, value: buildContext },
@@ -49070,10 +49068,18 @@ class CancipView extends ItemView {
           ? this.t("modePromptEdit")
           : this.t("modePromptAsk");
     const sections = [base, languagePrompt];
-    if (/\bcancip\b.{0,20}(?:version|版本|版本号|版本號)|(?:version|版本|版本号|版本號).{0,20}\bcancip\b/i.test(prompt)) {
-      sections.push(`Cancip runtime version: ${this.plugin.manifest.version}`);
-    }
-    if (!directVaultFileTask && !vaultTargetOpenTask && !externalPath && !policy.compactStateChange && (policy.includeToolCatalog || policy.includeMemoryIndex || policy.includeWorkingState)) {
+    // Constant rather than keyword-matched. The previous form only sent this when
+    // the prompt literally contained "cancip" within 20 characters of
+    // "version/版本", so "你几版了" and every other phrasing got nothing and the
+    // model had to guess or claim it could not see it. A constant line is correct
+    // for every wording and costs a few dozen characters.
+    sections.push(`Cancip runtime version: ${this.plugin.manifest.version}`);
+    // Retrieval order is doctrine about *how to work*, not data about *this*
+    // prompt, so it is sent whenever the turn is a real task instead of only when
+    // the wording happened to trip one of the router predicates. A differently
+    // phrased request used to lose the ordering rule and with it the instruction
+    // to look things up before answering from prior knowledge.
+    if (!directVaultFileTask && !vaultTargetOpenTask && !externalPath && !policy.compactStateChange) {
       sections.push(this.resourceRetrievalPolicyPrompt());
     }
     if (!directVaultFileTask && !vaultTargetOpenTask && !externalPath && policy.intent === "implementation" && (policy.includeToolProtocol || policy.includeWorkingState)) {
@@ -49098,8 +49104,24 @@ class CancipView extends ItemView {
       && !policy.includeToolCatalog) {
       sections.push(this.baseCapabilityPrompt());
     }
-    if (/(?:自动化|定时|通知|新文件触发|automation|schedule|notification|new.?file)/i.test(prompt)) sections.push(this.automationAgentPolicyPrompt());
-    if (!directVaultFileTask && policy.intent === "implementation" && (policy.includeAutoSkills || promptNeedsSkillExperienceRoute(prompt))) sections.push(this.skillRoutePolicyPrompt());
+    // Both blocks are policy about how to work, so they follow "is this a real
+    // request", not "did the wording contain a magic word". The automation block
+    // used to appear only when the prompt matched
+    // /自动化|定时|通知|automation|schedule|notification|new file/; gating it on the
+    // routers instead still left the same hole, because
+    // classifyPromptIntent("帮我每天八点跑一次") is "informational" and no router
+    // fires, so that phrasing reached the model with none of the
+    // schedule/notifyMode/Plan rules while "每天 8:00 自动执行一次并通知我" got them
+    // all. Non-trivial turns now always get both blocks - the same floor the base
+    // capability prompt above already uses - and trivial turns (greeting, thanks,
+    // arithmetic, continuation) keep the minimal payload.
+    const baseCapabilityTurn = policy.intent !== "trivial"
+      || policy.includeToolProtocol
+      || policy.includeToolCatalog;
+    if (!directVaultFileTask && !vaultTargetOpenTask && !externalPath && baseCapabilityTurn) {
+      sections.push(this.automationAgentPolicyPrompt());
+      sections.push(this.skillRoutePolicyPrompt());
+    }
     if (!directVaultFileTask && (policy.includeToolProtocol || (policy.intent === "implementation" && policy.includeWorkingState))) {
       sections.push(nativeToolModel ? this.nativeFinalAnswerPrompt() : this.t("finalAnswerFormatPrompt"));
     }
@@ -49215,7 +49237,9 @@ class CancipView extends ItemView {
         "Skill/经验路由：已注入的 Skill 是可执行说明；没注入或路线不清时，先用 cancip.skills.list/read、cancip.experience.list、cancip.tools.index 或相关记忆/插件索引找方法。",
         `记忆/规则/偏好：用户要求记住、沉淀规则或优化工作流时，按访问模式修改 ${memoryFolder} 或 ${CANCIP_CONFIG_DIR} 经验数据；不要只口头说已记住。`,
         `自我优化：重复成功的 OB 工作流要复用 ${EXPERIENCE_LOG_PATH} 和 generated Skill，成功后可调用 cancip.experience.harvest 让下次更快。`,
-        "信息顺序：先用当前任务必要上下文；不足时按需优先查 Vault 内笔记、Skill、自动化、会话历史、记忆、插件命令/API/UI 和已验证经验，只取相关片段；再查网络和用已有知识补充。路线清楚且低风险时直接执行、备份并验证。",
+        // The information-order rule itself now rides in resourceRetrievalPolicyPrompt
+        // on every acting turn; only the part unique to this block stays here.
+        "低风险且路线清楚时直接执行，并做备份与验证。",
         "OB 插件能力：先发现插件命令、公开 API、按钮/UI、配置或 JS bridge，再把可复用步骤沉淀成经验/Skill；确认不可行前不要先说不能。",
         "验收闭环：用户要求测试、验收、回归或变异测试时，必须用 cancip.acceptance.plan/status/record 形成可追踪闭环；不能只口头描述测试计划。"
       ].join("\n");
@@ -49224,7 +49248,8 @@ class CancipView extends ItemView {
       "Skill/experience route: injected Skills are executable instructions; if no Skill is injected or the route is unclear, use cancip.skills.list/read, cancip.experience.list, cancip.tools.index, or the relevant memory/plugin index first.",
       `Memory/rules/preferences: when the user asks to remember, preserve a rule, or improve a workflow, update ${memoryFolder} or ${CANCIP_CONFIG_DIR} experience data through the current access mode; do not merely say it is remembered.`,
       `Self-optimization: reuse ${EXPERIENCE_LOG_PATH} and generated Skills for repeated successful OB workflows, and call cancip.experience.harvest after success when it will help future runs.`,
-      "Information order: start with necessary current context; if insufficient, search targeted Vault notes, Skills, automations, session history, memory, plugin commands/APIs/UI, and verified recipes before the web or model prior knowledge. When a route is clear and low-risk, execute it with backup and verification.",
+      // See the zh branch: the ordering rule moved to resourceRetrievalPolicyPrompt.
+      "When the route is clear and low-risk, execute it directly with backup and verification.",
       "OB plugin capability: discover plugin commands, public APIs, buttons/UI, config, or JS bridge routes before claiming a task cannot be done; turn reusable steps into experience/Skills.",
       "Acceptance loop: for testing, acceptance, regression, or variants, use cancip.acceptance.plan/status/record; do not only describe a test plan."
     ].join("\n");
@@ -53377,18 +53402,6 @@ class CancipView extends ItemView {
     return `${current ? "Current" : "Result"}: ${cleanOutcome || "no tool/file/command result yet"}; next: ${cleanNext || "fill in the tool, target, and action before continuing"}`;
   }
 
-  private readOnlyActionStatus(actions: CancipAction[]): string {
-    const first = actions[0];
-    const target = first ? this.actionStatusTarget(first) : "";
-    const more = actions.length > 1 ? ` +${actions.length - 1}` : "";
-    const chinese = isChineseLanguage(this.plugin.language());
-    return this.runtimeStatusLine(
-      chinese ? `准备读取 ${target || "必要上下文"}${more}` : `preparing to read ${target || "needed context"}${more}`,
-      chinese ? "用读取结果直接回答，不再空转" : "answer directly from the read result without looping",
-      true
-    );
-  }
-
   private toolActionRecoveryStatus(rawPrompt: string, reason: "missing" | "low-commitment" | "hard"): string {
     const chinese = isChineseLanguage(this.plugin.language());
     const task = trimContext(rawPrompt.replace(/\s+/g, " ").trim(), 52);
@@ -55042,121 +55055,9 @@ class CancipView extends ItemView {
     }
   }
 
-  private async forceReadOnlyCapabilityDiscovery(
-    rawPrompt: string,
-    previousAnswer: string,
-    context: { system: string; contextText: string },
-    request: AbortController
-  ): Promise<ActionHandlingResult | null> {
-    if (request.signal.aborted || !this.isCurrentRequest(request)) return null;
-    const actions = this.readOnlyCapabilityDiscoveryActions(rawPrompt, previousAnswer);
-    if (!actions.length) return null;
-    this.setStatus(this.readOnlyActionStatus(actions));
-    const runs = actions.map((action) => this.createToolRun(action));
-    const results: string[] = [];
-    for (const run of runs) {
-      if (request.signal.aborted || !this.isCurrentRequest(request)) return null;
-      results.push(await this.executeToolRun(run));
-    }
-    const result = {
-      report: this.formatActionReport(this.actionReportSectionsFromRuns(runs, results)),
-      runs,
-      executed: runs.some((run) => run.status === "executed")
-    };
-    if (!result.executed) return result;
-    await this.answerInformationTaskFromToolRuns(context, result, request, rawPrompt);
-    return result;
-  }
 
-  private async runProgrammaticImplementationFallback(rawPrompt: string, request?: AbortController): Promise<ActionHandlingResult | null> {
-    if (request && (request.signal.aborted || !this.isCurrentRequest(request))) return null;
-    const actions = await this.programmaticImplementationActionsForPrompt(rawPrompt);
-    if (!actions.length) return null;
-    return await this.handleActionBlocks(cancipActionBlockForActions(actions));
-  }
 
-  private async programmaticImplementationActionsForPrompt(_rawPrompt: string): Promise<CancipAction[]> {
-    const selectionFollowupAction = this.programmaticVaultOpenSelectionFollowupAction(_rawPrompt);
-    if (selectionFollowupAction) return [selectionFollowupAction];
-    const simpleVaultTargetAction = await this.programmaticSimpleVaultTargetAction(_rawPrompt);
-    if (simpleVaultTargetAction) return [simpleVaultTargetAction];
-    if (!isBareCreateVaultFilePrompt(_rawPrompt)) return [];
-    return [];
-  }
 
-  private programmaticVaultOpenSelectionFollowupAction(rawPrompt: string): CancipAction | null {
-    const selection = this.recentVaultOpenSelectionContext();
-    if (!selection) return null;
-    const path = resolveVaultOpenCandidateFollowup(rawPrompt, selection.candidates);
-    if (!path) return null;
-    const target = this.app.vault.getAbstractFileByPath(path);
-    if (!(target instanceof TFile) && !(target instanceof TFolder)) return null;
-    const targetKind = target instanceof TFolder
-      ? "folder"
-      : isContextTextFile(target)
-        ? "file"
-        : "attachment";
-    return {
-      type: "command",
-      command: "cancip.openFile",
-      args: {
-        path,
-        targetKind,
-        intent: targetKind === "folder" ? "open folder" : targetKind === "attachment" ? "open attachment" : "open file",
-        route: "selection-follow-up",
-        originalQuery: selection.query || rawPrompt.trim()
-      }
-    };
-  }
-
-  private recentVaultOpenSelectionContext(): { query: string; candidates: string[] } | null {
-    let skippedCurrentUser = false;
-    for (let index = this.messages.length - 1; index >= 0; index -= 1) {
-      const message = this.messages[index];
-      if (message.role === "user") {
-        if (!skippedCurrentUser) {
-          skippedCurrentUser = true;
-          continue;
-        }
-        break;
-      }
-      if (!skippedCurrentUser || message.role !== "assistant") continue;
-      const runDetails = [...(message.toolRuns ?? [])].reverse().map((run) => `${run.error ?? ""}\n${run.result ?? ""}`);
-      const details = [message.choiceSourceText ?? "", message.content, ...runDetails];
-      for (const detail of details) {
-        if (!isVaultOpenTargetSelectionNeededText(detail)) continue;
-        const candidates = vaultOpenCandidatePathsFromText(detail)
-          .filter((path) => {
-            const target = this.app.vault.getAbstractFileByPath(normalizePath(path));
-            return target instanceof TFile || target instanceof TFolder;
-          });
-        if (!candidates.length) continue;
-        return {
-          query: vaultOpenSelectionQueryFromText(detail),
-          candidates: uniqueStrings(candidates.map((path) => normalizePath(path)))
-        };
-      }
-    }
-    return null;
-  }
-
-  private async programmaticSimpleVaultTargetAction(rawPrompt: string): Promise<CancipAction | null> {
-    const request = simpleVaultTargetRequestFromPrompt(rawPrompt);
-    if (!request || request.intent !== "open") return null;
-    const targetKind = request.targetKind === "folder" ? "folder" : request.targetKind === "attachment" ? "attachment" : "file";
-    return {
-      type: "command",
-      command: "obsidian.execute",
-      args: {
-        query: request.query,
-        targetKind,
-        intent: targetKind === "folder" ? "open folder" : targetKind === "attachment" ? "open attachment" : "open file",
-        route: "simple-vault-target",
-        containerQuery: request.containerQuery ?? "",
-        originalQuery: request.originalQuery ?? request.query
-      }
-    };
-  }
 
   private async bestSimpleVaultTargetCandidate(request: SimpleVaultTargetRequest): Promise<TargetCandidate | null> {
     const directPath = normalizePath(request.query.replace(/\\/g, "/").replace(/^\/+/, ""));
@@ -55199,218 +55100,6 @@ class CancipView extends ItemView {
     return uniqueStrings(exact.map((candidate) => candidate.path)).length > 1;
   }
 
-  private programmaticImplementationRouteDetail(rawPrompt: string, runs: ToolRun[]): string {
-    const summary = runs.map((run) => describeActionPlain(run.action)).join("\n");
-    if (isChineseLanguage(this.plugin.language())) {
-      return `本地确定路线：${rawPrompt.trim() || "当前任务"}\n${summary}`;
-    }
-    return `Programmatic route: ${rawPrompt.trim() || "current task"}\n${summary}`;
-  }
-
-  private programmaticReadOnlyActionsForPrompt(rawPrompt: string): CancipAction[] {
-    const text = rawPrompt.trim();
-    if (!text) return [];
-    if (isContinuePrompt(text) || isTrivialChatPrompt(text)) return [];
-    const compact = text.toLowerCase().replace(/\s+/g, "");
-    const actions: CancipAction[] = [];
-    const add = (action: CancipAction) => {
-      if (!isReadOnlyAction(action)) return;
-      const key = stableCacheKey(canonicalJsonValue(action));
-      if (actions.some((item) => stableCacheKey(canonicalJsonValue(item)) === key)) return;
-      actions.push(action);
-    };
-    if (/(?:默认|預設|当前|目前|实际|本轮|交流|界面).{0,12}(?:语言|語言)|(?:language|locale).{0,16}(?:default|current|status|actual)/i.test(text)) {
-      add({ type: "command", command: "cancip.language.status", args: {} });
-      return actions;
-    }
-    const wantsCancipConfig = /cancip|\.cancip|插件配置|插件设置|当前配置|配置文件|config/.test(compact);
-    const asksSettingsValue = /(配置|设置|設定|访问模式|權限|权限|accessmode|模型|model|api配置|apiprofile|接口|baseurl|baseurl|key|密钥|密鑰)/i.test(compact);
-    const readIntent = /(读取|读|查看|看看|检查|查一下|查查|告诉我|告訴我|显示|顯示|是什么|是什麼|是多少|多少|当前|目前|read|show|tell|what|which|current|check|inspect|query)/i.test(text);
-    const saysNoModify = promptExplicitlyRequestsReadOnly(text);
-    const asksPluginManifestOrVersion = promptAsksInstalledPluginManifestOrVersion(text);
-    if (classifyPromptIntent(text) !== "informational" && !(readIntent && saysNoModify) && !asksPluginManifestOrVersion) return [];
-    const memoryActions = this.programmaticMemoryReadActions(text);
-    if (memoryActions.length) {
-      for (const action of memoryActions) add(action);
-      return actions.slice(0, 2);
-    }
-    if (/(?:实际|当前|本轮).{0,12}(?:模型源|模型名|模型|api\s*配置)|(?:模型源|模型名).{0,12}(?:是什么|状态|实际|当前)|model\s*(?:source|name|status)|active\s+model/i.test(text)) {
-      add({ type: "command", command: "cancip.model.status", args: {} });
-      return actions;
-    }
-    if (/(?:自动补全|补全|autocomplete).{0,32}(?:开启|启用|状态|模型|超时|设置|配置|当前|是否|规则|允许|请求)|(?:开启|启用|状态|模型|超时|规则|允许|请求|输入为空).{0,32}(?:自动补全|补全|autocomplete)/i.test(text)) {
-      add({ type: "command", command: "cancip.autocomplete.status", args: {} });
-      return actions;
-    }
-    if (/(?:@|艾特).{0,20}(?:菜单|分类|顶级)|(?:菜单|顶级分类).{0,20}(?:@|艾特)|mention\s*(?:menu|categor)/i.test(text)) {
-      add({ type: "command", command: "cancip.mentions.categories", args: {} });
-      return actions;
-    }
-    const explicitReadPaths = explicitVaultFileReferenceCandidates(text)
-      .filter((path) => this.app.vault.getAbstractFileByPath(path) instanceof TFile)
-      .slice(0, 2);
-    const requestedFields = requestedStructuredFieldNames(text);
-    const duplicateHeadingLevel = requestedDuplicateHeadingLevel(text);
-    if (explicitReadPaths.length && (requestedFields.length || duplicateHeadingLevel > 0)) {
-      for (const path of explicitReadPaths) {
-        add({
-          type: "command",
-          command: "cancip.file.inspect",
-          args: {
-            path,
-            fields: requestedFields,
-            duplicateHeadingLevels: duplicateHeadingLevel > 0 ? [duplicateHeadingLevel] : []
-          }
-        });
-      }
-      return actions;
-    }
-    if (wantsCancipConfig && asksSettingsValue && (readIntent || saysNoModify)) {
-      add({ type: "read", path: CANCIP_CONFIG_PATH, maxChars: 9000 });
-    }
-    if (explicitReadPaths.length) {
-      const maxChars = /(?:重复|一级标题|二级标题|完整|全部|全文|duplicate|heading|full)/i.test(text) ? 60000 : 16000;
-      for (const path of explicitReadPaths) add({ type: "read", path, maxChars });
-    }
-    const pluginManifestAction = this.pluginManifestReadActionForPrompt(text);
-    if (pluginManifestAction) {
-      add(pluginManifestAction);
-    } else if (asksPluginManifestOrVersion) {
-      const query = text.replace(/\s+/g, " ").trim();
-      add({ type: "command", command: "cancip.pluginCapabilities", args: { query, includeDisabled: true, includeApi: false, includeFiles: true, includeSettings: false, commandLimit: 8, maxPlugins: 4 } });
-      add({ type: "command", command: "cancip.installedPlugins", args: { includeDisabled: true } });
-    }
-    if (actions.length) return actions.slice(0, 2);
-    const externalPath = explicitExternalAbsolutePath(text);
-    if (externalPath) {
-      add({ type: "command", command: "cancip.externalFiles.stat", args: { path: externalPath } });
-      return actions;
-    }
-    if (/(?:附件\s*chip|attachment\s*chip|没有附件|无附件|附件为空|当前附件|本轮.*发送.*内容)/i.test(text)) {
-      add({ type: "command", command: "cancip.composer.status", args: {} });
-      return actions;
-    }
-    if (/(?:tts|朗读|语音朗读)/i.test(text)) {
-      add({
-        type: "command",
-        command: /(?:状态|是否|当前|status)/i.test(text) ? "cancip.tts.status" : "cancip.tts.help",
-        args: {}
-      });
-      return actions;
-    }
-    if (capabilityPromptMentionsAutomation(text)) {
-      if (/(模板|预设|template|preset)/i.test(text)) {
-        add({ type: "command", command: "cancip.automation.templates", args: {} });
-      }
-      add({ type: "command", command: "cancip.automation.list", args: {} });
-      return actions.slice(0, 2);
-    }
-    if (capabilityPromptMentionsSessionHistory(text)) {
-      const sessionId = text.match(/session-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z(?:-\d{2,})?/i)?.[0];
-      const listLimit = requestedResultCount(text, 12, 80);
-      add({
-        type: "command",
-        command: "cancip.sessionHistory",
-        args: sessionId
-          ? {
-              sessionId,
-              mode: /(?:分析|根因|总结|复盘|analy[sz]e|root cause|summari[sz]e)/i.test(text) ? "diagnostic" : "full",
-              includeContext: false,
-              limit: 80
-            }
-          : { all: true, mode: "summary", limit: listLimit }
-      });
-      return actions;
-    }
-    if (capabilityPromptMentionsGithub(text)) {
-      const repo = /cancip/i.test(text) ? "arias007/obsidian-cancip-ai" : undefined;
-      const repoArgs = repo ? { repo, limit: 5 } : { limit: 5 };
-      if (/(?:commit|提交)/i.test(text)) add({ type: "command", command: "github.commits", args: repoArgs });
-      if (/(?:release|发布|版本|三件套|tag|标签)/i.test(text)) add({ type: "command", command: "github.releases", args: repoArgs });
-      if (/(?:workflow|工作流|action)/i.test(text)) add({ type: "command", command: "github.workflowRuns", args: repoArgs });
-      if (!actions.length) add({ type: "command", command: "github.repo", args: repoArgs });
-      return actions.slice(0, 3);
-    }
-    if (capabilityPromptMentionsPluginSurface(text) && !promptAsksPluginList(text)) {
-      add({
-        type: "command",
-        command: "cancip.pluginCapabilities",
-        args: {
-          query: text.replace(/\s+/g, " ").trim(),
-          includeDisabled: true,
-          includeApi: true,
-          includeFiles: false,
-          includeSettings: false,
-          commandLimit: 20,
-          maxPlugins: 4
-        }
-      });
-      return actions;
-    }
-    if (/(?:工作台|workbench|html|docx|xlsx|pptx).{0,28}(?:能力|入口|转换|预览|编辑|保存|验证|打开)|(?:文档转换|转换入口)/i.test(text)) {
-      add({ type: "command", command: "cancip.documents.help", args: {} });
-      if (capabilityPromptMentionsCurrentView(text)) add({ type: "command", command: "obsidian.currentView", args: { includeText: false, visibleChars: 1200 } });
-      return actions.slice(0, 2);
-    }
-    if (capabilityPromptMentionsCurrentView(text)) {
-      const uiOnly = /(?:按钮|工具栏|菜单|界面|页面|侧边栏|状态栏|输入框|可视|位置|dom|ui|screen|button|toolbar|menu|sidebar|status\s*bar)/i.test(text);
-      add({ type: "command", command: "obsidian.currentView", args: { includeText: !uiOnly, visibleChars: uiOnly ? 700 : 2400 } });
-      if (/(?:按钮|工具栏|菜单|button|toolbar|menu)/i.test(text)) {
-        add({ type: "command", command: "obsidian.ui.buttons", args: { scope: /cancip|侧边栏|输入框/i.test(text) ? "cancip" : "active", limit: requestedResultCount(text, 80, 80) } });
-      } else if (/(?:界面|页面|侧边栏|状态栏|输入框|可视|位置|dom|ui|screen)/i.test(text)) {
-        const statusBar = /状态栏|status\s*bar/i.test(text);
-        add({
-          type: "command",
-          command: "obsidian.dom.snapshot",
-          args: {
-            scope: statusBar ? "global" : /cancip|侧边栏|输入框/i.test(text) ? "cancip" : "active",
-            selector: statusBar
-              ? ".status-bar, .status-bar-item, .obcc-statusbar, .obcc-statusbar-icon, .obcc-statusbar-badge"
-              : ".obcc-messages-frame, .obcc-messages, .obcc-footer, .obcc-status, .obcc-composer, .obcc-input, .obcc-more, .obcc-send, button, input, textarea, [role='button']",
-            maxChars: 6000
-          }
-        });
-      }
-      return actions.slice(0, 2);
-    }
-    if (capabilityPromptMentionsObsidianCommand(text)) {
-      add({ type: "command", command: "obsidian.listCommands", args: { query: capabilityCommandQuery(text), limit: 60 } });
-      return actions;
-    }
-    if (capabilityPromptMentionsSkillSurface(text)) {
-      add({ type: "command", command: "cancip.skills.list", args: { query: text, limit: requestedResultCount(text, 8, 20) } });
-      return actions.slice(0, 2);
-    }
-    if (capabilityPromptMentionsSubagents(text)) {
-      add({ type: "command", command: "cancip.subagents.list", args: { parentSessionId: this.sessionId } });
-      return actions.slice(0, 2);
-    }
-    if (capabilityPromptMentionsPluginSurface(text)) {
-      if (promptAsksPluginList(text)) {
-        add({ type: "command", command: "cancip.installedPlugins", args: { includeDisabled: /全部|目录|未启用|禁用|disabled|all|folder/i.test(text) } });
-      } else {
-        add({
-          type: "command",
-          command: "cancip.pluginCapabilities",
-          args: {
-            query: text.replace(/\s+/g, " ").trim(),
-            includeDisabled: true,
-            includeApi: true,
-            includeFiles: false,
-            includeSettings: false,
-            commandLimit: 20,
-            maxPlugins: 4
-          }
-        });
-      }
-      return actions.slice(0, 2);
-    }
-    if (capabilityPromptMentionsAttachmentOrExternalFile(text)) {
-      add({ type: "command", command: "cancip.attachment.help", args: {} });
-      add({ type: "command", command: "cancip.externalFiles.help", args: {} });
-    }
-    return actions.slice(0, 2);
-  }
 
   private pluginManifestReadActionForPrompt(rawPrompt: string): CancipAction | null {
     if (!promptAsksInstalledPluginManifestOrVersion(rawPrompt)) return null;
@@ -55522,23 +55211,6 @@ class CancipView extends ItemView {
     return actions;
   }
 
-  private async executeProgrammaticReadOnlyActions(actions: CancipAction[], request: AbortController): Promise<ActionHandlingResult | null> {
-    const readOnlyActions = actions.filter(isReadOnlyAction);
-    if (!readOnlyActions.length) return null;
-    this.setStatus(this.readOnlyActionStatus(readOnlyActions));
-    const runs = readOnlyActions.map((action) => this.createToolRun(action));
-    const results: string[] = [];
-    for (const run of runs) {
-      if (request.signal.aborted || !this.isCurrentRequest(request)) return null;
-      results.push(await this.executeToolRun(run));
-    }
-    return {
-      report: this.formatActionReport(this.actionReportSectionsFromRuns(runs, results)),
-      runs,
-      executed: runs.some((run) => run.status === "executed")
-    };
-  }
-
   private shouldAnswerDirectlyFromProgrammaticReadOnly(actions: CancipAction[], originalPrompt = ""): boolean {
     if (!actions.length) return false;
     const directCommands = new Set([
@@ -55583,126 +55255,6 @@ class CancipView extends ItemView {
     });
   }
 
-  private readOnlyCapabilityDiscoveryActions(rawPrompt: string, previousAnswer = ""): CancipAction[] {
-    const text = `${rawPrompt}\n${previousAnswer}`;
-    const lower = text.toLowerCase();
-    const actions: CancipAction[] = [];
-    const add = (action: CancipAction) => {
-      if (!isReadOnlyAction(action)) return;
-      const key = stableCacheKey(canonicalJsonValue(action));
-      if (actions.some((item) => stableCacheKey(canonicalJsonValue(item)) === key)) return;
-      actions.push(action);
-    };
-
-    const memoryActions = this.programmaticMemoryReadActions(rawPrompt);
-    if (memoryActions.length) {
-      for (const action of memoryActions) add(action);
-      return actions.slice(0, 2);
-    }
-
-    const useCapabilityResolver = capabilityPromptMentionsLocalSurface(text) || promptNeedsSkillExperienceRoute(rawPrompt);
-    if (useCapabilityResolver) {
-      add({
-        type: "command",
-        command: "cancip.capability.resolve",
-        args: { query: rawPrompt.trim(), scope: "auto", limit: 4, maxChars: 5200 }
-      });
-    } else {
-      add({ type: "command", command: "cancip.tools.index", args: {} });
-    }
-
-    for (const path of discoveryVaultPathCandidates(rawPrompt, previousAnswer).slice(0, 4)) {
-      add({ type: "read", path, maxChars: 6000 });
-    }
-
-    if (capabilityPromptMentionsCurrentView(text)) {
-      add({ type: "command", command: "obsidian.currentView", args: { includeText: false, visibleChars: 1800 } });
-      add({ type: "command", command: "obsidian.ui.buttons", args: { scope: "active", limit: 80 } });
-    }
-
-    if (capabilityPromptMentionsObsidianCommand(text)) {
-      add({ type: "command", command: "obsidian.listCommands", args: { query: capabilityCommandQuery(text), limit: 60 } });
-    }
-
-    if (capabilityPromptMentionsPluginSurface(text) && !useCapabilityResolver) {
-      add({ type: "command", command: "cancip.pluginCapabilities", args: { query: text, includeDisabled: true, includeApi: true, includeFiles: false, includeSettings: false, commandLimit: 18, maxPlugins: 4 } });
-      if (/新插件|自动接入|通用|泛化|api|method|调用|execute|adapter|new plugin|plugin api/i.test(text)) {
-        add({ type: "command", command: "cancip.pluginRoute", args: { query: text, includeApi: true, includeFiles: false, includeSettings: false, commandLimit: 18, maxPlugins: 3 } });
-      }
-      add({ type: "command", command: "cancip.installedPlugins", args: { includeDisabled: true } });
-    }
-
-    if ((capabilityPromptMentionsSkillOrExperienceSurface(text) || promptNeedsSkillExperienceRoute(text)) && !useCapabilityResolver) {
-      add({ type: "command", command: "cancip.skills.list", args: {} });
-      if (promptNeedsExperienceSkillRoute(text)) {
-        add({ type: "command", command: "cancip.experience.list", args: { query: trimContext(rawPrompt, 160) } });
-      }
-    }
-
-    if (capabilityPromptMentionsSessionHistory(text)) {
-      add({ type: "command", command: "cancip.sessionHistory", args: { mode: "summary", limit: 12 } });
-    }
-
-    if (capabilityPromptMentionsSubagents(text)) {
-      add({ type: "command", command: "cancip.subagents.list", args: { parentSessionId: this.sessionId } });
-    }
-
-    if (capabilityPromptMentionsAttachmentOrExternalFile(text)) {
-      add({ type: "command", command: "cancip.attachment.help", args: {} });
-      add({ type: "command", command: "cancip.externalFiles.help", args: {} });
-    }
-
-    if (capabilityPromptMentionsGithub(text)) {
-      add({ type: "command", command: "github.help", args: {} });
-    }
-
-    if (capabilityPromptMentionsAutomation(text)) {
-      add({ type: "command", command: "cancip.automation.templates", args: {} });
-      add({ type: "command", command: "cancip.automation.list", args: {} });
-    }
-
-    if (capabilityPromptMentionsWebDocs(text)) {
-      const query = capabilityWebSearchQuery(rawPrompt);
-      if (query) add({ type: "command", command: "web.search", args: { query, limit: 5 } });
-    }
-
-    if (!actions.some((action) => action.type === "command" && action.command === "obsidian.currentView") && /vault|库|笔记|文件|folder|file|note/.test(lower)) {
-      add({ type: "command", command: "obsidian.currentView", args: { includeText: false, visibleChars: 1200 } });
-    }
-
-    return actions.slice(0, 6);
-  }
-
-  private async readActiveFileFromCurrentViewIfUseful(
-    previous: ActionHandlingResult,
-    originalPrompt: string,
-    request: AbortController
-  ): Promise<ActionHandlingResult | null> {
-    if (!originalPrompt || classifyPromptIntent(originalPrompt) !== "implementation") return null;
-    if (!promptRequiresStateChange(originalPrompt)) return null;
-    if (request.signal.aborted || !this.isCurrentRequest(request)) return null;
-    const activePath = activeFilePathFromToolRuns(previous.runs);
-    if (!activePath || !isContextTextPath(activePath)) return null;
-    const normalizedActivePath = normalizePath(activePath);
-    const alreadyReadActiveFile = previous.runs.some((run) =>
-      run.status === "executed"
-      && run.action.type === "read"
-      && normalizePath(run.action.path) === normalizedActivePath
-    );
-    if (alreadyReadActiveFile) return null;
-
-    const run = this.createToolRun({ type: "read", path: normalizedActivePath, maxChars: 12000 });
-    const result = await this.executeToolRun(run);
-    return {
-      report: this.formatActionReport([{
-        title: this.t("actionsExecuted", { summary: "" }).trim(),
-        summary: this.toolRunCompactSummary([run]),
-        detail: result
-      }]),
-      runs: [run],
-      executed: run.status === "executed"
-    };
-  }
 
   private async readTaskExperience(prompt = ""): Promise<string> {
     try {
@@ -56002,88 +55554,6 @@ class CancipView extends ItemView {
       runs: [run],
       executed: run.status === "executed"
     };
-  }
-
-  private async answerInformationTaskFromToolRuns(
-    context: { system: string; contextText: string },
-    result: ActionHandlingResult,
-    request: AbortController,
-    originalPrompt: string,
-    depth = 0
-  ): Promise<boolean> {
-    if (request.signal.aborted || !this.isCurrentRequest(request)) return false;
-      const answerStatus = this.informationalAnswerStatusFromRuns(result.runs, originalPrompt);
-      this.setStatus(answerStatus);
-      let continueStep: ChatMessage | null = null;
-      try {
-        const continuationContext = {
-        system: this.informationalAnswerSystemPrompt(),
-        contextText: [
-          `## ${this.t("toolRunResult")}\n${this.toolRunsForPrompt(result.runs, 4800, 4)}`
-        ].filter(Boolean).join("\n\n---\n\n")
-      };
-      const prompt = [
-        `Original question: ${originalPrompt}`,
-        "Use the actual tool result to answer directly. Before replying, compare it with the original question.",
-        "If required evidence is absent, output one smallest read-only action and no final marker.",
-        "Otherwise append exactly one hidden marker such as <!-- cancip-final {\"status\":\"complete\"} -->. Use complete, blocked, or failed as appropriate, then give a concise answer with the useful result or exact blocker."
-      ].join("\n");
-      this.primeModelCharStats(prompt, continuationContext, originalPrompt, true);
-      continueStep = this.addProgressStep(this.modelCharProgressSummary(answerStatus));
-      const answer = await this.callModelWithRetries(
-        prompt,
-        continuationContext,
-        originalPrompt,
-        "informational answer timed out",
-        INFORMATIONAL_ANSWER_TIMEOUT_MS,
-        this.modelRetryProgressUpdater(continueStep, answerStatus),
-        undefined,
-        this.modelStreamProgressUpdater(continueStep, answerStatus),
-        true
-      );
-      if (request.signal.aborted || !this.isCurrentRequest(request)) return false;
-      this.updateProgressStep(continueStep, this.generationStepSummary(answerStatus, this.currentModelCharUsageText()), this.t("done"));
-      const hasActions = extractCancipActions(answer).length > 0;
-      const protocolIssue = cancipActionProtocolIssue(answer);
-      const reviewStatus = finalReviewStatusFromAnswer(answer);
-      const rawVisibleAnswer = hasActions || protocolIssue ? "" : visibleAssistantAnswer(answer, true);
-      const visibleAnswer = isToolPrefaceOnlyAnswer(rawVisibleAnswer) ? "" : rawVisibleAnswer;
-      const reviewFailure = hasActions
-        ? (reviewStatus ? "response mixes a read-only action with a terminal final-review marker" : "")
-        : this.finalReviewStatusRequirementFailure(reviewStatus, result.runs);
-      const acceptedVisibleAnswer = !protocolIssue && !reviewFailure ? visibleAnswer : "";
-      const assistantMessage = acceptedVisibleAnswer
-        ? this.addMessage("assistant", hasFinalConclusion(acceptedVisibleAnswer) ? acceptedVisibleAnswer : this.t("finalConclusionFallback", { summary: acceptedVisibleAnswer }))
-        : undefined;
-      if (assistantMessage) {
-        this.attachChoiceSource(assistantMessage, answer);
-        this.renderMessages();
-        return true;
-      }
-      const followup = hasActions && depth < 1
-        ? await this.handleActionBlocks(answer, undefined, { readOnlyOnly: true })
-        : null;
-      if (followup?.runs.length) {
-        this.addActionReportMessage(followup);
-        this.renderMessages();
-        const combined = this.mergeActionHandlingResults(result, followup);
-        return await this.answerInformationTaskFromToolRuns(context, combined, request, originalPrompt, depth + 1);
-      }
-      const fallback = this.informationalFallbackFromToolRuns(result.runs, originalPrompt, protocolIssue || reviewFailure);
-      this.addMessage("assistant", `${fallback || this.humanFinalConclusion(result.runs, true, originalPrompt) || this.silentTurnFinalConclusion(originalPrompt)}\n\n<!-- cancip-final {"status":"failed"} -->`);
-      this.renderMessages();
-      return false;
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
-      this.updateProgressStep(continueStep, this.generationStepSummary(answerStatus, this.currentModelCharUsageText()), reason, this.t("toolRunFailed"));
-      void this.recordSessionEvent({ kind: "prompt.recoverable_error", detail: reason, status: "model-continuation-failed" });
-      if (request.signal.aborted || !this.isCurrentRequest(request)) return false;
-      this.addMessage("assistant", `最终复核失败：${trimContext(redactSensitiveText(reason), 220)}。未将本次问题标记为完成。`);
-      this.renderMessages();
-      return false;
-    } finally {
-      if (continueStep) this.stopProgressStepTimer(continueStep.id);
-    }
   }
 
   private mergeActionHandlingResults(primary: ActionHandlingResult, secondary: ActionHandlingResult): ActionHandlingResult {
