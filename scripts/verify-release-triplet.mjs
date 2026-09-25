@@ -1,9 +1,11 @@
 /**
  * Release triplet integrity gate.
  *
- * The Obsidian release is three files — main.js, manifest.json and styles.css —
- * and the same release carries a fourth, `cancip-cli.mjs`, because an agent on
- * another machine needs that one file and nothing else. All four are uploaded
+ * The Obsidian release is exactly three files — main.js, manifest.json and
+ * styles.css. Nothing else may be attached to a release: the CLI reaches agents
+ * by living *inside* main.js as a gzipped payload (the plugin extracts it at
+ * startup), so a standalone cancip-cli.mjs asset would be a redundant fourth
+ * file that breaks the triplet-only release contract. All three are uploaded
  * and attested by .github/workflows/release.yml. An Obsidian plugin ships
  * broken if any of the triplet is missing, truncated or stale, so this gate
  * asserts the *artifacts*, not the sources.
@@ -35,7 +37,6 @@ import { repoRoot } from "./lib/source-bundle.mjs";
 const outputDir = process.env.CANCIP_OUTPUT_DIR ?? join(repoRoot, "outputs", "cancip");
 const TRIPLET = ["main.js", "manifest.json", "styles.css"];
 const CLI_ASSET = "cancip-cli.mjs";
-const RELEASE_ASSETS = [...TRIPLET, CLI_ASSET];
 
 const checks = [];
 const check = (name, pass, detail = "") => checks.push({ name, pass: Boolean(pass), detail });
@@ -238,42 +239,28 @@ if (cliText !== null) {
     }
     check("the embedded CLI payload decompresses", embeddedCli !== null);
     check(
-      "the payload baked into main.js is byte-identical to the shipped cancip-cli.mjs",
+      "the payload baked into main.js is byte-identical to cli/cancip-cli.mjs",
       embeddedCli !== null && embeddedCli === cliText,
-      embeddedCli === null ? "could not inflate" : `embedded ${embeddedCli.length} B vs shipped ${cliText.length} B`
+      embeddedCli === null ? "could not inflate" : `embedded ${embeddedCli.length} B vs repo copy ${cliText.length} B`
     );
   }
 }
 
 // ------------------------------------------------- release workflow agreement
-// The hosted workflow can only be updated by a credential carrying the `workflow`
-// scope. When the available credential lacks it, the workflow legitimately lags
-// behind the CLI. In that state the CLI-specific assertions below are reported as
-// SKIP, never as PASS: they are visibly deferred rather than silently dropped, and
-// they reactivate on their own the moment the workflow ships the CLI asset again.
+// The release is exactly the triplet. The CLI must never appear as a release
+// asset — it ships embedded inside main.js — so a workflow that starts
+// uploading it is a contract violation, not a deferred nicety.
 const workflow = readFileSync(join(repoRoot, ".github", "workflows", "release.yml"), "utf8");
-const workflowShipsCli = workflow.includes(`outputs/cancip/${CLI_ASSET}`);
-const skipped = [];
-for (const name of RELEASE_ASSETS) {
-  if (!workflowShipsCli && name === CLI_ASSET) {
-    skipped.push(`release workflow publishes ${name}`);
-    continue;
-  }
+for (const name of TRIPLET) {
   check(`release workflow publishes ${name}`, workflow.includes(`outputs/cancip/${name}`));
 }
+check(
+  `release workflow does not publish ${CLI_ASSET}`,
+  !workflow.includes(`outputs/cancip/${CLI_ASSET}`)
+);
 const uploaded = [...workflow.matchAll(/outputs\/cancip\/([A-Za-z0-9._-]+)/g)].map((m) => m[1]);
-const unexpected = [...new Set(uploaded)].filter((name) => !RELEASE_ASSETS.includes(name));
+const unexpected = [...new Set(uploaded)].filter((name) => !TRIPLET.includes(name));
 check("release workflow uploads nothing beyond the release assets", unexpected.length === 0, unexpected.join(", "));
-// The workflow must refuse to publish a CLI whose version is not the tag. Without
-// this, a forgotten version bump ships a release whose CLI reports the old number.
-if (workflowShipsCli) {
-  check(
-    "release workflow refuses to publish a CLI whose version is not the tag",
-    workflow.includes('"$cli" != "$tag"')
-  );
-} else {
-  skipped.push("release workflow refuses to publish a CLI whose version is not the tag");
-}
 
 // ------------------------------------------------- optional deployed copy
 const deployDir = process.env.CANCIP_DEPLOY_DIR ?? "E:/note/.obsidian/plugins/cancip";// ---------------------------------------------------------------- reporting
@@ -282,16 +269,8 @@ for (const c of checks) {
   if (c.pass) console.log(`PASS  ${c.name}`);
   else console.error(`FAIL  ${c.name}${c.detail ? ` :: ${c.detail}` : ""}`);
 }
-for (const name of skipped) {
-  console.warn(
-    `SKIP  ${name} :: deferred - the hosted release workflow does not ship ${CLI_ASSET} yet, ` +
-      `so ${CLI_ASSET} has to be attached to the release by hand until it does.`
-  );
-}
-const total = checks.length + skipped.length;
 console.log(
-  `\nRelease triplet verification: ${checks.length - failed.length}/${checks.length} passed, ` +
-    `${skipped.length} deferred, ${total} total.`
+  `\nRelease triplet verification: ${checks.length - failed.length}/${checks.length} passed, ${checks.length} total.`
 );
 if (failed.length) {
   console.error("Build blocked: the release triplet (main.js / manifest.json / styles.css) is not intact.");
