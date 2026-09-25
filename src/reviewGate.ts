@@ -144,9 +144,14 @@ export function formatReviewGateResult(result: ReviewGateBuildResult): string {
 
 async function buildManifest(adapter: DataAdapter, options: ReviewGateBuildOptions, outputDir: string): Promise<ReviewGateManifest> {
   const title = cleanText(options.title) || "Cancip OB Review Gate";
+  // Remember whether the caller supplied explicit items before filtering. When
+  // they did, an empty result means "nothing here is reviewable" and must not
+  // silently widen into a scan of the whole vault — that turned a rejected
+  // single-path write into a package listing every unchanged root file.
+  const suppliedItems = Array.isArray(options.items) && options.items.length > 0;
   const itemsFromArgs = await itemsFromInput(adapter, options.items, options.maxFileChars);
   const paths = normalizeScopePaths(options.paths, options.scope);
-  const itemsFromScope = itemsFromArgs.length ? [] : await scanScopeItems(adapter, paths, options.maxFiles, options.maxFileChars);
+  const itemsFromScope = suppliedItems || itemsFromArgs.length ? [] : await scanScopeItems(adapter, paths, options.maxFiles, options.maxFileChars);
   const items = [...itemsFromArgs, ...itemsFromScope].slice(0, options.maxFiles);
   if (!items.length) {
     throw new Error("No reviewable files or manifest items found.");
