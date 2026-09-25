@@ -1,6 +1,6 @@
 {
   "name": "cancip",
-  "version": "3.5.34",
+  "version": "3.5.35",
   "private": true,
   "main": "main.js",
   "scripts": {

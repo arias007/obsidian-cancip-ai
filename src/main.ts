@@ -8227,6 +8227,7 @@ export default class CancipPlugin extends Plugin {
     this.app.workspace.onLayoutReady(() => {
       const cancelStartupArtifacts = scheduleIdleWork(() => {
         void Promise.all([
+          recordCancipSessionEvent(this.app.vault.adapter, pluginLoadEvent),
           this.ensurePluginCompatibilityArtifacts(),
           this.ensureCancipNavigationFiles(),
           // The capability manual is a first-class artifact, not something the user
@@ -8293,14 +8294,16 @@ export default class CancipPlugin extends Plugin {
     this.registerMarkdownPostProcessor((element, context) => this.processMarkdownWorkbenchEmbeds(element, context));
     this.installAiVaultMutationCaptureBridge();
     void this.ensureVisibleDataFolders();
-    void recordCancipSessionEvent(this.app.vault.adapter, {
+    // Advisory session history, not something the first paint needs: capture the
+    // load timestamp now, append it in the post-layout idle window so startup
+    // does not compete with Obsidian's own first-paint file I/O.
+    const pluginLoadEvent: SessionEvent = {
       kind: "plugin.load",
       detail: "Cancip plugin loaded",
       pluginVersion: this.manifest.version,
-      model: this.settings.model || this.activeApiProfile().model
-    }).catch((error) => {
-      console.warn("Cancip plugin load event record failed", error);
-    });
+      model: this.settings.model || this.activeApiProfile().model,
+      at: new Date().toISOString()
+    };
     this.registerEvent(this.app.vault.on("create", (file) => {
       this.captureAiVaultEventMutation("create", file.path);
       this.invalidateDocumentSnapshot(file.path);
@@ -8894,9 +8897,21 @@ export default class CancipPlugin extends Plugin {
     this.srPdfToolbarPatchScan = scan;
     scan();
     const observer = new MutationObserver((mutations) => {
+      // Observer callbacks run after the batch has fully landed, so the DOM is
+      // final and unchanging for the whole callback: memoizing per node is exact.
+      // Large batches (editor re-renders) repeat the same targets many times, and
+      // the downward `querySelector` is a full subtree walk.
+      const subtreeMemo = new WeakMap<Node, boolean>();
+      const touchesSrCardMemoized = (node: Node): boolean => {
+        const cached = subtreeMemo.get(node);
+        if (cached !== undefined) return cached;
+        const result = touchesSrCard(node);
+        subtreeMemo.set(node, result);
+        return result;
+      };
       const relevant = mutations.some((mutation) => {
-        if (touchesSrCard(mutation.target)) return true;
-        return [...Array.from(mutation.addedNodes), ...Array.from(mutation.removedNodes)].some(touchesSrCard);
+        if (touchesSrCardMemoized(mutation.target)) return true;
+        return [...Array.from(mutation.addedNodes), ...Array.from(mutation.removedNodes)].some(touchesSrCardMemoized);
       });
       if (relevant) scheduleScan();
     });
@@ -15387,12 +15402,18 @@ export default class CancipPlugin extends Plugin {
     nextSettings.ttsPrimeDefaultMigrated = true;
 
     this.settings = nextSettings;
-    await this.saveData(this.settings);
-    try {
-      await this.writeCancipConfig(this.settings);
-    } catch {
+    // The two mirrors (data.json + data/config.json, ~160 KB together) are pure
+    // persistence: nothing reads them back during this load, and the live
+    // settings object is already authoritative. Awaiting both writes sat on the
+    // startup critical path, so they run detached and report failures instead.
+    void this.saveData(this.settings).catch((error) => {
+      const reason = error instanceof Error ? error.message : String(error);
+      this.devErrors.push(`settings save failed: ${reason}`);
+      console.warn("Cancip settings save failed", error);
+    });
+    void this.writeCancipConfig(this.settings).catch(() => {
       // The plugin data remains usable; a later explicit save retries the sync mirror.
-    }
+    });
   }
 
   private async importNtfySettingsFromInstalledPlugin(settings: Settings): Promise<Settings> {
@@ -24873,7 +24894,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     }
   }
 
-  private applyUiButtonRuleToElement(rule: UiButtonRule, el: HTMLElement): void {
+  private applyUiButtonRuleToElement(rule: UiButtonRule, el: HTMLElement, parentDisplayCache?: Map<HTMLElement, string>): void {
     el.dataset.cancipUiRuleLabel = rule.label;
     if (rule.hidden && !this.uiButtonRulesRevealHidden) {
       el.dataset.cancipUiHidden = "true";
@@ -24892,7 +24913,16 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
         directParent.addClass("obcc-ui-rule-menu-section-contents");
         parent.addClass("obcc-ui-rule-menu-complete-sort-parent");
       }
-      const display = el.ownerDocument.defaultView?.getComputedStyle(parent).display ?? "";
+      // Menu items usually share one parent, so a plain `getComputedStyle`
+      // per match would force a style recalc each time. Memoizing per run is
+      // exact: within one synchronous apply the only display-affecting writes
+      // are these idempotent class adds, so the first read is as good as a
+      // fresh one and the resulting DOM is unchanged.
+      let display = parentDisplayCache?.get(parent);
+      if (display === undefined) {
+        display = el.ownerDocument.defaultView?.getComputedStyle(parent).display ?? "";
+        parentDisplayCache?.set(parent, display);
+      }
       if (!/^(inline-)?(flex|grid)$/.test(display)) {
         parent.addClass(display.startsWith("inline") ? "obcc-ui-rule-inline-flex-parent" : "obcc-ui-rule-flex-parent");
       }
@@ -24936,6 +24966,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       const rules = this.settings.uiButtonManagementEnabled
         ? this.settings.uiButtonRules.filter((rule) => rule.kind !== "custom" && uiButtonRuleHasChanges(rule) && selectorLooksQueryable(rule.selector))
         : [];
+      const parentDisplayCache = new Map<HTMLElement, string>();
       for (const rule of rules) {
         const candidates = new Set<HTMLElement>();
         for (const root of roots) {
@@ -24947,7 +24978,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
           }
         }
         for (const el of candidates) {
-          if (el.isConnected && this.uiButtonRuleMatchesElement(rule, el)) this.applyUiButtonRuleToElement(rule, el);
+          if (el.isConnected && this.uiButtonRuleMatchesElement(rule, el)) this.applyUiButtonRuleToElement(rule, el, parentDisplayCache);
         }
       }
       finish();
@@ -24971,6 +25002,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
         ? this.settings.uiButtonRules.filter(uiButtonRuleHasChanges)
         : [];
       const elementsByRuleSelector = new Map<string, HTMLElement[]>();
+      const parentDisplayCache = new Map<HTMLElement, string>();
       for (const rule of rules) {
         if (rule.kind === "custom") {
           this.applyCustomUiButtonRule(rule);
@@ -24983,7 +25015,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
           elementsByRuleSelector.set(cacheKey, elements);
         }
         for (const el of elements) {
-          if (this.uiButtonRuleMatchesElement(rule, el)) this.applyUiButtonRuleToElement(rule, el);
+          if (this.uiButtonRuleMatchesElement(rule, el)) this.applyUiButtonRuleToElement(rule, el, parentDisplayCache);
         }
       }
       if (this.settings.hideUnpinnedTagsInRightSidebar) {
@@ -27846,24 +27878,42 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
   }
 
   private async appendCancipFolderFingerprint(path: string, rows: string[], depth: number, maxRows: number): Promise<void> {
-    if (rows.length >= maxRows) return;
-    let listing: ListedFiles;
-    try {
-      listing = await this.app.vault.adapter.list(path);
-    } catch {
-      return;
-    }
-    for (const file of listing.files.map((item) => normalizePath(item)).sort().reverse()) {
-      if (rows.length >= maxRows) return;
-      const stat = await this.app.vault.adapter.stat(file).catch(() => null);
-      rows.push(`f:${file}:${stat?.mtime ?? 0}:${stat?.size ?? 0}`);
-    }
-    if (depth <= 0) return;
-    for (const folder of listing.folders.map((item) => normalizePath(item)).sort().reverse()) {
-      if (rows.length >= maxRows) return;
-      const stat = await this.app.vault.adapter.stat(folder).catch(() => null);
-      rows.push(`d:${folder}:${stat?.mtime ?? 0}:${stat?.size ?? 0}`);
-      await this.appendCancipFolderFingerprint(folder, rows, depth - 1, maxRows);
+    // This walk is bound by stat round-trips, not by the row cap: awaiting one
+    // `stat` at a time measured 30-50 ms for a ~100-entry folder on the 15 s
+    // state poll. Plan the exact same traversal first - the row cap stays
+    // deterministic while planning because every planned entry pushes exactly
+    // one row - then stat the whole batch concurrently and assemble the rows in
+    // plan order. The produced fingerprint is identical to the sequential walk.
+    const baseRows = rows.length;
+    const plan: Array<{ path: string; kind: "file" | "folder" }> = [];
+    const planWalk = async (walkPath: string, walkDepth: number): Promise<void> => {
+      if (baseRows + plan.length >= maxRows) return;
+      let listing: ListedFiles;
+      try {
+        listing = await this.app.vault.adapter.list(walkPath);
+      } catch {
+        return;
+      }
+      for (const file of listing.files.map((item) => normalizePath(item)).sort().reverse()) {
+        if (baseRows + plan.length >= maxRows) return;
+        plan.push({ path: file, kind: "file" });
+      }
+      if (walkDepth <= 0) return;
+      for (const folder of listing.folders.map((item) => normalizePath(item)).sort().reverse()) {
+        if (baseRows + plan.length >= maxRows) return;
+        plan.push({ path: folder, kind: "folder" });
+        await planWalk(folder, walkDepth - 1);
+      }
+    };
+    await planWalk(path, depth);
+    if (!plan.length) return;
+    const stats = await Promise.all(
+      plan.map((entry) => this.app.vault.adapter.stat(entry.path).catch(() => null))
+    );
+    for (let index = 0; index < plan.length && rows.length < maxRows; index++) {
+      const stat = stats[index];
+      const entry = plan[index];
+      rows.push(`${entry.kind === "file" ? "f" : "d"}:${entry.path}:${stat?.mtime ?? 0}:${stat?.size ?? 0}`);
     }
   }
 
