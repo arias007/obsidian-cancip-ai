@@ -11207,19 +11207,16 @@ export default class CancipPlugin extends Plugin {
     for (const change of structure) {
       const target = change.newPath || change.oldPath;
       if (!target) continue;
-      const isCreate = change.kind === "create";
-      const isDelete = change.kind === "delete";
-      // The original text is read before the mutation runs: for a create there is
-      // nothing yet, for a rename or move the content is unchanged, and for a
-      // delete this preserves what is about to be lost.
-      const originalText = isCreate ? "" : await adapter.read(change.oldPath).catch(() => "");
-      const newText = isCreate && isWrite && change.newPath === (record.paths[0] ?? "") ? record.data as string : originalText;
       structuredPaths.add(target);
+      // A path operation is recorded as a structure change only: no text diff and
+      // no content-change flag, so the review panel groups create, move, rename
+      // and delete under Structure Changes instead of filing them as content
+      // edits. The original bytes are still archived below when they exist.
       items.push({
         path: target,
-        old_text: originalText,
-        new_text: isDelete ? "" : newText,
-        changes: [change.kind],
+        old_text: "",
+        new_text: "",
+        changes: [],
         structure: [{ kind: change.kind, old_path: change.oldPath, new_path: change.newPath, reason: "" }],
         review_source: "cancip-cli"
       });
@@ -11227,8 +11224,8 @@ export default class CancipPlugin extends Plugin {
     for (const path of record.paths) {
       try {
         if (!(await adapter.exists(path))) continue;
-        // Content diff for an overwrite only; a create already came through the
-        // structure pass, and a delete has no post-mutation text to compare.
+        // Only an in-place overwrite is a content change; a create, move or
+        // delete was already covered by the structure pass above.
         if (isWrite && !structuredPaths.has(path)) {
           items.push({ path, old_text: await adapter.read(path).catch(() => ""), new_text: record.data as string, changes: ["write"], structure: [], review_source: "cancip-cli" });
         }
@@ -11261,8 +11258,12 @@ export default class CancipPlugin extends Plugin {
       model: "cancip-cli"
     });
     if (items.length) {
-      const structureOnly = items.every((item) => !item.old_text && !item.new_text && item.structure.length);
-      const scope = structureOnly ? "结构变化" : "内容变化";
+      // Classify by what actually changed: a path operation is a structure
+      // change even when it also carries text (a create with content), while an
+      // in-place edit is a content change.
+      const anyStructure = items.some((item) => item.structure.length);
+      const anyText = items.some((item) => item.old_text !== item.new_text);
+      const scope = anyStructure && !anyText ? "结构变化" : anyStructure ? "内容+结构变化" : "内容变化";
       try {
         await this.buildReviewGate({ title: `Cancip AI Change Review: CLI ${record.op}（${scope}）`, sessionId: `cli-bridge-${stamp}`, items });
       } catch (error) {
