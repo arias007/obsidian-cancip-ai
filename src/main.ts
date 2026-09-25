@@ -64229,7 +64229,12 @@ class CancipView extends ItemView {
 
   private afterMessagesRendered(scrollSnapshot: MessageScrollSnapshot): void {
     this.messagesEl.setCssStyles({ minHeight: "0", overflowY: "auto" });
-    if ((this.autoFollowMessages || scrollSnapshot.stickToBottom) && !this.userPinnedScroll) {
+    // A running task must stay glued to the newest progress. Automation and
+    // queued turns never reset the scroll pin, and one stray scroll-up would
+    // otherwise freeze the view above the live steps for the whole task. While
+    // a request is active, following the bottom wins over a stale pin; once the
+    // task ends the user regains full manual scroll control.
+    if (this.activeRequest || ((this.autoFollowMessages || scrollSnapshot.stickToBottom) && !this.userPinnedScroll)) {
       this.scrollMessagesToBottom(false);
     } else {
       this.restoreMessageScrollSnapshot(scrollSnapshot);
@@ -65102,10 +65107,12 @@ class CancipView extends ItemView {
       step.addClass(`is-${stepInfo.kind}`);
       const subagentRuns = this.processStepSubagentRuns(stepInfo);
       const stepRuns = uniqueToolRunsById([...(stepInfo.rendered.message.toolRuns ?? []), ...(stepInfo.rendered.message.changedFileRuns ?? [])]);
-      const isLiveStep = this.progressStepTimers.has(stepInfo.rendered.message.id)
-        || stepRuns.some((run) => run.status === "executing");
       const needsIntervention = stepRuns.some((run) => run.status === "pending");
-      this.wireDetails(step, `process-step:${stepFoldKey}`, isLiveStep || needsIntervention, false, true);
+      // Level-2 disclosure while a task runs: the step rows (title, action
+      // chip, status, timer) stay visible inside the open record, but each
+      // step's detail body — tool results, audit blocks, usage — remains
+      // folded unless the step needs user intervention (pending approval).
+      this.wireDetails(step, `process-step:${stepFoldKey}`, needsIntervention, false, true);
       const stepHead = this.createProcessSummary(step, "");
       stepHead.addClass("obcc-process-step-head");
       // Keep the index in the DOM for stable anchors and plan references, but
@@ -65740,7 +65747,7 @@ class CancipView extends ItemView {
     const summary = this.contextPreparationHeadline(taskSource);
     const brief = this.progressStepBrief(summary, "", this.t("toolRunExecuting"), { task: taskSource });
     const step = body.createEl("details", { cls: "obcc-process-step" });
-    this.wireDetails(step, `process-step:${this.processRecordFoldKey()}:live-placeholder`, true, false, true);
+    this.wireDetails(step, `process-step:${this.processRecordFoldKey()}:live-placeholder`, false, false, true);
     const stepHead = this.createProcessSummary(step, "");
     stepHead.addClass("obcc-process-step-head");
     stepHead.createSpan({ cls: "obcc-process-step-index", text: "1" });
