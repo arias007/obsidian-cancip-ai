@@ -1,6 +1,6 @@
 import { type DataAdapter, normalizePath } from "obsidian";
 
-export type ReviewGateStructureKind = "rename" | "move" | "copy" | "merge" | "split" | "folder";
+export type ReviewGateStructureKind = "rename" | "move" | "copy" | "merge" | "split" | "folder" | "create" | "delete";
 
 export type ReviewGateStructureChange = {
   kind: ReviewGateStructureKind;
@@ -178,7 +178,11 @@ async function itemsFromInput(adapter: DataAdapter, rawItems: unknown, maxFileCh
     const rawPath = typeof raw.path === "string" ? raw.path : "";
     if (!rawPath.trim()) continue;
     const path = safeVaultPath(rawPath);
-    if (!isReviewGateCandidate(path, true)) continue;
+    const structure = normalizeStructure(raw.structure ?? raw.structure_changes, path);
+    // A structure change is reviewable even when the path itself is not a text
+    // file: creating, deleting, or moving a PDF or image is a vault change worth
+    // approving, and it carries no text to diff. Runtime state is still refused.
+    if (!isReviewGateCandidate(path, true) && !(structure.length && !isReviewGateExcludedPath(path))) continue;
     const current = await readTextIfExists(adapter, path, maxFileChars);
     const oldText = typeof raw.old_text === "string" ? raw.old_text : typeof raw.oldText === "string" ? raw.oldText : current ?? "";
     const newText = typeof raw.new_text === "string" ? raw.new_text : typeof raw.newText === "string" ? raw.newText : oldText;
@@ -188,7 +192,7 @@ async function itemsFromInput(adapter: DataAdapter, rawItems: unknown, maxFileCh
       new_text: truncateText(newText, maxFileChars),
       changes: normalizeStringArray(raw.changes),
       links: normalizeLinks(raw.links),
-      structure: normalizeStructure(raw.structure ?? raw.structure_changes, path),
+      structure,
       ...normalizeReviewMeta(raw)
     });
   }
@@ -423,19 +427,28 @@ function isReviewGateCandidate(path: string, includeHidden: boolean): boolean {
   if (!isTextPath(normalized)) return false;
   if (!includeHidden && basename(normalized).startsWith(".")) return false;
   if (!includeHidden && hasDotFolderSegment(normalized)) return false;
-  if (normalized === ".cancip/config.json") return false;
-  // Obsidian plugin/config state is runtime data, not reviewable Vault
-  // content. Excluding it at the source prevents large JSON snapshots from
-  // entering Review Gate in the first place.
-  if (normalized === ".obsidian" || normalized.startsWith(".obsidian/")) return false;
-  if (normalized === ".cancip" || normalized.startsWith(".cancip/")) return false;
-  if (normalized.startsWith(".cancip/sessions/")) return false;
-  if (normalized.startsWith(".cancip/versions/")) return false;
-  if (normalized.startsWith(".cancip/review-gates/")) return false;
-  if (normalized.startsWith("AI/Cancip/Exports/")) return false;
-  if (isLegacyVisibleReviewGateArtifactPath(normalized)) return false;
-  if (normalized.startsWith(".trash/")) return false;
-  return true;
+  return !isReviewGateExcludedPath(normalized);
+}
+
+/**
+ * Paths that never belong in Review Gate because they are runtime or generated
+ * state rather than vault content. Split out from the text-extension check so a
+ * structure-only entry — creating, deleting, or moving a binary asset — can be
+ * reviewed without admitting Obsidian or Cancip config snapshots.
+ *
+ * Obsidian plugin/config state is runtime data, not reviewable Vault content.
+ * Excluding it at the source prevents large JSON snapshots from entering Review
+ * Gate in the first place.
+ */
+function isReviewGateExcludedPath(path: string): boolean {
+  const normalized = normalizePath(path);
+  if (normalized === ".cancip/config.json") return true;
+  if (normalized === ".obsidian" || normalized.startsWith(".obsidian/")) return true;
+  if (normalized === ".cancip" || normalized.startsWith(".cancip/")) return true;
+  if (normalized.startsWith("AI/Cancip/Exports/")) return true;
+  if (isLegacyVisibleReviewGateArtifactPath(normalized)) return true;
+  if (normalized.startsWith(".trash/")) return true;
+  return false;
 }
 
 function normalizeReviewMeta(raw: Record<string, unknown>): Pick<ReviewGateManifestItem, "category" | "review_summary" | "review_details" | "review_source"> {
@@ -513,5 +526,5 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isStructureKind(value: string): value is ReviewGateStructureKind {
-  return value === "rename" || value === "move" || value === "copy" || value === "merge" || value === "split" || value === "folder";
+  return value === "rename" || value === "move" || value === "copy" || value === "merge" || value === "split" || value === "folder" || value === "create" || value === "delete";
 }

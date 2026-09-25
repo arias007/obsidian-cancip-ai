@@ -1798,7 +1798,7 @@ export function normalizeReviewStructureChanges(raw: unknown): ReviewGateStructu
 }
 
 export function isReviewGateStructureKind(value: unknown): value is ReviewGateStructureKind {
-  return value === "rename" || value === "move" || value === "copy" || value === "merge" || value === "split" || value === "folder";
+  return value === "rename" || value === "move" || value === "copy" || value === "merge" || value === "split" || value === "folder" || value === "create" || value === "delete";
 }
 
 export function markdownReviewTestItem(): ReviewGateManifestItem {

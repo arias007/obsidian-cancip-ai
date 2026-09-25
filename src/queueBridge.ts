@@ -257,7 +257,7 @@ export type QueueBridgeHandlers = AgentBridgeHandlers & {
    * a host without a review system simply does not archive and the ops run as
    * they always did.
    */
-  auditCliMutation?(record: { op: string; paths: string[]; hard: boolean }): Promise<void>;
+  auditCliMutation?(record: { op: string; paths: string[]; hard: boolean; data?: string; structure?: Array<{ kind: string; oldPath: string; newPath: string }> }): Promise<void>;
 };
 
 /** Fields a structured view query answers with. */
@@ -344,6 +344,17 @@ function requirePath(command: Record<string, unknown>, op: string, key = "path")
 
 function isFolderLike(file: QueueBridgeAbstractFile): boolean {
   return Array.isArray(file.children);
+}
+
+/**
+ * Vault-relative parent folder of a path, or "" at the vault root. Used to tell
+ * a rename (same folder) from a move (across folders) when reporting a
+ * structure change to the review trail.
+ */
+function vaultParentPath(path: string): string {
+  const parts = path.split("/").filter(Boolean);
+  parts.pop();
+  return parts.join("/");
 }
 
 /**
@@ -832,8 +843,13 @@ export async function executeVaultOp(rawCommand: Record<string, unknown>, op: st
     case "write": {
       const path = requireArg();
       const data = typeof command.data === "string" ? command.data : "";
-      if (await adapter.exists(path)) {
-        await ctx.handlers.auditCliMutation?.({ op: "write", paths: [path], hard: false });
+      const exists = await adapter.exists(path);
+      // A write that creates a path is a structure change; a write over an
+      // existing file is a content change. Both are reported so the review
+      // panel can group them apart, and the host decides what it can archive.
+      const structure = exists ? [] : [{ kind: "create", oldPath: path, newPath: path }];
+      await ctx.handlers.auditCliMutation?.({ op: "write", paths: [path], hard: false, data, structure });
+      if (exists) {
         await adapter.write(path, data);
       } else {
         // A write that targets a missing folder creates it instead of failing
@@ -847,7 +863,10 @@ export async function executeVaultOp(rawCommand: Record<string, unknown>, op: st
 
     case "mkdir": {
       const path = requireArg();
-      if (!(await adapter.exists(path))) await vault.createFolder(path);
+      if (!(await adapter.exists(path))) {
+        await ctx.handlers.auditCliMutation?.({ op: "mkdir", paths: [path], hard: false, structure: [{ kind: "create", oldPath: path, newPath: path }] });
+        await vault.createFolder(path);
+      }
       return { dir: path };
     }
 
@@ -857,7 +876,10 @@ export async function executeVaultOp(rawCommand: Record<string, unknown>, op: st
       if (!to) throw new QueueBridgeOpError("MISSING_ARGUMENT", "move requires a to.");
       const source = vault.getAbstractFileByPath(from);
       if (!source) throw new QueueBridgeOpError("NOT_FOUND", `not found: ${from}`);
-      await ctx.handlers.auditCliMutation?.({ op: "move", paths: [from], hard: false });
+      // Same parent means a rename; a different parent means a move. The kind
+      // is recorded explicitly so the review panel does not have to infer it.
+      const kind = vaultParentPath(from) === vaultParentPath(to) ? "rename" : "move";
+      await ctx.handlers.auditCliMutation?.({ op: "move", paths: [from], hard: false, structure: [{ kind, oldPath: from, newPath: to }] });
       await ctx.app.fileManager.renameFile(source, to);
       return { from, to };
     }
@@ -870,7 +892,8 @@ export async function executeVaultOp(rawCommand: Record<string, unknown>, op: st
       const hard = command.hard === true;
       // Review before destruction: the host archives the originals so even a
       // hard delete stays recoverable, and the action lands in the review trail.
-      await ctx.handlers.auditCliMutation?.({ op: "delete", paths, hard });
+      const structure = paths.map((path) => ({ kind: "delete", oldPath: path, newPath: "" }));
+      await ctx.handlers.auditCliMutation?.({ op: "delete", paths, hard, ...(structure.length ? { structure } : {}) });
       const report = { total: paths.length, trashed: 0, hard: 0, missing: [] as string[], errors: [] as string[] };
       for (let index = 0; index < paths.length; index += 1) {
         const path = paths[index];

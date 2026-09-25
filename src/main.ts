@@ -939,6 +939,7 @@ type Settings = {
   agentBridgePort: number;
   agentBridgeToken: string;
   queueBridgeEnabled: boolean;
+  cliBridgeSessions: boolean;
   agentBrainEnabled: boolean;
   agentBrainProvider: LocalAgentProvider;
   agentBrainModel: string;
@@ -1875,6 +1876,7 @@ const DEFAULT_SETTINGS: Settings = {
   agentBridgePort: 43172,
   agentBridgeToken: "",
   queueBridgeEnabled: true,
+  cliBridgeSessions: true,
   agentBrainEnabled: false,
   agentBrainProvider: "auto",
   agentBrainModel: "",
@@ -2780,12 +2782,16 @@ const EN = {
   reviewGateStructureKindMerge: "Merge",
   reviewGateStructureKindSplit: "Split",
   reviewGateStructureKindFolder: "Folder change",
+  reviewGateStructureKindCreate: "Create",
+  reviewGateStructureKindDelete: "Delete",
   reviewGateStructureDescRename: "Rename: {oldPath} -> {newPath}. Approving accepts the new name and related link updates when available.",
   reviewGateStructureDescMove: "Move: {oldPath} -> {newPath}. Approving accepts the new location and related link updates when available.",
   reviewGateStructureDescCopy: "Copy: {oldPath} -> {newPath}. Approving keeps the copied target and original source.",
   reviewGateStructureDescMerge: "Merge: {oldPath} -> {newPath}. Approving accepts the merged target; check related files before accepting.",
   reviewGateStructureDescSplit: "Split: {oldPath} -> {newPath}. Approving accepts the split target; check related files before accepting.",
   reviewGateStructureDescFolder: "Folder structure change: {oldPath} -> {newPath}. Approving accepts this structural change.",
+  reviewGateStructureDescCreate: "Create: {newPath}. Approving accepts the new item in the vault.",
+  reviewGateStructureDescDelete: "Delete: {oldPath}. Approving accepts the removal; the original was archived when it could be.",
   reviewGateHiddenInternalPath: "Internal dot-folder files are not opened from this list",
   reviewGateSource: "Source",
   reviewGateRender: "Render",
@@ -3289,6 +3295,8 @@ const EN = {
   settingsQueueBridge: "File-queue channel (works on mobile)",
   settingsQueueBridgeDesc: "A second local channel that needs no port and no Node runtime: an outside program appends commands to a JSONL file inside this vault and Cancip executes them through its own APIs. This is the leg that phone and sandbox agents can actually reach.",
   settingsQueueBridgeEnabled: "Enable file-queue channel",
+  settingsCliBridgeSessions: "Allow CLI calls to open sessions",
+  settingsCliBridgeSessionsDesc: "When off, the file-queue channel still executes plain file operations (read, write, mkdir, move, delete) and keeps logging them to review, but refuses the semantic routes that open or drive a Cancip chat session: prompt, action and agent.run. Turn it off when an outside agent should be able to touch files without appearing in your chat history.",
   settingsQueueBridgeStatus: "Queue status",
   settingsQueueBridgeRunning: "Consuming {dir} · {executed} command(s) executed",
   settingsQueueBridgeStopped: "Stopped",
@@ -4036,12 +4044,16 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     reviewGateStructureKindMerge: "合并",
     reviewGateStructureKindSplit: "拆分",
     reviewGateStructureKindFolder: "文件夹结构变化",
+    reviewGateStructureKindCreate: "新建",
+    reviewGateStructureKindDelete: "删除",
     reviewGateStructureDescRename: "重命名：{oldPath} -> {newPath}。通过后接受新名称，并在可用时保留相关链接更新。",
     reviewGateStructureDescMove: "移动位置：{oldPath} -> {newPath}。通过后接受新位置，并在可用时保留相关链接更新。",
     reviewGateStructureDescCopy: "复制：{oldPath} -> {newPath}。通过后保留复制出的目标，原文件仍可存在。",
     reviewGateStructureDescMerge: "合并：{oldPath} -> {newPath}。通过后接受合并后的目标，接受前建议核对相关文件。",
     reviewGateStructureDescSplit: "拆分：{oldPath} -> {newPath}。通过后接受拆分后的目标，接受前建议核对相关文件。",
     reviewGateStructureDescFolder: "文件夹结构变化：{oldPath} -> {newPath}。通过后接受这项结构变化。",
+    reviewGateStructureDescCreate: "新建：{newPath}。通过后接受本库中新增的这一项。",
+    reviewGateStructureDescDelete: "删除：{oldPath}。通过后接受删除；原件在可归档时已留存。",
     reviewGateHiddenInternalPath: "点目录内部文件不在这里跳转",
     reviewGateSource: "源码",
     reviewGateRender: "渲染",
@@ -4556,6 +4568,8 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     settingsQueueBridge: "文件队列通道（移动端可用）",
     settingsQueueBridgeDesc: "第二条本机通道：不需要端口，也不需要 Node 运行时。外部程序把指令追加到本库内的 JSONL 文件，Cancip 用自己的 API 执行。手机端与沙箱类 Agent 走的就是这条通道。",
     settingsQueueBridgeEnabled: "启用文件队列通道",
+    settingsCliBridgeSessions: "允许 CLI 调用会话",
+    settingsCliBridgeSessionsDesc: "关闭后，文件队列通道仍执行纯文件操作（读、写、新建目录、移动、删除）并照常记入审核，但拒绝会打开或驱动 Cancip 聊天的会话路由：prompt、action、agent.run，以及走 action 的 eval。当外部 Agent 只应改文件、不应出现在你的会话历史里时，关掉它。",
     settingsQueueBridgeStatus: "队列状态",
     settingsQueueBridgeRunning: "正在消费 {dir} · 已执行 {executed} 条指令",
     settingsQueueBridgeStopped: "未运行",
@@ -11169,14 +11183,55 @@ export default class CancipPlugin extends Plugin {
    * cannot be copied, the error propagates and the bridge aborts the op
    * instead of destroying data unrecoverably.
    */
-  private async auditCliMutationForBridge(record: { op: string; paths: string[]; hard: boolean }): Promise<void> {
+  private async auditCliMutationForBridge(record: { op: string; paths: string[]; hard: boolean; data?: string; structure?: Array<{ kind: string; oldPath: string; newPath: string }> }): Promise<void> {
     const adapter = this.app.vault.adapter;
     const stamp = `${Date.now()}-${record.op}`;
     const root = `${CANCIP_CONFIG_DIR}/review-cli/${stamp}`;
     const archived: string[] = [];
+    // Content changes carry a text diff; structure changes carry a before/after
+    // path pair. A write that creates a file is both, so one record can feed
+    // two entries and the review panel groups them separately.
+    const items: Array<{
+      path: string;
+      old_text: string;
+      new_text: string;
+      changes: string[];
+      structure: Array<{ kind: string; old_path: string; new_path: string; reason: string }>;
+      review_source: string;
+    }> = [];
+    const isWrite = record.op === "write" && typeof record.data === "string";
+    const structure = Array.isArray(record.structure) ? record.structure : [];
+    // Paths already covered by a structure entry, so a write that creates a file
+    // does not also emit a second content entry for the same path.
+    const structuredPaths = new Set<string>();
+    for (const change of structure) {
+      const target = change.newPath || change.oldPath;
+      if (!target) continue;
+      const isCreate = change.kind === "create";
+      const isDelete = change.kind === "delete";
+      // The original text is read before the mutation runs: for a create there is
+      // nothing yet, for a rename or move the content is unchanged, and for a
+      // delete this preserves what is about to be lost.
+      const originalText = isCreate ? "" : await adapter.read(change.oldPath).catch(() => "");
+      const newText = isCreate && isWrite && change.newPath === (record.paths[0] ?? "") ? record.data as string : originalText;
+      structuredPaths.add(target);
+      items.push({
+        path: target,
+        old_text: originalText,
+        new_text: isDelete ? "" : newText,
+        changes: [change.kind],
+        structure: [{ kind: change.kind, old_path: change.oldPath, new_path: change.newPath, reason: "" }],
+        review_source: "cancip-cli"
+      });
+    }
     for (const path of record.paths) {
       try {
         if (!(await adapter.exists(path))) continue;
+        // Content diff for an overwrite only; a create already came through the
+        // structure pass, and a delete has no post-mutation text to compare.
+        if (isWrite && !structuredPaths.has(path)) {
+          items.push({ path, old_text: await adapter.read(path).catch(() => ""), new_text: record.data as string, changes: ["write"], structure: [], review_source: "cancip-cli" });
+        }
         const stat = await adapter.stat(path);
         if (!stat || stat.type !== "file" || stat.size > 4 * 1024 * 1024) continue;
         const target = `${root}/${path}`;
@@ -11205,6 +11260,15 @@ export default class CancipPlugin extends Plugin {
       pluginVersion: this.manifest.version,
       model: "cancip-cli"
     });
+    if (items.length) {
+      const structureOnly = items.every((item) => !item.old_text && !item.new_text && item.structure.length);
+      const scope = structureOnly ? "结构变化" : "内容变化";
+      try {
+        await this.buildReviewGate({ title: `Cancip AI Change Review: CLI ${record.op}（${scope}）`, sessionId: `cli-bridge-${stamp}`, items });
+      } catch (error) {
+        console.warn("Cancip CLI review gate build failed", error);
+      }
+    }
     this.scheduleReviewGateSync();
   }
 
@@ -11395,6 +11459,9 @@ export default class CancipPlugin extends Plugin {
       approval: this.settings.accessMode === "full-access"
         ? "Write-like actions execute and are registered in Cancip Review."
         : "Write-like actions are queued in Cancip for explicit approval.",
+      cliSessions: this.settings.cliBridgeSessions
+        ? "File-queue callers may open and drive Cancip chat sessions (prompt, action, agent.run)."
+        : "File-queue callers are limited to file operations; session routes are refused.",
       agents: localAgentDiagnostics().map((item) => ({ provider: item.provider, available: item.available, detail: item.detail })),
       modelSources: {
         agents: this.agentModelOptions().map((item) => ({ id: item.model, provider: item.provider, available: item.available })),
@@ -11485,6 +11552,9 @@ export default class CancipPlugin extends Plugin {
   }
 
   private async agentBridgeView(): Promise<CancipView> {
+    if (!this.settings.cliBridgeSessions) {
+      throw new Error("CLI session calls are disabled in Cancip settings (Allow CLI calls to open sessions).");
+    }
     const view = await this.getOrCreateChatView({ reveal: false, focus: false });
     if (!view) throw new Error("Cancip chat view is unavailable.");
     return view;
@@ -67889,7 +67959,7 @@ const SETTINGS_PAGE_KEYS: Record<string, Array<keyof Settings>> = {
     "maxRecentTranscriptMessages", "includeHistoryAnchors", "maxHistoryAnchors", "maxMentionResults",
     "maxMentionFolderFiles", "maxFileContextChars", "maxFolderFileContextChars", "contextCompactionEnabled",
     "contextCompactionTriggerTokens", "contextCompactionTargetTokens", "contextCompactionKeepRecentMessages",
-    "contextCompactionUseModel", "contextCompactionShowStats", "agentBridgeEnabled", "agentBridgePort", "queueBridgeEnabled", "agentBrainEnabled",
+    "contextCompactionUseModel", "contextCompactionShowStats", "agentBridgeEnabled", "agentBridgePort", "queueBridgeEnabled", "cliBridgeSessions", "agentBrainEnabled",
     "agentBrainProvider", "agentBrainModel", "agentBrainTimeoutSeconds", "scoreEnabled", "scoreAccuracyWeight",
     "scoreUsageWeight", "scoreDecayDays", "scoreLayoutSuggestions", "dailyLocalVersioning", "localVersionHour", "temperature", "maxOutputTokens",
     "localVersionMaxFileBytes", "sessionCleanupSchedule", "sessionCleanupRetentionDays", "forceStatusBarVisible", "preventAutomaticSessionOpen", "systemPrompt"
@@ -68807,6 +68877,17 @@ class CancipSettingTab extends PluginSettingTab {
       await this.plugin.restartQueueBridge();
       this.refreshSettings();
     });
+    this.addToggleSetting(
+      queueBridgeBody,
+      "settingsCliBridgeSessions",
+      this.plugin.settings.cliBridgeSessions,
+      async (value) => {
+        this.plugin.settings.cliBridgeSessions = value;
+        await this.plugin.saveSettings();
+        this.refreshSettings();
+      },
+      "settingsCliBridgeSessionsDesc"
+    );
     new Setting(queueBridgeBody)
       .setName(this.plugin.t("settingsQueueBridgeCli"))
       .setDesc(`${this.plugin.agentCliDisplayCommand()} --transport queue · ${this.plugin.t("settingsQueueBridgeNoAuth")}`)
@@ -72511,7 +72592,9 @@ function reviewStructureKindLabel(
     copy: "reviewGateStructureKindCopy",
     merge: "reviewGateStructureKindMerge",
     split: "reviewGateStructureKindSplit",
-    folder: "reviewGateStructureKindFolder"
+    folder: "reviewGateStructureKindFolder",
+    create: "reviewGateStructureKindCreate",
+    delete: "reviewGateStructureKindDelete"
   };
   return t(keys[kind] ?? "reviewGateStructure");
 }
@@ -72526,7 +72609,9 @@ function reviewStructureChangeDescription(
     copy: "reviewGateStructureDescCopy",
     merge: "reviewGateStructureDescMerge",
     split: "reviewGateStructureDescSplit",
-    folder: "reviewGateStructureDescFolder"
+    folder: "reviewGateStructureDescFolder",
+    create: "reviewGateStructureDescCreate",
+    delete: "reviewGateStructureDescDelete"
   };
   return t(keys[change.kind] ?? "reviewGateStructureDescFolder", {
     oldPath: change.old_path || "(empty)",
@@ -75771,6 +75856,7 @@ function normalizeSettings(input: Partial<Settings>): Settings {
     agentBridgePort: Number.isFinite(agentBridgePort) ? Math.max(1024, Math.min(65527, agentBridgePort)) : DEFAULT_SETTINGS.agentBridgePort,
     agentBridgeToken: normalizeAgentBridgeToken(merged.agentBridgeToken),
     queueBridgeEnabled: typeof merged.queueBridgeEnabled === "boolean" ? merged.queueBridgeEnabled : DEFAULT_SETTINGS.queueBridgeEnabled,
+    cliBridgeSessions: typeof merged.cliBridgeSessions === "boolean" ? merged.cliBridgeSessions : DEFAULT_SETTINGS.cliBridgeSessions,
     agentBrainEnabled: Boolean(selectedAgentProvider)
       || (typeof merged.agentBrainEnabled === "boolean" ? merged.agentBrainEnabled : DEFAULT_SETTINGS.agentBrainEnabled),
     agentBrainProvider: selectedAgentProvider
@@ -75941,6 +76027,7 @@ function settingsToCancipConfig(settings: Settings): Record<string, unknown> {
     agentBridgeEnabled: settings.agentBridgeEnabled,
     agentBridgePort: settings.agentBridgePort,
     queueBridgeEnabled: settings.queueBridgeEnabled,
+    cliBridgeSessions: settings.cliBridgeSessions,
     agentBrainEnabled: settings.agentBrainEnabled,
     agentBrainProvider: settings.agentBrainProvider,
     agentBrainModel: settings.agentBrainModel,
@@ -76289,6 +76376,7 @@ const CANCIP_CONFIG_BOOLEAN_KEYS = new Set([
   "multiAgentCrossReview",
   "agentBridgeEnabled",
   "queueBridgeEnabled",
+  "cliBridgeSessions",
   "agentBrainEnabled",
   "scoreEnabled",
   "scoreLayoutSuggestions",
