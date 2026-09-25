@@ -11162,6 +11162,52 @@ export default class CancipPlugin extends Plugin {
    * matter which leg it reaches Cancip through. Keeping the handlers in one
    * place is what stops the two transports from drifting apart.
    */
+  /**
+   * Review-side half of the CLI mutation hook. Archives the originals of a
+   * queued destructive op into `data/review-cli/<stamp>/` and writes the audit
+   * event. Archival is fail-closed: if a file that should have been preserved
+   * cannot be copied, the error propagates and the bridge aborts the op
+   * instead of destroying data unrecoverably.
+   */
+  private async auditCliMutationForBridge(record: { op: string; paths: string[]; hard: boolean }): Promise<void> {
+    const adapter = this.app.vault.adapter;
+    const stamp = `${Date.now()}-${record.op}`;
+    const root = `${CANCIP_CONFIG_DIR}/review-cli/${stamp}`;
+    const archived: string[] = [];
+    for (const path of record.paths) {
+      try {
+        if (!(await adapter.exists(path))) continue;
+        const stat = await adapter.stat(path);
+        if (!stat || stat.type !== "file" || stat.size > 4 * 1024 * 1024) continue;
+        const target = `${root}/${path}`;
+        await ensureFolder(adapter, target.split("/").slice(0, -1).join("/"));
+        await adapter.writeBinary(target, await adapter.readBinary(path));
+        archived.push(path);
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        throw new Error(`review archive failed for ${path}: ${reason}`);
+      }
+    }
+    if (archived.length) {
+      await adapter.write(`${root}/manifest.json`, JSON.stringify({
+        op: record.op,
+        hard: record.hard,
+        at: new Date().toISOString(),
+        pluginVersion: this.manifest.version,
+        archived
+      }, null, 2));
+    }
+    await recordCancipSessionEvent(adapter, {
+      kind: "tool.finish",
+      status: "done",
+      summary: `cancip-cli ${record.op}${record.hard ? " (hard)" : ""}`,
+      detail: `CLI vault op entered review. Paths: ${record.paths.join(", ")}. Recoverable originals: ${archived.length ? archived.join(", ") : "none (missing, folder, or above the 4 MB archive cap)"}.`,
+      pluginVersion: this.manifest.version,
+      model: "cancip-cli"
+    });
+    this.scheduleReviewGateSync();
+  }
+
   private agentBridgeHandlers(): QueueBridgeHandlers {
     const handlers: QueueBridgeHandlers = {
       status: () => ({
@@ -11232,6 +11278,13 @@ export default class CancipPlugin extends Plugin {
       // everything that does not need one, and to hold the rest until Obsidian
       // comes back instead of driving a hidden window.
       isForeground: () => this.bridgeWindowIsForeground(),
+      // Raw CLI file ops join the same review trail as in-app AI edits: the
+      // originals are archived into the review area before the mutation runs
+      // (so even a hard delete or an overwrite stays recoverable) and the
+      // action is recorded as a session event, which is the 报备 the app shows
+      // as soon as it is running — no matter whether the op arrived through
+      // the queue, residue replay, or the HTTP leg while the window was hidden.
+      auditCliMutation: async (record) => { await this.auditCliMutationForBridge(record); },
       // Reported in the op catalogue so callers can see that `eval` is refused
       // rather than inferring it from a rejection.
       evalEnabled: () => this.settings.commandBusEnabled,
@@ -48725,12 +48778,15 @@ class CancipView extends ItemView {
     // These reads do not depend on one another. Start them together and keep
     // the existing section order when assembling the final compact context.
     // 全局记忆 is the user-owned per-turn base: injected every turn, no cap.
-    // The CANCIP_INDEX.md navigation entry is no longer injected per turn.
+    // User-owned memory surfaces (CANCIP_RULES.md, the core memory folder, the
+    // current file when the user enabled it) ride along by setting, never by
+    // prompt classification. Plugin-curated surfaces (project memory, plugin
+    // command memory, experience) are NOT injected any more: the model reaches
+    // them on demand through cancip.experience.list / cancip.tools.help and
+    // direct reads, which keeps the payload to the four base blocks.
     const globalMemoryPromise = this.safeContextStep("global memory", () => this.readGlobalMemory(), "", CONTEXT_STEP_TIMEOUT_MS);
-    const detailedRulesPromise = policy.includeDetailedRules
-      ? this.safeContextStep("detailed rules", () => this.readDetailedRules(prompt), "", CONTEXT_STEP_TIMEOUT_MS)
-      : Promise.resolve("");
-    const memoryPromise = settings.includeCoreMemory && policy.includeCoreMemory
+    const detailedRulesPromise = this.safeContextStep("detailed rules", () => this.readDetailedRules(prompt), "", CONTEXT_STEP_TIMEOUT_MS);
+    const memoryPromise = settings.includeCoreMemory
       ? this.safeContextStep(
           this.t("coreMemory"),
           () => this.readMemoryFolder(
@@ -48742,15 +48798,6 @@ class CancipView extends ItemView {
           CONTEXT_STEP_TIMEOUT_MS
         )
       : Promise.resolve("");
-    const projectMemoryPromise = policy.includeProjectMemory
-      ? this.safeContextStep("project memory", () => this.readProjectMemory(prompt), "", CONTEXT_STEP_TIMEOUT_MS)
-      : Promise.resolve("");
-    const pluginMemoryPromise = policy.includePluginMemory
-      ? this.safeContextStep("plugin memory", () => this.readPluginMemory(prompt), "", CONTEXT_STEP_TIMEOUT_MS)
-      : Promise.resolve("");
-    const experiencePromise = policy.includeExperience
-      ? this.safeContextStep(this.t("taskExperience"), () => this.readTaskExperience(prompt), "", CONTEXT_STEP_TIMEOUT_MS)
-      : Promise.resolve("");
     const codexMemoryPromise = shouldSearchCodexMemory
       ? this.safeContextStep(
           this.t("codexMemory"),
@@ -48759,7 +48806,7 @@ class CancipView extends ItemView {
           CONTEXT_STEP_TIMEOUT_MS
         )
       : Promise.resolve({ text: "", hits: [] as SearchHit[] });
-    const currentFilePromise = (diaryWriting || settings.includeCurrentFile) && this.includeCurrentFileForSession && (diaryWriting || policy.includeCurrentFile)
+    const currentFilePromise = (diaryWriting || settings.includeCurrentFile) && this.includeCurrentFileForSession
       ? this.safeContextStep(this.t("currentFile"), () => this.getCurrentFileContext(diaryWriting), null, CONTEXT_STEP_TIMEOUT_MS)
       : Promise.resolve(null as string | null);
     const diaryActivityPromise = diaryWriting
@@ -48775,29 +48822,14 @@ class CancipView extends ItemView {
     const globalMemory = await globalMemoryPromise;
     if (globalMemory) parts.push(`## 全局记忆\n${globalMemory}`);
 
-    if (policy.includeDetailedRules) {
+    {
       const detailedRules = await detailedRulesPromise;
       if (detailedRules) parts.push(`## Detailed Cancip rules\n${detailedRules}`);
     }
 
-    if (settings.includeCoreMemory && policy.includeCoreMemory) {
+    if (settings.includeCoreMemory) {
       const memory = await memoryPromise;
       if (memory) parts.push(`## ${this.t("coreMemory")}\n${memory}`);
-    }
-
-    if (policy.includeProjectMemory) {
-      const projectMemory = await projectMemoryPromise;
-      if (projectMemory) parts.push(`## Project memory\n${projectMemory}`);
-    }
-
-    if (policy.includePluginMemory) {
-      const pluginMemory = await pluginMemoryPromise;
-      if (pluginMemory) parts.push(`## Plugin and Obsidian command memory\n${pluginMemory}`);
-    }
-
-    if (policy.includeExperience) {
-      const experience = await experiencePromise;
-      if (experience) parts.push(`## ${this.t("taskExperience")}\n${experience}`);
     }
 
     if (shouldSearchCodexMemory) {
@@ -48816,7 +48848,7 @@ class CancipView extends ItemView {
     // its area, obsidian.currentView for the focused view), and the base
     // capability block below tells the model to query them for any phrasing.
 
-    if ((diaryWriting || settings.includeCurrentFile) && this.includeCurrentFileForSession && (diaryWriting || policy.includeCurrentFile)) {
+    if ((diaryWriting || settings.includeCurrentFile) && this.includeCurrentFileForSession) {
       const current = await currentFilePromise;
       if (current) parts.push(`## ${this.t("currentFile")}\n${current}`);
     }
@@ -49054,135 +49086,56 @@ class CancipView extends ItemView {
   private modePrompt(prompt = ""): string {
     const languagePrompt = this.plugin.responseLanguageInstruction();
     const policy = this.promptPayloadPolicy(prompt);
-    const directVaultFileReadTask = isSimpleDirectVaultFileReadTask(prompt);
-    const directVaultFileMutationTask = isSimpleDirectVaultFileMutationTask(prompt);
-    const directVaultFileTask = directVaultFileReadTask || directVaultFileMutationTask;
-    const vaultTargetOpenTask = promptRequestsVaultTargetOpen(prompt);
-    const externalPath = explicitExternalAbsolutePath(prompt);
-    const boundedUiButtonWorkflow = policy.intent === "implementation"
-      && capabilityPromptMentionsCurrentView(prompt)
-      && buttonWorkflowRequestedChanges(prompt).length > 0;
+    // The system prompt is constant by contract: it never varies with how the
+    // user phrased this turn. Everything the model needs on every turn lives
+    // here (base persona, response protocol, route index, access mode,
+    // composer mode); everything else is reachable on demand through
+    // cancip.tools.help / *.help / list and CANCIP_NAV.md. The four per-turn
+    // payload blocks stay exactly: system prompt, global memory, brief session
+    // history, and the latest user prompt / tool result.
     const storedPrompt = this.plugin.settings.systemPrompt || DEFAULT_SYSTEM_PROMPT;
     const storedBase = runtimeCancipStorageText(storedPrompt).trim();
-    const base = directVaultFileTask || vaultTargetOpenTask || externalPath || boundedUiButtonWorkflow
-      ? (isChineseLanguage(this.plugin.language())
-          ? `你是 Cancip，Obsidian Vault 内的移动端 AI 助手。按用户语言完成当前${externalPath ? "库外路径只读能力检查" : vaultTargetOpenTask ? "文件定位、打开和验证" : boundedUiButtonWorkflow ? "运行时按钮操作和验证" : `明确文件${directVaultFileReadTask ? "读取" : "改动"}`}。`
-          : `You are Cancip, a mobile assistant inside an Obsidian Vault. Complete the current ${externalPath ? "read-only external path capability check" : vaultTargetOpenTask ? "file resolution, open, and verification" : boundedUiButtonWorkflow ? "runtime button operation and verification" : `explicit file ${directVaultFileReadTask ? "read" : "change"}`} in the user's language.`)
-      : isBundledSystemPrompt(storedPrompt)
-        ? defaultSystemPromptForNavigationPath(this.plugin.memoryPath("CANCIP_NAV.md"))
-        : trimContext(storedBase, 1800);
-    const accessPrompt = directVaultFileTask
-      ? this.directVaultFileAccessPrompt()
-      : this.plugin.settings.accessMode === "full-access" ? this.t("accessPromptFull") : this.t("accessPromptAsk");
-    const nativeToolModel = profileUsesNativeCancipActionProtocol(this.plugin.activeModelProfile());
-    const routedToolPrompt = nativeToolModel && policy.includeToolProtocol
-      ? this.nativeToolProtocolPrompt()
-      : directVaultFileReadTask
-      ? this.directVaultFileReadToolPrompt(prompt)
-      : directVaultFileMutationTask
-        ? this.directVaultFileMutationToolPrompt(prompt)
-        : vaultTargetOpenTask
-          ? this.vaultTargetOpenToolPrompt()
-        : externalPath
-          ? this.vaultTargetOpenToolPrompt(externalPath)
-      : policy.includeToolCatalog && !policy.includeToolProtocol
-      ? this.lightweightToolCatalogPrompt()
-      : this.toolPromptForPolicy(policy);
-    // Every tool-prompt branch has to ask for a model-written action title: the
-    // folded tool block shows it instead of the mechanical action name, and the
-    // surgical file prompts and the lightweight catalogue never carried the full
-    // protocol. The rule is appended once here unless the branch already states it.
+    const base = isBundledSystemPrompt(storedPrompt)
+      ? defaultSystemPromptForNavigationPath(this.plugin.memoryPath("CANCIP_NAV.md"))
+      : trimContext(storedBase, 1800);
+    const accessPrompt = this.plugin.settings.accessMode === "full-access" ? this.t("accessPromptFull") : this.t("accessPromptAsk");
+    // One constant tool block: response protocol + compact route index + tool
+    // catalogue + wire protocol. No branch picks a different payload by prompt
+    // classification any more - the model resolves routes on demand through
+    // cancip.tools.help / *.help / list, which is what keeps the payload stable
+    // while the answering surface stays wide.
+    const routedToolPrompt = this.toolPromptForPolicy({
+      ...policy,
+      includeToolProtocol: true,
+      includeToolCatalog: true,
+      includeDetailedToolProtocol: false
+    });
     const actionTitleRule = this.t("actionTitleRule");
     const routedWithTitleRule = actionTitleRule && !routedToolPrompt.includes(actionTitleRule)
       ? `${routedToolPrompt}\n${actionTitleRule}`
       : routedToolPrompt;
-    // The live-state rule has to ride along with every tool-prompt branch, not
-    // just the turns that carry no tool catalogue at all. The surgical file
-    // prompts, the lightweight catalogue, and the routed protocol all used to
-    // carry no statement that Obsidian's own state is reachable on demand, so a
-    // question the payload did not anticipate ("what do I have open", "which
-    // panes are sitting there") had nothing to route it to a real query and fell
-    // back to "I cannot see that". Re-derived per phrasing instead of pre-injected
-    // every turn, which is what keeps the payload small while widening what can be
-    // answered. Skipped when a branch already states it, so it is never doubled.
-    const liveStateRule = this.liveStateRulePrompt();
-    const routedWithRules = liveStateRule && !this.toolPromptCarriesLiveStateRule(routedWithTitleRule)
-      ? `${routedWithTitleRule}\n${liveStateRule}`
-      : routedWithTitleRule;
     const toolPrompt = this.plugin.settings.commandBusEnabled
-      ? routedWithRules
-      : `${routedWithRules}\n\n${this.t("commandBusDisabledPrompt")}`;
+      ? routedWithTitleRule
+      : `${routedWithTitleRule}\n\n${this.t("commandBusDisabledPrompt")}`;
     const modeInstruction = this.mode === "search"
       ? this.t("modePromptSearch")
       : this.mode === "edit"
           ? this.t("modePromptEdit")
           : this.t("modePromptAsk");
     const sections = [base, languagePrompt];
-    // Constant rather than keyword-matched. The previous form only sent this when
-    // the prompt literally contained "cancip" within 20 characters of
-    // "version/版本", so "你几版了" and every other phrasing got nothing and the
-    // model had to guess or claim it could not see it. A constant line is correct
-    // for every wording and costs a few dozen characters.
-    sections.push(`Cancip runtime version: ${this.plugin.manifest.version}`);
-    // Retrieval order is doctrine about *how to work*, not data about *this*
-    // prompt, so it is sent whenever the turn is a real task instead of only when
-    // the wording happened to trip one of the router predicates. A differently
-    // phrased request used to lose the ordering rule and with it the instruction
-    // to look things up before answering from prior knowledge.
-    if (!directVaultFileTask && !vaultTargetOpenTask && !externalPath && !policy.compactStateChange) {
-      sections.push(this.resourceRetrievalPolicyPrompt());
-    }
-    if (!directVaultFileTask && !vaultTargetOpenTask && !externalPath && policy.intent === "implementation" && (policy.includeToolProtocol || policy.includeWorkingState)) {
-      sections.push(this.plugin.scorePolicyPrompt());
-    }
-    if (policy.includeAccessPrompt) {
-      sections.push(accessPrompt);
-      if (!directVaultFileTask && !boundedUiButtonWorkflow) sections.push(this.t("vaultNoteReviewPrompt"));
-    }
-    if (policy.includeToolProtocol || policy.includeToolCatalog) sections.push(toolPrompt);
-    // Base capability. Turns that receive no tool catalogue at all still have to
-    // know that live Obsidian state is reachable: otherwise any question whose
-    // wording the payload did not anticipate ("what do I have open", "which panes
-    // are sitting there") can only be answered with "I cannot see that". This is
-    // the smallest block that lets the model derive the rest by calling a tool,
-    // and it replaces the per-turn workspace snapshot, so the payload gets
-    // smaller while the answering surface gets wider. It names command routes, so
-    // it is skipped when the user turned the command bus off.
-    if (this.plugin.settings.commandBusEnabled
-      && policy.intent !== "trivial"
-      && !policy.includeToolProtocol
-      && !policy.includeToolCatalog) {
-      sections.push(this.baseCapabilityPrompt());
-    }
-    // Both blocks are policy about how to work, so they follow "is this a real
-    // request", not "did the wording contain a magic word". The automation block
-    // used to appear only when the prompt matched
-    // /自动化|定时|通知|automation|schedule|notification|new file/; gating it on the
-    // routers instead still left the same hole, because
-    // classifyPromptIntent("帮我每天八点跑一次") is "informational" and no router
-    // fires, so that phrasing reached the model with none of the
-    // schedule/notifyMode/Plan rules while "每天 8:00 自动执行一次并通知我" got them
-    // all. Non-trivial turns now always get both blocks - the same floor the base
-    // capability prompt above already uses - and trivial turns (greeting, thanks,
-    // arithmetic, continuation) keep the minimal payload.
-    const baseCapabilityTurn = policy.intent !== "trivial"
-      || policy.includeToolProtocol
-      || policy.includeToolCatalog;
-    if (!directVaultFileTask && !vaultTargetOpenTask && !externalPath && baseCapabilityTurn) {
-      sections.push(this.automationAgentPolicyPrompt());
-      sections.push(this.skillRoutePolicyPrompt());
-    }
-    if (!directVaultFileTask && (policy.includeToolProtocol || (policy.intent === "implementation" && policy.includeWorkingState))) {
-      sections.push(nativeToolModel ? this.nativeFinalAnswerPrompt() : this.t("finalAnswerFormatPrompt"));
-    }
-    if (isOneClickHtmlPrompt(prompt)) sections.push(this.oneClickHtmlSystemPrompt());
+    // Access mode is a user setting, not a prompt guess: the write-approval
+    // posture has to reach the model on every turn or it cannot respect it.
+    sections.push(accessPrompt);
+    sections.push(this.t("vaultNoteReviewPrompt"));
+    sections.push(toolPrompt);
     sections.push(modeInstruction);
     if (this.mode === "search") sections.push(this.universalSearchPolicyPrompt());
     // Per-turn payload stays limited to the four base modules (system prompt,
     // global memory, session history, latest user prompt / tool results).
-    // No plugin-authored encouragement or prohibition text: the model decides
-    // on its own whether to use tools; anything that must ship every turn
-    // belongs to the user's 全局记忆.md file.
+    // No plugin-authored encouragement or prohibition text and no
+    // classification-gated sections: the model decides on its own whether to
+    // use tools; anything that must ship every turn belongs to the system
+    // prompt above or to the user's 全局记忆.md file.
     return sections.filter(Boolean).join("\n\n");
   }
 

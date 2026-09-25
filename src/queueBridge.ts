@@ -247,6 +247,17 @@ export type QueueBridgeHandlers = AgentBridgeHandlers & {
    * rejected — or worse, by reading a success envelope with no effect in it.
    */
   evalEnabled?(): boolean;
+  /**
+   * Review hook for the raw mutating file ops (`write` over an existing file,
+   * `delete`, `move`). Called BEFORE the mutation runs so the host can copy the
+   * originals into its review area — the CLI equivalent of the review backup an
+   * in-app AI edit already gets, which is what keeps even a `hard` delete or an
+   * overwrite recoverable. A throw aborts the op (fail closed): an operation
+   * whose original could not be archived must not run unrecoverable. Optional:
+   * a host without a review system simply does not archive and the ops run as
+   * they always did.
+   */
+  auditCliMutation?(record: { op: string; paths: string[]; hard: boolean }): Promise<void>;
 };
 
 /** Fields a structured view query answers with. */
@@ -821,8 +832,10 @@ export async function executeVaultOp(rawCommand: Record<string, unknown>, op: st
     case "write": {
       const path = requireArg();
       const data = typeof command.data === "string" ? command.data : "";
-      if (await adapter.exists(path)) await adapter.write(path, data);
-      else {
+      if (await adapter.exists(path)) {
+        await ctx.handlers.auditCliMutation?.({ op: "write", paths: [path], hard: false });
+        await adapter.write(path, data);
+      } else {
         // A write that targets a missing folder creates it instead of failing
         // with a confusing ENOENT — mkdir-then-write is what callers expect.
         const parent = path.split("/").slice(0, -1).join("/");
@@ -844,6 +857,7 @@ export async function executeVaultOp(rawCommand: Record<string, unknown>, op: st
       if (!to) throw new QueueBridgeOpError("MISSING_ARGUMENT", "move requires a to.");
       const source = vault.getAbstractFileByPath(from);
       if (!source) throw new QueueBridgeOpError("NOT_FOUND", `not found: ${from}`);
+      await ctx.handlers.auditCliMutation?.({ op: "move", paths: [from], hard: false });
       await ctx.app.fileManager.renameFile(source, to);
       return { from, to };
     }
@@ -854,6 +868,9 @@ export async function executeVaultOp(rawCommand: Record<string, unknown>, op: st
       const single = commandString(command.path);
       if (single) paths.push(single);
       const hard = command.hard === true;
+      // Review before destruction: the host archives the originals so even a
+      // hard delete stays recoverable, and the action lands in the review trail.
+      await ctx.handlers.auditCliMutation?.({ op: "delete", paths, hard });
       const report = { total: paths.length, trashed: 0, hard: 0, missing: [] as string[], errors: [] as string[] };
       for (let index = 0; index < paths.length; index += 1) {
         const path = paths[index];

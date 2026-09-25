@@ -228,53 +228,45 @@ check("modePrompt does not select policy sections by pattern-matching the prompt
   if (gates.length) throw new Error(`modePrompt regained keyword gate(s): ${gates.join(" | ")}`);
 });
 
-check("the Cancip runtime version line is pushed unconditionally", () => {
-  const push = modePrompt.pushes.find((call) => call.arguments.length === 1
-    && call.arguments[0].getText(modePrompt.sf).startsWith("`Cancip runtime version:"));
-  if (!push) throw new Error("the runtime version line is missing, so '你几版了' and other phrasings get nothing");
-  const gate = conditionalAncestor(push, modePrompt.method);
-  if (gate) throw new Error(`the runtime version line is conditional again (line ${modePrompt.sf.getLineAndCharacterOfPosition(gate.getStart(modePrompt.sf)).line + 1})`);
+check("the system prompt is constant: no classification-gated policy sections", () => {
+  // The contract is four payload blocks (system prompt, global memory, session
+  // history, latest user prompt). The system prompt may not grow or shrink with
+  // how the user phrased the turn: policy prose lives in tool files
+  // (cancip.tools.help / *.help / CANCIP_NAV.md), not in conditional injections.
+  const bannedCalls = [
+    "resourceRetrievalPolicyPrompt",
+    "automationAgentPolicyPrompt",
+    "skillRoutePolicyPrompt",
+    "baseCapabilityPrompt",
+    "scorePolicyPrompt",
+    "nativeToolProtocolPrompt",
+    "nativeFinalAnswerPrompt",
+    "oneClickHtmlSystemPrompt",
+    "liveStateRulePrompt",
+    "directVaultFileAccessPrompt",
+    "lightweightToolCatalogPrompt",
+    "directVaultFileReadToolPrompt",
+    "directVaultFileMutationToolPrompt",
+    "vaultTargetOpenToolPrompt"
+  ];
+  const body = modePrompt.method.getText(modePrompt.sf);
+  const back = bannedCalls.filter((name) => body.includes(`this.${name}`));
+  if (back.length) throw new Error(`modePrompt regained classification-gated policy sections: ${back.join(", ")}`);
+  if (modePrompt.pushes.some((call) => call.getText(modePrompt.sf).includes("Cancip runtime version"))) {
+    throw new Error("the runtime version line is back - it belongs to tools.help, not the per-turn payload");
+  }
 });
 
-check("automation and skill policy are pushed from the same block", () => {
-  const find = (needle) => modePrompt.pushes.find((call) => call.getText(modePrompt.sf).includes(needle));
-  const automation = find("automationAgentPolicyPrompt");
-  const skill = find("skillRoutePolicyPrompt");
-  if (!automation) throw new Error("automationAgentPolicyPrompt is no longer pushed");
-  if (!skill) throw new Error("skillRoutePolicyPrompt is no longer pushed");
-  // call -> ExpressionStatement -> enclosing statement list. Comparing the call's
-  // direct parent would compare two different ExpressionStatements and always fail.
-  const owner = (call) => call.parent && call.parent.parent;
-  if (owner(automation) !== owner(skill)) {
-    throw new Error("the two policies no longer share one block, so wording can gate one off without the other");
-  }
-  const block = owner(automation);
-  // The block must be gated on "is this a real request" (intent), because the
-  // router-only gate left the hole this change closed: classifyPromptIntent(
-  // "帮我每天八点跑一次") is "informational" and no router fires, so that phrasing
-  // lost the policy while a differently worded equivalent kept it.
-  const ifStatement = block && block.parent;
-  if (!ifStatement || ifStatement.kind !== ts.SyntaxKind.IfStatement) {
-    throw new Error("the automation/skill pushes are no longer guarded by an if statement");
-  }
-  const condition = ifStatement.expression.getText(modePrompt.sf);
-  // The gate is written as `... && baseCapabilityTurn`, a local that holds the
-  // real predicate. Expanding one level of local initializers means the check reads
-  // what the code actually computes instead of the name someone chose for it.
-  const locals = new Map();
-  const collectLocals = (node) => {
-    if (ts.isVariableDeclaration(node) && node.name && ts.isIdentifier(node.name) && node.initializer) {
-      locals.set(node.name.getText(modePrompt.sf), node.initializer.getText(modePrompt.sf));
+check("the tool block and access mode are pushed unconditionally", () => {
+  const toolPush = modePrompt.pushes.find((call) => call.getText(modePrompt.sf).includes("toolPrompt"));
+  const accessPush = modePrompt.pushes.find((call) => call.getText(modePrompt.sf).includes("accessPrompt"));
+  if (!toolPush) throw new Error("the constant tool block is missing");
+  if (!accessPush) throw new Error("the access-mode block is missing");
+  for (const push of [toolPush, accessPush]) {
+    const gate = conditionalAncestor(push, modePrompt.method);
+    if (gate) {
+      throw new Error(`a must-send block is conditional again (line ${modePrompt.sf.getLineAndCharacterOfPosition(gate.getStart(modePrompt.sf)).line + 1})`);
     }
-    ts.forEachChild(node, collectLocals);
-  };
-  collectLocals(modePrompt.method);
-  let expanded = condition;
-  for (const name of new Set(condition.match(/\b[A-Za-z_$][\w$]*\b/g) || [])) {
-    if (locals.has(name)) expanded += ` || ${locals.get(name)}`;
-  }
-  if (!/intent\s*!==\s*"trivial"/.test(expanded)) {
-    throw new Error(`the gate no longer keys off policy.intent, so a rephrased request can lose the policy: if (${condition})`);
   }
 });
 
