@@ -1719,10 +1719,14 @@ export function reviewItemHasStructureChange(item: ReviewGateManifestItem): bool
 }
 
 /**
- * True when an item only reports structural work (create / move / rename / delete
- * performed by the CLI) and carries no meaningful text diff. Such items are the
- * expected end state of the bridge action, so they must never be treated as a
- * "someone edited this file behind our back" manual override.
+ * True when an item reports structural work and carries no text diff at all —
+ * a pure path operation such as a rename, move or copy. Those are the expected
+ * end state of the bridge action, so they must never be treated as a "someone
+ * edited this file behind our back" manual override.
+ *
+ * A create or delete also carries real text ("" -> content, content -> "") and
+ * is deliberately excluded here: it must still be compared against disk so its
+ * content review stays honest.
  */
 export function isReviewGateStructureOnlyItem(item: ReviewGateManifestItem): boolean {
   if (!reviewItemHasStructureChange(item)) return false;

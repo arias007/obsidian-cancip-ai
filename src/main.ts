@@ -11208,15 +11208,30 @@ export default class CancipPlugin extends Plugin {
       const target = change.newPath || change.oldPath;
       if (!target) continue;
       structuredPaths.add(target);
-      // A path operation is recorded as a structure change only: no text diff and
-      // no content-change flag, so the review panel groups create, move, rename
-      // and delete under Structure Changes instead of filing them as content
-      // edits. The original bytes are still archived below when they exist.
+      // A pure path operation (rename / move / copy) is structure-only: the bytes
+      // are unchanged, so a text diff would be noise and the panel is right to
+      // say so. Create and delete are different — the file's text genuinely
+      // appears or disappears — so they carry a real diff underneath the
+      // structure card and the reviewer still sees the normal content review.
+      // Reads happen before the mutation runs: a create has no original text
+      // ("" -> new content) while a delete still has its bytes on disk.
+      let oldText = "";
+      let newText = "";
+      const changes: string[] = [];
+      if (change.kind === "create") {
+        newText = isWrite ? (record.data as string) : "";
+      } else if (change.kind === "delete") {
+        oldText = await adapter.read(target).catch(() => "");
+        // Tells the expected-state comparison that the file is meant to be gone.
+        // Without it a delete reads as an unexplained missing file and the entry
+        // gets auto-superseded instead of staying reviewable.
+        changes.push("delete");
+      }
       items.push({
         path: target,
-        old_text: "",
-        new_text: "",
-        changes: [],
+        old_text: oldText,
+        new_text: newText,
+        changes,
         structure: [{ kind: change.kind, old_path: change.oldPath, new_path: change.newPath, reason: "" }],
         review_source: "cancip-cli"
       });
@@ -22084,10 +22099,11 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     item: ReviewGateManifestItem
   ): Promise<ReviewGateManualSupersedeResult | null> {
     if (!isReviewGateItemChanged(item) || !isStoredReviewGateItemVisible(item) || reviewGateItemTextWasTruncated(item)) return null;
-    // Structure-only items (create / move / rename / delete from the CLI) carry no
-    // text diff, so comparing stored text against disk would always mismatch and
-    // silently auto-close the review entry. A create or delete is the expected
-    // end state, not someone editing the file behind Cancip's back.
+    // A pure path change (rename / move / copy) carries no text, so comparing the
+    // stored text against disk would always mismatch and silently auto-close the
+    // review entry. The new path is the expected end state, not someone editing
+    // the file behind Cancip's back. Create and delete do carry text and are
+    // compared normally, which is what keeps their content review honest.
     if (isReviewGateStructureOnlyItem(item)) return null;
     const expectedStates = reviewGateExpectedStatesForItem(item, this.reviewGateExpectedStateMode(data));
     if (!expectedStates.length) return null;
