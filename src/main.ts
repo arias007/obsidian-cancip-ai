@@ -11464,13 +11464,13 @@ export default class CancipPlugin extends Plugin {
       // as soon as it is running — no matter whether the op arrived through
       // the queue, residue replay, or the HTTP leg while the window was hidden.
       auditCliMutation: async (record) => { await this.auditCliMutationForBridge(record); },
-      // Reported in the op catalogue so callers can see that `eval` is refused
-      // rather than inferring it from a rejection. `eval` can drive the chat
-      // session through the `action` route, so it needs BOTH switches: the
-      // generic command bus and the CLI session permission. Gating it on the bus
-      // alone let `cancip eval` run while "Allow CLI calls to open sessions" was
-      // off, which is exactly the promise that setting makes.
-      evalEnabled: () => this.settings.commandBusEnabled && this.settings.cliBridgeSessions,
+      // Reported in the op catalogue so callers can see whether `eval` is
+      // refused. `eval` is gated on the generic command bus ONLY. The CLI
+      // session switch exists to keep outside callers from opening chat
+      // sessions (prompt / action / agent.run); eval is also the only way to
+      // drive maintenance such as reloading this very plugin, so coupling the
+      // two made a session-only preference disable maintenance as well.
+      evalEnabled: () => this.settings.commandBusEnabled,
       // Generic operation leg shared by both transports: HTTP calls it through
       // /v1/op, the queue bridge calls it through its own op dispatch. Keeping
       // one executor means every CLI verb works on whichever leg is reachable.
