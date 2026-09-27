@@ -1554,12 +1554,24 @@ export function isDotFolderPathOrSelf(path: string): boolean {
     .some((part) => part.startsWith("."));
 }
 
+export function normalizeStoredReviewGatePath(raw: unknown): string {
+  if (typeof raw !== "string") return "";
+  const normalized = normalizePath(raw.replace(/\\/g, "/").trim());
+  // A stored delete/root marker ("/", "//", ".") is not a vault-relative path.
+  // Persisted manifests have shipped "/" for CLI deletes, so normalizing it to
+  // "" here keeps every downstream consumer from treating it as a real target.
+  if (!normalized) return "";
+  const stripped = normalized.replace(/^\/+/, "");
+  if (!stripped || stripped === ".") return "";
+  return stripped;
+}
+
 export function reviewItemAllOpenPaths(item: ReviewGateManifestItem): string[] {
   const structure = normalizeReviewStructureChanges(item.structure);
   return uniqueStrings([
     item.path,
     ...structure.flatMap((change) => [change.new_path, change.old_path])
-  ].map((path) => normalizePath(String(path ?? "").replace(/\\/g, "/"))))
+  ].map((path) => normalizeStoredReviewGatePath(path)).filter(Boolean))
 }
 
 export function reviewGatePathsTouch(candidatePath: string, path: string): boolean {
@@ -1786,8 +1798,8 @@ export function normalizeReviewStructureChanges(raw: unknown): ReviewGateStructu
     if (!isRecord(item)) continue;
     changes.push({
       kind: isReviewGateStructureKind(item.kind) ? item.kind : "folder",
-      old_path: typeof item.old_path === "string" ? normalizePath(item.old_path.replace(/\\/g, "/")) : "",
-      new_path: typeof item.new_path === "string" ? normalizePath(item.new_path.replace(/\\/g, "/")) : "",
+      old_path: normalizeStoredReviewGatePath(item.old_path),
+      new_path: normalizeStoredReviewGatePath(item.new_path),
       reason: typeof item.reason === "string" ? item.reason : "",
       related_files: Array.isArray(item.related_files)
         ? item.related_files.filter((value): value is string => typeof value === "string")
