@@ -8524,6 +8524,25 @@ input.obcc-review-correction-input {
   color: var(--text-accent);
 }
 
+/* Change-kind chip on the review item title row. Structure-only entries (CLI
+   create / move / delete) carry no text diff, so this badge is the only thing
+   that states what happened before the reviewer opens the structure cards. */
+.obcc-review-item-badge {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--interactive-accent) 15%, transparent);
+  color: var(--text-accent);
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.obcc-review-item-badge.is-structure {
+  background: color-mix(in srgb, var(--text-accent) 12%, transparent);
+  color: var(--text-accent);
+}
+
 .obcc-review-file-category {
   flex: 0 0 auto;
   color: var(--text-accent);

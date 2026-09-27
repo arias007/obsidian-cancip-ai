@@ -982,6 +982,13 @@ export async function executeVaultOp(rawCommand: Record<string, unknown>, op: st
       return await ctx.handlers.view();
 
     case "eval": {
+      // Enforce the permission here, not just in the op catalogue. The catalogue
+      // is advisory: a caller that ignores it (or a hot-reloaded page still
+      // holding the old catalogue) would otherwise reach the executor anyway.
+      // `eval` can submit actions, so it is gated on the CLI session switch too.
+      if (ctx.handlers.evalEnabled && ctx.handlers.evalEnabled() === false) {
+        throw new QueueBridgeOpError("OP_DISABLED", "eval: disabled by the current access policy or settings (command bus or CLI sessions).");
+      }
       const code = commandString(command.code);
       if (!code.trim()) throw new QueueBridgeOpError("MISSING_ARGUMENT", "eval requires code.");
       return await ctx.handlers.evalCode(code, command);

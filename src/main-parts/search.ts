@@ -1718,6 +1718,17 @@ export function reviewItemHasStructureChange(item: ReviewGateManifestItem): bool
   return normalizeReviewStructureChanges(item.structure).length > 0;
 }
 
+/**
+ * True when an item only reports structural work (create / move / rename / delete
+ * performed by the CLI) and carries no meaningful text diff. Such items are the
+ * expected end state of the bridge action, so they must never be treated as a
+ * "someone edited this file behind our back" manual override.
+ */
+export function isReviewGateStructureOnlyItem(item: ReviewGateManifestItem): boolean {
+  if (!reviewItemHasStructureChange(item)) return false;
+  return (item.old_text ?? "") === "" && (item.new_text ?? "") === "";
+}
+
 export function isReviewGateItemChanged(item: ReviewGateManifestItem): boolean {
   return reviewItemHasContentChange(item) || reviewItemHasStructureChange(item) || item.changes.length > 0;
 }
