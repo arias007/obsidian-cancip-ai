@@ -1710,8 +1710,17 @@ export function reviewItemLineDelta(item: ReviewGateManifestItem): LineDeltaSumm
 }
 
 export function reviewItemHasContentChange(item: ReviewGateManifestItem): boolean {
-  return (item.old_text ?? "") !== (item.new_text ?? "")
-    || (item.changes ?? []).some((change) => change === "create" || change === "delete" || change === "write" || change === "append" || change === "patch");
+  const oldText = item.old_text ?? "";
+  const newText = item.new_text ?? "";
+  const changes = item.changes ?? [];
+  // A rename/move/copy keeps the bytes identical, so it only counts as a content
+  // review when the item actually carries text. Legacy structure-only entries
+  // (empty on both sides) stay structure-only so their auto-supersede behaviour
+  // is unchanged.
+  const pathOp = changes.some((change) => change === "rename" || change === "move" || change === "copy");
+  return oldText !== newText
+    || changes.some((change) => change === "create" || change === "delete" || change === "write" || change === "append" || change === "patch")
+    || (pathOp && (oldText !== "" || newText !== ""));
 }
 
 export function reviewItemHasStructureChange(item: ReviewGateManifestItem): boolean {

@@ -11231,6 +11231,19 @@ export default class CancipPlugin extends Plugin {
         // Without it a delete reads as an unexplained missing file and the entry
         // gets auto-superseded instead of staying reviewable.
         changes.push("delete");
+      } else if (change.kind === "rename" || change.kind === "move" || change.kind === "copy") {
+        // A path operation used to land as a bare structure card with no text at
+        // all, so the reviewer could not see what actually moved. Carry the
+        // file's bytes on both sides: a rename/move leaves them identical, a
+        // copy duplicates them. The record is written after the mutation ran, so
+        // the new path is the one that exists — read it once and mirror it into
+        // old_text so the panel shows the same content on both sides instead of
+        // rendering an empty old pane.
+        const pathAfter = change.newPath || change.oldPath;
+        const movedText = pathAfter ? await adapter.read(pathAfter).catch(() => "") : "";
+        oldText = movedText;
+        newText = movedText;
+        changes.push(change.kind);
       }
       items.push({
         path: target,
@@ -36359,8 +36372,26 @@ class CancipView extends ItemView {
   }
 
   private clearRequest(request: AbortController): void {
+    let cleared = false;
     for (const [sessionId, active] of this.activeRequests) {
-      if (active === request) this.plugin.clearSessionRequest(sessionId, request);
+      if (active === request) {
+        this.plugin.clearSessionRequest(sessionId, request);
+        cleared = true;
+      }
+    }
+    if (cleared) this.pruneStaleLiveProcessPlaceholder();
+  }
+
+  private pruneStaleLiveProcessPlaceholder(): void {
+    // The live process placeholder is a DOM-only shell built while a request
+    // runs. It is normally rebuilt on the next renderMessages, but a request
+    // that ends without a follow-up render leaves it stranded — an orphan
+    // process block with no user turn above and no answer below. Prune it as
+    // soon as no request is active for this session.
+    if (this.activeRequest || this.activeRequestForSession(this.sessionId)) return;
+    if (!this.messagesEl) return;
+    for (const el of Array.from(this.messagesEl.querySelectorAll(".is-live-process-placeholder"))) {
+      el.remove();
     }
   }
 
@@ -43497,6 +43528,7 @@ class CancipView extends ItemView {
     } finally {
       if (this.activeRequest === request) this.activeRequest = null;
       this.activeRequestApiProfile = null;
+      this.pruneStaleLiveProcessPlaceholder();
     }
   }
 
