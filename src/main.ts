@@ -11191,6 +11191,38 @@ export default class CancipPlugin extends Plugin {
    * the reviewer can see what the folder actually contains. The list is capped
    * so a huge folder cannot blow up the manifest.
    */
+  /**
+   * CLI audit baseline. The CLI path used to read raw disk bytes for old_text,
+   * so a chained AI edit showed the previous AI output as the before instead of
+   * the state the reviewer last confirmed. This mirrors the in-app review
+   * baseline: when a pending gate covers the path, anchor on its recorded
+   * old_text unless the reviewer hand-edited the file (then the disk wins);
+   * otherwise fall back to the current disk.
+   */
+  private async cliReviewBaselineForPath(path: string): Promise<string> {
+    let disk = "";
+    try { disk = await this.app.vault.adapter.read(path); } catch { disk = ""; }
+    try {
+      const snapshot = await this.prewarmReviewGateData();
+      for (const reviewPath of snapshot.packages) {
+        const entry = snapshot.byPath.get(reviewGateLogicalPathKey(reviewPath));
+        if (!entry || !entry.data || !Array.isArray(entry.data.items)) continue;
+        const pendingKeys = new Set(Array.from(entry.pendingPaths ?? []).map(reviewGateLogicalPathKey));
+        for (const item of entry.data.items) {
+          if (!pendingKeys.has(reviewGateLogicalPathKey(item.path))) continue;
+          if (!isReviewGateItemChanged(item) || !isStoredReviewGateItemVisible(item)) continue;
+          if (!reviewGateItemTouchesAnyPath(item, new Set([path]))) continue;
+          const expected = reviewGateExpectedStateForPath(item, path);
+          if (expected && (expected.exists !== (disk !== "") || (expected.exists && expected.text !== disk))) {
+            return disk;
+          }
+          return item.old_text ?? "";
+        }
+      }
+    } catch { /* fall through to disk */ }
+    return disk;
+  }
+
   private async describeFolderForReview(path: string, limit = 200): Promise<string> {
     const folder = this.app.vault.getAbstractFileByPath(path);
     if (!(folder instanceof TFolder)) return "";
@@ -11252,6 +11284,9 @@ export default class CancipPlugin extends Plugin {
       let newText = "";
       const changes: string[] = [];
       if (change.kind === "create") {
+        // old_text must be the reviewer's last confirmed state, not the bytes a
+        // previous AI pass left on disk.
+        oldText = await this.cliReviewBaselineForPath(target);
         // A folder create carries no text of its own — mkdir sends no data — so
         // show the listing the new folder starts with instead of a blank pane.
         newText = isWrite ? (record.data as string) : await this.describeFolderForReview(target);
@@ -11266,7 +11301,7 @@ export default class CancipPlugin extends Plugin {
         const nodeBefore = this.app.vault.getAbstractFileByPath(target);
         oldText = nodeBefore instanceof TFolder
           ? await this.describeFolderForReview(target)
-          : await adapter.read(target).catch(() => "");
+          : await this.cliReviewBaselineForPath(target);
         // Tells the expected-state comparison that the file is meant to be gone.
         // Without it a delete reads as an unexplained missing file and the entry
         // gets auto-superseded instead of staying reviewable.
@@ -11305,7 +11340,7 @@ export default class CancipPlugin extends Plugin {
         // Only an in-place overwrite is a content change; a create, move or
         // delete was already covered by the structure pass above.
         if (isWrite && !structuredPaths.has(path)) {
-          items.push({ path, old_text: await adapter.read(path).catch(() => ""), new_text: record.data as string, changes: ["write"], structure: [], review_source: "cancip-cli" });
+          items.push({ path, old_text: await this.cliReviewBaselineForPath(path), new_text: record.data as string, changes: ["write"], structure: [], review_source: "cancip-cli" });
         }
         const stat = await adapter.stat(path);
         if (!stat || stat.type !== "file" || stat.size > 4 * 1024 * 1024) continue;
