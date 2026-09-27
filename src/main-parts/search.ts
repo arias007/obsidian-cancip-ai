@@ -1563,7 +1563,11 @@ export function normalizeStoredReviewGatePath(raw: unknown): string {
   if (!normalized) return "";
   const stripped = normalized.replace(/^\/+/, "");
   if (!stripped || stripped === ".") return "";
-  return stripped;
+  // Leading slashes were the only thing stripped; trailing ones belong to the
+  // original path and must survive, or "note.md/" would silently become a
+  // extension-less folder name.
+  const hadTrailingSlash = /\/$/.test(normalized);
+  return hadTrailingSlash && !stripped.endsWith("/") ? `${stripped}/` : stripped;
 }
 
 export function reviewItemAllOpenPaths(item: ReviewGateManifestItem): string[] {
