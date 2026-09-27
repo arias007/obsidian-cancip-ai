@@ -37672,7 +37672,8 @@ class CancipView extends ItemView {
     this.closeCommandMenu();
     this.closeMentionPopup();
     this.setStatus(this.t("reviewGateStatus"));
-    const activeFile = this.app.workspace.getActiveFile()?.path;
+    const rawActiveFile = this.app.workspace.getActiveFile()?.path;
+    const activeFile = rawActiveFile && rawActiveFile !== "/" ? rawActiveFile : undefined;
     const args: Record<string, unknown> = {
       title: activeFile ? `Cancip Review: ${activeFile}` : "Cancip OB Review Gate",
       paths: activeFile ? [activeFile] : [],
