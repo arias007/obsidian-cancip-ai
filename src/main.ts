@@ -11183,6 +11183,39 @@ export default class CancipPlugin extends Plugin {
    * cannot be copied, the error propagates and the bridge aborts the op
    * instead of destroying data unrecoverably.
    */
+  /**
+   * Renders a folder as reviewable text. `adapter.read` only understands files,
+   * so every folder mutation (mkdir / folder delete / folder rename) used to
+   * land in the review panel with empty text on one or both sides. This walks
+   * the folder and emits a stable listing — path, kind and size per entry — so
+   * the reviewer can see what the folder actually contains. The list is capped
+   * so a huge folder cannot blow up the manifest.
+   */
+  private async describeFolderForReview(path: string, limit = 200): Promise<string> {
+    const folder = this.app.vault.getAbstractFileByPath(path);
+    if (!(folder instanceof TFolder)) return "";
+    const lines: string[] = [];
+    const walk = (node: TFolder, depth: number): void => {
+      if (lines.length >= limit) return;
+      const children = [...node.children].sort((a, b) => a.path.localeCompare(b.path));
+      for (const child of children) {
+        if (lines.length >= limit) return;
+        const indent = "  ".repeat(depth);
+        if (child instanceof TFolder) {
+          lines.push(`${indent}${child.name}/`);
+          walk(child, depth + 1);
+        } else {
+          const size = child instanceof TFile ? child.stat.size : 0;
+          lines.push(`${indent}${child.name}  (${size} B)`);
+        }
+      }
+    };
+    walk(folder, 0);
+    const total = folder.children.length;
+    const header = `[文件夹] ${path}\n共 ${total} 项${lines.length >= limit ? `（列出前 ${limit} 项）` : ""}`;
+    return lines.length ? `${header}\n\n${lines.join("\n")}` : header;
+  }
+
   private async auditCliMutationForBridge(record: { op: string; paths: string[]; hard: boolean; data?: string; structure?: Array<{ kind: string; oldPath: string; newPath: string }> }): Promise<void> {
     const adapter = this.app.vault.adapter;
     const stamp = `${Date.now()}-${record.op}`;
@@ -11219,14 +11252,21 @@ export default class CancipPlugin extends Plugin {
       let newText = "";
       const changes: string[] = [];
       if (change.kind === "create") {
-        newText = isWrite ? (record.data as string) : "";
+        // A folder create carries no text of its own — mkdir sends no data — so
+        // show the listing the new folder starts with instead of a blank pane.
+        newText = isWrite ? (record.data as string) : await this.describeFolderForReview(target);
         // Tells revertReviewGateItem that cancelling means "delete this file".
         // Without it the text branch matches ("" !== new content) and merely
         // writes an empty string, leaving a blank note instead of undoing the
         // creation.
         changes.push("create");
       } else if (change.kind === "delete") {
-        oldText = await adapter.read(target).catch(() => "");
+        // A deleted folder has no readable bytes; list what is about to go so
+        // the reviewer sees the contents instead of an empty old pane.
+        const nodeBefore = this.app.vault.getAbstractFileByPath(target);
+        oldText = nodeBefore instanceof TFolder
+          ? await this.describeFolderForReview(target)
+          : await adapter.read(target).catch(() => "");
         // Tells the expected-state comparison that the file is meant to be gone.
         // Without it a delete reads as an unexplained missing file and the entry
         // gets auto-superseded instead of staying reviewable.
@@ -11240,7 +11280,12 @@ export default class CancipPlugin extends Plugin {
         // old_text so the panel shows the same content on both sides instead of
         // rendering an empty old pane.
         const pathAfter = change.newPath || change.oldPath;
-        const movedText = pathAfter ? await adapter.read(pathAfter).catch(() => "") : "";
+        const nodeAfter = pathAfter ? this.app.vault.getAbstractFileByPath(pathAfter) : null;
+        const movedText = pathAfter
+          ? (nodeAfter instanceof TFolder
+              ? await this.describeFolderForReview(pathAfter)
+              : await adapter.read(pathAfter).catch(() => ""))
+          : "";
         oldText = movedText;
         newText = movedText;
         changes.push(change.kind);
