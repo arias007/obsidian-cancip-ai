@@ -11220,6 +11220,11 @@ export default class CancipPlugin extends Plugin {
       const changes: string[] = [];
       if (change.kind === "create") {
         newText = isWrite ? (record.data as string) : "";
+        // Tells revertReviewGateItem that cancelling means "delete this file".
+        // Without it the text branch matches ("" !== new content) and merely
+        // writes an empty string, leaving a blank note instead of undoing the
+        // creation.
+        changes.push("create");
       } else if (change.kind === "delete") {
         oldText = await adapter.read(target).catch(() => "");
         // Tells the expected-state comparison that the file is meant to be gone.
