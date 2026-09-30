@@ -2044,6 +2044,15 @@ const REVIEW_GATE_RETENTION_SCAN_BATCH = 48;
 const REVIEW_GATE_RETENTION_DELETE_BATCH = 12;
 const REVIEW_GATE_RETENTION_MIN_KEEP_COMPLETED_PACKAGES = 12;
 const REVIEW_GATE_RETENTION_MAINTENANCE_INTERVAL_MS = 12 * 60 * 60 * 1000;
+// CLI review archives (`data/review-cli/`) hold pre-mutation originals for
+// every cancip CLI write/move/delete. Unlike review-gates they were never
+// pruned, so a heavy vault-curation session could grow the folder without
+// bound. These caps mirror the gate retention policy: keep the newest N and
+// the last week, bounded by total bytes.
+const REVIEW_CLI_RETENTION_MAX_ARCHIVES = 120;
+const REVIEW_CLI_RETENTION_MAX_BYTES = 96 * 1024 * 1024;
+const REVIEW_CLI_RETENTION_MIN_KEEP_ARCHIVES = 12;
+const REVIEW_CLI_RETENTION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 let CANCIP_ARCHIVE_DIR = `${CANCIP_CONFIG_DIR}/archive`;
 let CANCIP_ARCHIVE_SESSIONS_DIR = `${CANCIP_ARCHIVE_DIR}/sessions`;
 let CANCIP_ARCHIVE_EVENTS_DIR = `${CANCIP_ARCHIVE_DIR}/session-events`;
@@ -2148,6 +2157,8 @@ const TOOL_RESULT_DETAIL_MAX_CHARS = 120000;
 const MODEL_EXCHANGE_FRAGMENT_MAX_CHARS = 60000;
 const REVIEW_GATE_DIR = `${CANCIP_AI_DIR}/Review`;
 let REVIEW_GATE_HIDDEN_DIR = `${CANCIP_CONFIG_DIR}/review-gates`;
+let REVIEW_CLI_HIDDEN_DIR = `${CANCIP_CONFIG_DIR}/review-cli`;
+let REVIEW_CLI_RETENTION_MARKER_PATH = `${CANCIP_CONFIG_DIR}/review-cli-retention.json`;
 let REVIEW_GATE_PACKAGE_INDEX_PATH = `${CANCIP_CONFIG_DIR}/review-index.json`;
 let REVIEW_GATE_CANONICAL_STATE_PATH = `${CANCIP_CONFIG_DIR}/review-state.json`;
 let REVIEW_GATE_RETENTION_MARKER_PATH = `${CANCIP_CONFIG_DIR}/review-retention.json`;
@@ -9254,6 +9265,12 @@ export default class CancipPlugin extends Plugin {
     // responsive while old machine snapshots are reclaimed.
     await run("pruneReviewGatePackages", async () => {
       await this.pruneReviewGatePackages();
+    });
+    // Reclaim pre-mutation CLI originals on the same idle pass. Archives are
+    // per-operation copies of the files a CLI op touched, so once the review
+    // flow has settled they are dead weight.
+    await run("pruneCliReviewArchives", async () => {
+      await this.pruneCliReviewArchives();
     });
     this.scheduleAutomations();
     this.scheduleCancipStatePolling();
@@ -22031,6 +22048,73 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     } finally {
       if (this.reviewGatePrunePromise === operation) this.reviewGatePrunePromise = null;
     }
+  }
+
+  private async pruneCliReviewArchives(): Promise<number> {
+    const adapter = this.app.vault.adapter;
+    const now = Date.now();
+    const listing = await adapter.list(REVIEW_CLI_HIDDEN_DIR).catch(() => ({ files: [], folders: [] }));
+    const folders = (listing.folders ?? []).map((folder) => normalizePath(folder));
+    if (!folders.length) return 0;
+    // Conservative: as long as any review package still awaits a decision we do
+    // not touch the archive area, so a pending "cancel" can always recover its
+    // original from the CLI mirror.
+    const canonical = await this.readReviewGateCanonicalState();
+    if (canonical && canonical.pendingPaths.length > 0) return 0;
+    type CliArchiveMeta = { folder: string; stamp: number; bytes: number; mtime: number };
+    const entries: CliArchiveMeta[] = [];
+    for (let index = 0; index < folders.length; index += REVIEW_GATE_RETENTION_SCAN_BATCH) {
+      for (const folder of folders.slice(index, index + REVIEW_GATE_RETENTION_SCAN_BATCH)) {
+        const stat = await adapter.stat(folder).catch(() => null);
+        const stampRaw = Number(folder.split("/").pop()?.split("-", 1)[0] ?? NaN);
+        entries.push({
+          folder,
+          stamp: Number.isFinite(stampRaw) ? stampRaw : 0,
+          bytes: await this.reviewGatePackageBytes(folder),
+          mtime: Number(stat?.mtime ?? 0)
+        });
+      }
+      await sleep(0);
+    }
+    // Newest first; keep a floor of MIN_KEEP plus anything inside the age cap
+    // that still fits the byte budget, and delete the rest.
+    entries.sort((a, b) => b.stamp - a.stamp || b.mtime - a.mtime);
+    const toDelete: CliArchiveMeta[] = [];
+    let keptCount = 0;
+    let keptBytes = 0;
+    for (const entry of entries) {
+      const keepForMinimum = keptCount < REVIEW_CLI_RETENTION_MIN_KEEP_ARCHIVES;
+      const keepForAge = entry.stamp > 0 && now - entry.stamp <= REVIEW_CLI_RETENTION_MAX_AGE_MS;
+      const keepForBudget = keptCount < REVIEW_CLI_RETENTION_MAX_ARCHIVES
+        && keptBytes + entry.bytes <= REVIEW_CLI_RETENTION_MAX_BYTES;
+      if (keepForMinimum || (keepForAge && keepForBudget)) {
+        keptCount += 1;
+        keptBytes += entry.bytes;
+      } else {
+        toDelete.push(entry);
+      }
+    }
+    let removed = 0;
+    for (let index = 0; index < toDelete.length; index += REVIEW_GATE_RETENTION_DELETE_BATCH) {
+      for (const entry of toDelete.slice(index, index + REVIEW_GATE_RETENTION_DELETE_BATCH)) {
+        try {
+          await adapter.rmdir(entry.folder, true);
+          removed += 1;
+        } catch (error) {
+          console.warn("Cancip CLI review archive retention failed", entry.folder, error);
+        }
+      }
+      await sleep(0);
+    }
+    if (removed) {
+      await adapter.write(REVIEW_CLI_RETENTION_MARKER_PATH, `${JSON.stringify({
+        schemaVersion: 1,
+        completedAt: new Date().toISOString(),
+        removed
+      }, null, 2)}\n`).catch(() => undefined);
+      console.info(`Cancip CLI review archive retention removed ${removed} completed archive(s)`);
+    }
+    return removed;
   }
 
   private async reviewGatePackageBytes(folder: string): Promise<number> {
