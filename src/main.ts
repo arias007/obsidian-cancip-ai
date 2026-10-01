@@ -2049,9 +2049,8 @@ const REVIEW_GATE_RETENTION_MAINTENANCE_INTERVAL_MS = 12 * 60 * 60 * 1000;
 // pruned, so a heavy vault-curation session could grow the folder without
 // bound. These caps mirror the gate retention policy: keep the newest N and
 // the last week, bounded by total bytes.
-const REVIEW_CLI_RETENTION_MAX_ARCHIVES = 120;
-const REVIEW_CLI_RETENTION_MAX_BYTES = 96 * 1024 * 1024;
-const REVIEW_CLI_RETENTION_MIN_KEEP_ARCHIVES = 12;
+// Safety net only: decision-driven cleanup removes an archive the moment its gate is fully decided; this ages out leftovers whose gate is gone.
+const REVIEW_CLI_ORPHAN_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const REVIEW_CLI_RETENTION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 let CANCIP_ARCHIVE_DIR = `${CANCIP_CONFIG_DIR}/archive`;
 let CANCIP_ARCHIVE_SESSIONS_DIR = `${CANCIP_ARCHIVE_DIR}/sessions`;
@@ -2158,7 +2157,6 @@ const MODEL_EXCHANGE_FRAGMENT_MAX_CHARS = 60000;
 const REVIEW_GATE_DIR = `${CANCIP_AI_DIR}/Review`;
 let REVIEW_GATE_HIDDEN_DIR = `${CANCIP_CONFIG_DIR}/review-gates`;
 let REVIEW_CLI_HIDDEN_DIR = `${CANCIP_CONFIG_DIR}/review-cli`;
-let REVIEW_CLI_RETENTION_MARKER_PATH = `${CANCIP_CONFIG_DIR}/review-cli-retention.json`;
 let REVIEW_GATE_PACKAGE_INDEX_PATH = `${CANCIP_CONFIG_DIR}/review-index.json`;
 let REVIEW_GATE_CANONICAL_STATE_PATH = `${CANCIP_CONFIG_DIR}/review-state.json`;
 let REVIEW_GATE_RETENTION_MARKER_PATH = `${CANCIP_CONFIG_DIR}/review-retention.json`;
@@ -9269,8 +9267,8 @@ export default class CancipPlugin extends Plugin {
     // Reclaim pre-mutation CLI originals on the same idle pass. Archives are
     // per-operation copies of the files a CLI op touched, so once the review
     // flow has settled they are dead weight.
-    await run("pruneCliReviewArchives", async () => {
-      await this.pruneCliReviewArchives();
+    await run("pruneOrphanCliArchives", async () => {
+      await this.pruneOrphanCliArchives();
     });
     this.scheduleAutomations();
     this.scheduleCancipStatePolling();
@@ -22050,70 +22048,70 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
     }
   }
 
-  private async pruneCliReviewArchives(): Promise<number> {
+  /**
+   * Decision-driven archive cleanup. When a CLI review gate is fully decided
+   * its mirror under review-cli/<stamp> has done its job and is deleted right
+   * away: approved means the change was accepted, cancelled means the original
+   * was already put back by revertReviewGateItem before this runs (a failed
+   * revert throws earlier in the same try block and never reaches here), and
+   * correction means the edited replacement is in place. In-app gates have no
+   * archive and return early. Public because the decision handlers live on the
+   * view, not on the plugin.
+   */
+  async pruneCliArchiveForGate(folder: string): Promise<void> {
+    const adapter = this.app.vault.adapter;
+    let sessionId = "";
+    try {
+      const raw = await adapter.read(`${folder}/manifest.json`);
+      const parsed = JSON.parse(raw) as unknown;
+      if (isRecord(parsed) && typeof parsed.session_id === "string") sessionId = parsed.session_id.trim();
+    } catch {
+      return;
+    }
+    if (!sessionId.startsWith("cli-bridge-")) return;
+    const stamp = sessionId.slice("cli-bridge-".length);
+    if (!stamp) return;
+    // Hold while any item in this gate is still undecided: a later cancel must
+    // be able to recover its original from the mirror.
+    const state = await this.readReviewGateCanonicalState();
+    if (!state) return;
+    const key = reviewGateLogicalPathKey(this.normalizeReviewGatePackageManifestPath(`${folder}/manifest.json`));
+    const entry = state.packages.find((candidate) => reviewGateLogicalPathKey(candidate.manifestPath) === key);
+    if (entry && entry.pendingPaths.length > 0) return;
+    const archiveDir = normalizePath(`${REVIEW_CLI_HIDDEN_DIR}/${stamp}`);
+    try {
+      if (await adapter.exists(archiveDir)) await adapter.rmdir(archiveDir, true);
+    } catch (error) {
+      console.warn("Cancip CLI archive cleanup failed", archiveDir, error);
+    }
+  }
+
+  /**
+   * Safety net only. Decision-driven cleanup handles every archive whose gate we
+   * can still read; this ages out the rest (gate folder deleted by hand, or
+   * canonical state rebuilt past recognition) so a lost link cannot leak disk
+   * space forever. A fresh archive is never touched.
+   */
+  private async pruneOrphanCliArchives(): Promise<number> {
     const adapter = this.app.vault.adapter;
     const now = Date.now();
     const listing = await adapter.list(REVIEW_CLI_HIDDEN_DIR).catch(() => ({ files: [], folders: [] }));
     const folders = (listing.folders ?? []).map((folder) => normalizePath(folder));
     if (!folders.length) return 0;
-    // Conservative: as long as any review package still awaits a decision we do
-    // not touch the archive area, so a pending "cancel" can always recover its
-    // original from the CLI mirror.
-    const canonical = await this.readReviewGateCanonicalState();
-    if (canonical && canonical.pendingPaths.length > 0) return 0;
-    type CliArchiveMeta = { folder: string; stamp: number; bytes: number; mtime: number };
-    const entries: CliArchiveMeta[] = [];
-    for (let index = 0; index < folders.length; index += REVIEW_GATE_RETENTION_SCAN_BATCH) {
-      for (const folder of folders.slice(index, index + REVIEW_GATE_RETENTION_SCAN_BATCH)) {
-        const stat = await adapter.stat(folder).catch(() => null);
-        const stampRaw = Number(folder.split("/").pop()?.split("-", 1)[0] ?? NaN);
-        entries.push({
-          folder,
-          stamp: Number.isFinite(stampRaw) ? stampRaw : 0,
-          bytes: await this.reviewGatePackageBytes(folder),
-          mtime: Number(stat?.mtime ?? 0)
-        });
-      }
-      await sleep(0);
-    }
-    // Newest first; keep a floor of MIN_KEEP plus anything inside the age cap
-    // that still fits the byte budget, and delete the rest.
-    entries.sort((a, b) => b.stamp - a.stamp || b.mtime - a.mtime);
-    const toDelete: CliArchiveMeta[] = [];
-    let keptCount = 0;
-    let keptBytes = 0;
-    for (const entry of entries) {
-      const keepForMinimum = keptCount < REVIEW_CLI_RETENTION_MIN_KEEP_ARCHIVES;
-      const keepForAge = entry.stamp > 0 && now - entry.stamp <= REVIEW_CLI_RETENTION_MAX_AGE_MS;
-      const keepForBudget = keptCount < REVIEW_CLI_RETENTION_MAX_ARCHIVES
-        && keptBytes + entry.bytes <= REVIEW_CLI_RETENTION_MAX_BYTES;
-      if (keepForMinimum || (keepForAge && keepForBudget)) {
-        keptCount += 1;
-        keptBytes += entry.bytes;
-      } else {
-        toDelete.push(entry);
-      }
-    }
     let removed = 0;
-    for (let index = 0; index < toDelete.length; index += REVIEW_GATE_RETENTION_DELETE_BATCH) {
-      for (const entry of toDelete.slice(index, index + REVIEW_GATE_RETENTION_DELETE_BATCH)) {
-        try {
-          await adapter.rmdir(entry.folder, true);
-          removed += 1;
-        } catch (error) {
-          console.warn("Cancip CLI review archive retention failed", entry.folder, error);
-        }
+    for (const folder of folders) {
+      const stat = await adapter.stat(folder).catch(() => null);
+      const mtime = Number(stat?.mtime ?? 0);
+      if (!mtime || now - mtime <= REVIEW_CLI_ORPHAN_MAX_AGE_MS) continue;
+      try {
+        await adapter.rmdir(folder, true);
+        removed += 1;
+      } catch (error) {
+        console.warn("Cancip CLI orphan archive cleanup failed", folder, error);
       }
       await sleep(0);
     }
-    if (removed) {
-      await adapter.write(REVIEW_CLI_RETENTION_MARKER_PATH, `${JSON.stringify({
-        schemaVersion: 1,
-        completedAt: new Date().toISOString(),
-        removed
-      }, null, 2)}\n`).catch(() => undefined);
-      console.info(`Cancip CLI review archive retention removed ${removed} completed archive(s)`);
-    }
+    if (removed) console.info(`Cancip CLI orphan archive retention removed ${removed} archive(s)`);
     return removed;
   }
 
@@ -35965,6 +35963,7 @@ class CancipReviewLeafView extends ItemView {
       await this.plugin.recordReviewFeedback({ ...payload, source: "cancip.review-panel" });
       this.plugin.recordReviewDecisionScore(item, decision);
       await this.plugin.markReviewGateItemsDecided(`${folder}/manifest.json`, [item.path]);
+      await this.plugin.pruneCliArchiveForGate(folder);
       await this.plugin.handlePersonalizationReviewDecision(item, decision);
       if (data) {
         await this.advanceReviewAfterDecision(data.path, item.path, previousPending);
@@ -42047,6 +42046,7 @@ class CancipView extends ItemView {
       await this.plugin.recordReviewFeedback({ ...payload, source: "cancip.review-panel" });
       this.plugin.recordReviewDecisionScore(item, decision);
       await this.plugin.markReviewGateItemsDecided(`${folder}/manifest.json`, [item.path]);
+      await this.plugin.pruneCliArchiveForGate(folder);
       await this.plugin.handlePersonalizationReviewDecision(item, decision);
       this.plugin.syncOpenReviewGateDecision(`${folder}/manifest.json`);
       textarea.value = "";
