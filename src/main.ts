@@ -2732,6 +2732,7 @@ const EN = {
   reviewGateChanged: "Changed",
   reviewGateStructure: "Structure",
   reviewGateContentChanges: "Content changes",
+  reviewGateExternalChanges: "External changes",
   reviewGateStructureChanges: "Structure changes",
   reviewGateDiff: "Diff",
   reviewGateOld: "Old",
@@ -3994,6 +3995,7 @@ const I18N: Record<Language, Partial<Record<I18nKey, string>>> = {
     reviewGateChanged: "有变化",
     reviewGateStructure: "结构变更",
     reviewGateContentChanges: "内容变化",
+    reviewGateExternalChanges: "外部变化",
     reviewGateStructureChanges: "结构变化",
     reviewGateDiff: "差异",
     reviewGateOld: "原文",
@@ -22501,8 +22503,25 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
       if (!entry) continue;
       entry.pendingPaths = new Set([...entry.pendingPaths].filter((itemPath) => !update.itemKeys.has(reviewGateLogicalPathKey(itemPath))));
     }
-    snapshot.pendingCount = state.pendingPaths.length;
+    snapshot.pendingCount = this.reviewGateAttentionCount(state);
     snapshot.loadedAt = Date.now();
+  }
+
+  // The red dot means "a real note change is waiting for you". Internal AI
+  // bookkeeping (memory, automations, buttons, commands, plugin/config state,
+  // skills) never requires a decision, so it must not raise the dot even though
+  // it still appears in the review panel's grey internal section.
+  private reviewGateAttentionCount(state: ReviewGateCanonicalState): number {
+    const configDir = this.obsidianConfigDir();
+    const memoryFolder = this.settings.memoryFolder;
+    const attention = new Set<string>();
+    for (const path of state.pendingPaths) {
+      if (!path) continue;
+      if (isReviewGateAttentionExcluded(path)) continue;
+      if (isReviewableInternalAiPath(path, configDir, memoryFolder)) continue;
+      attention.add(reviewGateLogicalPathKey(path));
+    }
+    return attention.size;
   }
 
   private async readReviewGatePackage(path: string): Promise<ReviewGatePackageData> {
@@ -22616,7 +22635,7 @@ Short-term and project-specific state for Cancip. Keep this file concise and upd
         }
         if (Platform.isMobileApp) await sleep(0);
       }
-      return { loadedAt: Date.now(), packages: keptPackages, byPath, pendingCount: state.pendingPaths.length };
+      return { loadedAt: Date.now(), packages: keptPackages, byPath, pendingCount: this.reviewGateAttentionCount(state) };
     })();
     this.reviewGateSnapshotPromise = operation;
     this.reviewGateSnapshotPromiseRevision = revision;
@@ -35008,14 +35027,12 @@ class CancipReviewLeafView extends ItemView {
       isReviewGateInternalItem(entry.item, this.plugin.obsidianConfigDir(), this.plugin.settings.memoryFolder);
     const internalEntries = entries.filter(isInternal);
     const noteEntries = entries.filter((entry) => !isInternal(entry));
-    const contentEntries = noteEntries.filter((entry) => reviewItemHasContentChange(entry.item));
     const structureEntries = noteEntries.filter((entry) => !reviewItemHasContentChange(entry.item) && reviewItemHasStructureChange(entry.item));
-    const otherEntries = noteEntries.filter((entry) => !reviewItemHasContentChange(entry.item) && !reviewItemHasStructureChange(entry.item));
+    const contentEntries = noteEntries.filter((entry) => !structureEntries.includes(entry));
     const sections = [
       { cls: "is-internal", icon: "brain-circuit", title: this.t("reviewGateInternalChanges"), entries: internalEntries, open: false },
-      { cls: "is-content", icon: "file-pen-line", title: this.t("reviewGateContentChanges"), entries: contentEntries, open: true },
-      { cls: "is-structure", icon: "git-compare", title: this.t("reviewGateStructureChanges"), entries: structureEntries, open: true },
-      { cls: "is-other", icon: "file-text", title: this.t("reviewGateChanged"), entries: otherEntries, open: true }
+      { cls: "is-content", icon: "file-pen-line", title: this.t("reviewGateExternalChanges"), entries: contentEntries, open: true },
+      { cls: "is-structure", icon: "git-compare", title: this.t("reviewGateStructureChanges"), entries: structureEntries, open: true }
     ].filter((section) => section.entries.length);
     for (const section of sections) {
       const group = parent.createEl("details", { cls: `obcc-review-nav-kind ${section.cls}` });
@@ -35023,13 +35040,7 @@ class CancipReviewLeafView extends ItemView {
       const summaryEl = group.createEl("summary");
       setIcon(summaryEl.createSpan({ cls: "obcc-review-folder-icon" }), section.icon);
       summaryEl.createSpan({ cls: "obcc-review-folder-name", text: section.title });
-      if (section.cls === "is-internal") {
-        // Internal AI bookkeeping stays a quiet grey number; only real note
-        // changes earn the red attention badge.
-        summaryEl.createSpan({ cls: "obcc-review-folder-count", text: String(section.entries.length) });
-      } else {
-        this.renderReviewCountDot(summaryEl, section.entries.length);
-      }
+      if (section.cls !== "is-internal") this.renderReviewCountDot(summaryEl, section.entries.length);
       const body = group.createDiv({ cls: "obcc-review-nav-kind-tree" });
       if (section.cls === "is-internal") {
         body.createDiv({ cls: "obcc-review-internal-explanation", text: this.t("reviewGateInternalExplanation") });
@@ -35072,7 +35083,6 @@ class CancipReviewLeafView extends ItemView {
       const categoryTitle = categoryHead.createDiv({ cls: "obcc-review-internal-category-title" });
       setIcon(categoryTitle.createSpan({ cls: "obcc-review-internal-category-icon" }), category === "automation" ? "calendar-clock" : category === "button" ? "mouse-pointer-2" : category === "command" ? "terminal" : category === "plugin" ? "puzzle" : category === "memory" ? "brain" : category === "skill" ? "sparkles" : "settings-2");
       categoryTitle.createSpan({ text: reviewGateCategoryLabel(category, this.plugin.t.bind(this.plugin)) });
-      categoryTitle.createSpan({ cls: "obcc-review-folder-count", text: String(groupItems.length) });
       const summaries = uniqueStrings(groupItems.map((entry) => entry.item.review_summary ?? "").filter(Boolean)).slice(0, 2);
       if (summaries.length) categoryHead.createDiv({ cls: "obcc-review-internal-category-desc", text: summaries.join("；") });
       this.renderReviewNavEntryGroups(categoryHead, groupItems);
@@ -41852,7 +41862,6 @@ class CancipView extends ItemView {
       const summaryEl = group.createEl("summary");
       setIcon(summaryEl.createSpan({ cls: "obcc-review-folder-icon" }), "brain-circuit");
       summaryEl.createSpan({ cls: "obcc-review-folder-name", text: this.t("reviewGateInternalChanges") });
-      summaryEl.createSpan({ cls: "obcc-review-folder-count", text: String(internalItems.length) });
       renderButtons(group.createDiv({ cls: "obcc-review-nav-kind-tree" }), internalItems);
     }
     renderButtons(list, noteItems);
