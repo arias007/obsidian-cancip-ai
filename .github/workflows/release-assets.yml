@@ -1,0 +1,53 @@
+name: Release assets
+
+# Uploads the prebuilt plugin triplet from outputs/cancip to an existing
+# release. Runs on the runner because uploads.github.com is unreachable from
+# the phone sandbox (SNI reset).
+on:
+  push:
+    tags:
+      - "[0-9]*.[0-9]*.[0-9]*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to attach assets to"
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  attach:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Attach triplet
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          echo "tag=$TAG"
+          ls -l outputs/cancip/main.js outputs/cancip/manifest.json outputs/cancip/styles.css
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --title "$TAG" --notes "Cancip $TAG"
+          fi
+          gh release upload "$TAG" \
+            outputs/cancip/main.js \
+            outputs/cancip/manifest.json \
+            outputs/cancip/styles.css \
+            --clobber
+
+      - name: Verify assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          for asset in main.js manifest.json styles.css; do
+            state="$(gh release view "$TAG" --json assets --jq ".assets[] | select(.name == \"$asset\") | .state" | tr '[:upper:]' '[:lower:]')"
+            echo "$asset -> ${state:-missing}"
+            [ "$state" = "uploaded" ] || exit 1
+          done
