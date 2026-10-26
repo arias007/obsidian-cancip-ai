@@ -8617,6 +8617,27 @@ input.obcc-review-correction-input {
   font-size: 11px;
 }
 
+/* Real note changes get a red count badge so a collapsed group still reads as
+   "there is work waiting here". Internal AI bookkeeping keeps the grey number. */
+.obcc-review-count-dot {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 5px;
+  border-radius: var(--obcc-radius-pill, 999px);
+  background: #dc2626;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
+  box-shadow: 0 0 0 1px color-mix(in srgb, #dc2626 34%, transparent);
+}
+
 .obcc-review-file-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));

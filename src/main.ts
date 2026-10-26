@@ -35023,7 +35023,13 @@ class CancipReviewLeafView extends ItemView {
       const summaryEl = group.createEl("summary");
       setIcon(summaryEl.createSpan({ cls: "obcc-review-folder-icon" }), section.icon);
       summaryEl.createSpan({ cls: "obcc-review-folder-name", text: section.title });
-      summaryEl.createSpan({ cls: "obcc-review-folder-count", text: String(section.entries.length) });
+      if (section.cls === "is-internal") {
+        // Internal AI bookkeeping stays a quiet grey number; only real note
+        // changes earn the red attention badge.
+        summaryEl.createSpan({ cls: "obcc-review-folder-count", text: String(section.entries.length) });
+      } else {
+        this.renderReviewCountDot(summaryEl, section.entries.length);
+      }
       const body = group.createDiv({ cls: "obcc-review-nav-kind-tree" });
       if (section.cls === "is-internal") {
         body.createDiv({ cls: "obcc-review-internal-explanation", text: this.t("reviewGateInternalExplanation") });
@@ -35032,6 +35038,17 @@ class CancipReviewLeafView extends ItemView {
         this.renderReviewNavEntryGroups(body, section.entries);
       }
     }
+  }
+
+  /** Red attention badge for pending note changes (never for internal AI bookkeeping). */
+  private renderReviewCountDot(parent: HTMLElement, count: number): HTMLElement {
+    const label = count > 99 ? "99+" : String(count);
+    const caption = this.t("reviewGateChangedCount", { count });
+    return parent.createSpan({
+      cls: "obcc-review-count-dot",
+      text: label,
+      attr: { "aria-label": caption, title: caption }
+    });
   }
 
   private renderReviewInternalGroups(parent: HTMLElement, entries: Array<{ packagePath: string; item: ReviewGateManifestItem }>): void {
