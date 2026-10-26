@@ -58065,7 +58065,33 @@ class CancipView extends ItemView {
         structure: [...normalizeReviewStructureChanges(existing.structure), ...normalizeReviewStructureChanges(item.structure)]
       });
     }
-    return [...byPath.values()].filter((item) => isReviewGateItemChanged(item) && isReviewGateItemReviewable(item, this.plugin.obsidianConfigDir(), this.plugin.settings.memoryFolder));
+    return [...byPath.values()].filter((item) =>
+      isReviewGateItemChanged(item)
+      && isReviewGateItemReviewable(item, this.plugin.obsidianConfigDir(), this.plugin.settings.memoryFolder)
+      && !this.isSrBookkeepingOnly(item));
+  }
+
+  /**
+   * The Spaced Repetition plugin rewrites its own scheduling markers on every
+   * review pass, which is not a user-visible note change. Skip those entries so
+   * the review panel is not flooded with pure SR bookkeeping.
+   */
+  private isSrBookkeepingOnly(item: ReviewGateManifestItem): boolean {
+    try {
+      if (!item || (item.structure && item.structure.length)) return false;
+      const changes = Array.isArray(item.changes) ? item.changes : [];
+      if (changes.length && changes.some((change) => change !== "write" && change !== "patch" && change !== "append")) return false;
+      const before = String(item.old_text ?? "");
+      const after = String(item.new_text ?? "");
+      if (!before.trim() || !after.trim()) return false;
+      const strip = (text: string) => text
+        .replace(/<!--SR:[^>]*-->/g, "")
+        .replace(/^\s*sr-[a-z-]+\s*:.*$/gm, "")
+        .replace(/\s+/g, "");
+      return strip(before) === strip(after);
+    } catch {
+      return false;
+    }
   }
 
   private async rollbackUnregisteredAiReviewItems(items: ReviewGateManifestItem[]): Promise<string> {
