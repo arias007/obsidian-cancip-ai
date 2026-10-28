@@ -1,5 +1,8 @@
 # Obsidian Cancip AI
 
+<!-- hire-line -->
+> **Need this adapted, extended, or built from scratch?** I wrote this plugin — [custom work available](https://github.com/arias007/arias007#hire-me). Working proof first, payment after.
+
 Obsidian Cancip AI is a right-side AI chat panel shaped toward a mobile-first agent workflow for Obsidian.
 
 Cancip is a lightweight prototype for managing an Obsidian vault from a mobile-friendly AI panel:
